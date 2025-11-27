@@ -214,7 +214,7 @@ function init() {
     e.stopPropagation();
   });
   updateChatWindow();
-  
+
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
   if (savedDebugState === 'true') {
