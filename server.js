@@ -18,7 +18,7 @@ const wss = new WebSocketServer({ server });
 
 // Game constants
 const GAME_CONFIG = {
-  MAP_SIZE: 300,
+  MAP_SIZE: 100,
   TANK_SPEED: 5, // units per second
   TANK_ROTATION_SPEED: 2, // radians per second
   SHOT_SPEED: 20,
@@ -655,6 +655,20 @@ wss.on('connection', (ws, req) => {
       const message = JSON.parse(data);
 
       switch (message.type) {
+
+        case 'chat': {
+          // Broadcast chat message to all players
+          if (typeof message.text === 'string' && message.text.trim().length > 0) {
+            const chatMsg = {
+              type: 'chat',
+              from: player.name || `Player ${player.playerNumber}`,
+              text: message.text.trim(),
+              id: player.id
+            };
+            broadcastAll(chatMsg);
+          }
+          break;
+        }
         case 'move':
           const now = Date.now();
           // Calculate deltaTime based on server's last update time

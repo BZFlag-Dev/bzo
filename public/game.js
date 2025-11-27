@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 // Game state
+// Chat state
+let chatMessages = [];
+let chatActive = false;
+let chatInput = null;
+const CHAT_MAX_MESSAGES = 6;
+
 let scene, camera, renderer, labelRenderer;
 let myPlayerId = null;
 let myPlayerName = '';
@@ -183,6 +189,69 @@ function createObstacleTexture() {
 
 // Initialize Three.js
 function init() {
+  // Chat UI
+  const chatWindow = document.createElement('div');
+  chatWindow.id = 'chatWindow';
+  chatWindow.style.position = 'absolute';
+  chatWindow.style.left = '50%';
+  chatWindow.style.bottom = '30px';
+  chatWindow.style.transform = 'translateX(-50%)';
+  chatWindow.style.width = '600px';
+  chatWindow.style.maxWidth = '90vw';
+  chatWindow.style.background = 'rgba(0,0,0,0.5)';
+  chatWindow.style.color = '#fff';
+  chatWindow.style.font = '16px monospace';
+  chatWindow.style.padding = '8px 12px 2px 12px';
+  chatWindow.style.borderRadius = '8px';
+  chatWindow.style.pointerEvents = 'none';
+  chatWindow.style.zIndex = '100';
+  chatWindow.style.display = 'flex';
+  chatWindow.style.flexDirection = 'column-reverse';
+  chatWindow.style.gap = '2px';
+  document.body.appendChild(chatWindow);
+
+  chatInput = document.createElement('input');
+  chatInput.id = 'chatInput';
+  chatInput.type = 'text';
+  chatInput.style.position = 'absolute';
+  chatInput.style.left = '50%';
+  chatInput.style.bottom = '0px';
+  chatInput.style.transform = 'translateX(-50%)';
+  chatInput.style.width = '600px';
+  chatInput.style.maxWidth = '90vw';
+  chatInput.style.font = '18px monospace';
+  chatInput.style.padding = '8px 12px';
+  chatInput.style.borderRadius = '8px';
+  chatInput.style.border = 'none';
+  chatInput.style.outline = 'none';
+  chatInput.style.background = 'rgba(0,0,0,0.8)';
+  chatInput.style.color = '#fff';
+  chatInput.style.zIndex = '101';
+  chatInput.style.display = 'none';
+  document.body.appendChild(chatInput);
+
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const text = chatInput.value.trim();
+      if (text.length > 0) {
+        sendToServer({ type: 'chat', text });
+        chatInput.value = '';
+      }
+      chatActive = false;
+      chatInput.style.display = 'none';
+      chatInput.blur();
+      // Re-enable movement keys
+      Object.keys(keys).forEach(k => keys[k] = false);
+    } else if (e.key === 'Escape') {
+      chatActive = false;
+      chatInput.style.display = 'none';
+      chatInput.blur();
+      Object.keys(keys).forEach(k => keys[k] = false);
+    }
+    e.stopPropagation();
+  });
+
+  updateChatWindow();
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
   if (savedDebugState === 'true') {
@@ -330,9 +399,24 @@ function init() {
   // Event listeners
   window.addEventListener('resize', onWindowResize);
   document.addEventListener('keydown', (e) => {
-    // Check if name dialog is open - if so, ignore game controls
+    // Check if name dialog is open (declare once at top)
     const nameDialog = document.getElementById('nameDialog');
     const isNameDialogOpen = nameDialog && nameDialog.style.display === 'block';
+
+    // Activate chat with / or t, but NOT if name dialog is open
+    if (!chatActive && !isNameDialogOpen && (e.key === '/' || e.key === 't' || e.key === 'T')) {
+      chatActive = true;
+      chatInput.style.display = 'block';
+      chatInput.value = '';
+      setTimeout(() => chatInput.focus(), 10);
+      e.preventDefault();
+      return;
+    }
+    if (chatActive) {
+      // Disable all movement/game keys while chat is active
+      e.preventDefault();
+      return;
+    }
 
     // Don't register game keys if dialog is open (except allow Escape to close things)
     if (!isNameDialogOpen || e.code === 'Escape') {
@@ -1341,7 +1425,6 @@ function connectToServer() {
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
   ws.onopen = () => {
-    console.log('Connected to server');
     showMessage('Connected to server!');
 
     // Only send join if there is a saved name that is not 'Player' or 'Player n'
@@ -1393,6 +1476,14 @@ function connectToServer() {
 }
 
 function handleServerMessage(message) {
+  if (message.type === 'chat') {
+    // Format: { type: 'chat', from, text, id }
+    let prefix = message.from ? `<${message.from}> ` : '';
+    chatMessages.push(prefix + message.text);
+    if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
+    updateChatWindow();
+    return;
+  }
   switch (message.type) {
     case 'init':
       // Clear any existing tanks from previous connections
@@ -1468,6 +1559,12 @@ function handleServerMessage(message) {
       if (message.clouds) {
         createClouds(message.clouds);
       }
+      message.players.forEach(player => {
+        if (player.health > 0) {
+          addPlayer(player);
+        }
+      });
+      updateScoreboard();
       break;
 
     case 'playerJoined':
@@ -1704,7 +1801,6 @@ function removeShield(playerId) {
 }
 
 function createProjectile(data) {
-  console.log('Creating projectile', data);
   const geometry = new THREE.SphereGeometry(0.3, 8, 8);
   const material = new THREE.MeshBasicMaterial({ color: 0xFFFF00 });
   const projectile = new THREE.Mesh(geometry, material);
@@ -1715,7 +1811,6 @@ function createProjectile(data) {
   };
   scene.add(projectile);
   projectiles.set(data.id, projectile);
-  console.log('[DEBUG] Created projectile', data.id, 'at', data.x, data.y, data.z, 'dir', data.dirX, data.dirZ);
 
   // Play shoot sound
   if (shootSound && shootSound.buffer) {
@@ -2098,12 +2193,13 @@ function updateScoreboard() {
     }
   });
 
-  // Sort by kills (descending), then by deaths (ascending)
+  // Sort by (kills - deaths) descending, then kills descending, then deaths ascending
   playerData.sort((a, b) => {
-    if (b.kills !== a.kills) {
-      return b.kills - a.kills;
-    }
-    return a.deaths - b.deaths;
+    const aScore = (a.kills || 0) - (a.deaths || 0);
+    const bScore = (b.kills || 0) - (b.deaths || 0);
+    if (bScore !== aScore) return bScore - aScore;
+    if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
+    return (a.deaths || 0) - (b.deaths || 0);
   });
 
   // Create scoreboard entries
@@ -2943,7 +3039,23 @@ function updateClouds(deltaTime) {
 
 let lastTime = performance.now();
 
+function updateChatWindow() {
+  const chatWindow = document.getElementById('chatWindow');
+  if (!chatWindow) return;
+  chatWindow.innerHTML = '';
+  let shown = 0;
+  for (let i = chatMessages.length - 1; i >= 0 && shown < CHAT_MAX_MESSAGES; i--) {
+    const msg = chatMessages[i];
+    const div = document.createElement('div');
+    div.textContent = msg;
+    chatWindow.appendChild(div);
+    shown++;
+  }
+}
+
 function animate() {
+    // Update chat window every frame (for fade-out, etc.)
+  updateChatWindow();
   requestAnimationFrame(animate);
 
   const now = performance.now();
@@ -3021,8 +3133,6 @@ function animate() {
   }
 
   updateProjectiles();
-  // Debug: log number of projectiles in scene
-  // console.log('[DEBUG] Projectiles in scene:', projectiles.size);
   updateShields();
   updateTreads(deltaTime);
   updateClouds(deltaTime);
