@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BZFlagW</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="hud">
+    <div id="stats">
+      <div><span id="playerName" style="cursor: pointer; color: #4CAF50; font-weight: bold; font-size: 20px;" title="Click to change name">Player</span></div>
+    </div>
+    <div id="scoreboard">
+      <h3>Scoreboard</h3>
+      <div id="scoreboardHeader">
+        <span class="scoreboardName">Player</span>
+        <span class="scoreboardStats">Kills / Deaths</span>
+      </div>
+      <div id="scoreboardList"></div>
+    </div>
+    <div id="messages"></div>
+    <div id="helpHint">Press <strong>?</strong> for help</div>
+  </div>
+
+  <div id="debugHud" style="display: none;">
+    <h3>Debug Info</h3>
+    <div id="debugContent"></div>
+  </div>
+
+  <div id="nameDialog" style="display: none;">
+    <h2>Welcome to BZFlagW</h2>
+    <div id="serverInfo" style="margin-bottom: 10px; font-size: 1.1em; color: #333;">
+      <span id="serverName">Server: BZFlagW</span><br>
+      <span id="serverVersion">Version: 1.0.0</span>
+    </div>
+    <input type="text" id="nameInput" maxlength="20" placeholder="Enter your name">
+    <div class="nameDialogButtons">
+      <button id="nameOkButton">OK</button>
+      <button id="nameDefaultButton">Default</button>
+      <button id="nameCancelButton">Cancel</button>
+    </div>
+  </div>
+
+  <div id="helpPanel" style="display: none;">
+    <h1>BZFlagW</h1>
+    <div id="helpContent">
+      <h2>Mouse Controls</h2>
+      <p><strong>First Click:</strong> Enable Mouse Controls</p>
+      <p><strong>Move Up/Down:</strong> Control Speed (Forward/Backward)</p>
+      <p><strong>Move Left/Right:</strong> Turn Tank</p>
+      <p><strong>Click:</strong> Shoot</p>
+      <p><strong>ESC:</strong> Switch to Keyboard Mode</p>
+
+      <h2>Keyboard Controls</h2>
+      <p><strong>W/S:</strong> Forward/Backward</p>
+      <p><strong>A/D:</strong> Turn Left/Right</p>
+      <p><strong>Space:</strong> Shoot</p>
+      <p><strong>Tab:</strong> Jump</p>
+      <p><strong>Click:</strong> Switch to Mouse Mode</p>
+
+      <h2>Other Controls</h2>
+      <p><strong>C:</strong> Toggle Camera View</p>
+      <p><strong>P:</strong> Pause Game</p>
+      <p><strong>?:</strong> Toggle This Help</p>
+    </div>
+  </div>
+
+  <div id="controlBox"></div>
+  <div id="crosshair">
+    <div class="center"></div>
+  </div>
+  <canvas id="radar"></canvas>
+  <div id="compass">
+    <div class="compass-ring">
+      <div class="compass-mark north">N</div>
+      <div class="compass-mark east">E</div>
+      <div class="compass-mark south">S</div>
+      <div class="compass-mark west">W</div>
+      <div class="compass-needle"></div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

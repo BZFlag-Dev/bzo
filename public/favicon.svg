@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Left tread -->
+  <rect fill="#666666" x="4" y="2" width="4" height="28" rx="1"/>
+  <!-- Right tread -->
+  <rect fill="#666666" x="24" y="2" width="4" height="28" rx="1"/>
+  <!-- Tank body -->
+  <rect fill="#cc0000" x="8" y="5" width="16" height="22" rx="1"/>
+  <!-- Turret (round) -->
+  <circle fill="#ff0000" cx="16" cy="16" r="6"/>
+  <!-- Barrel pointing up -->
+  <rect fill="#880000" x="14" y="2" width="4" height="8"/>
+</svg>

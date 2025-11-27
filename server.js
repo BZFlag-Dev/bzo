@@ -1,0 +1,939 @@
+const express = require('express');
+const { WebSocketServer } = require('ws');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Serve static files
+app.use(express.static('public'));
+
+const server = app.listen(PORT, '::', () => {
+  console.log(`Server running on http://[::]:${PORT}`);
+});
+
+// WebSocket server
+const wss = new WebSocketServer({ server });
+
+// Game constants
+const GAME_CONFIG = {
+  MAP_SIZE: 50,
+  TANK_SPEED: 5, // units per second
+  TANK_ROTATION_SPEED: 2, // radians per second
+  SHOT_SPEED: 20,
+  SHOT_COOLDOWN: 1000, // ms
+  MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
+  SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
+  PAUSE_COUNTDOWN: 2000, // ms
+  JUMP_VELOCITY: 30, // Initial upward velocity
+  GRAVITY: 30, // Gravity acceleration (units per second squared)
+  JUMP_COOLDOWN: 500, // ms between jumps
+  TANK_HEIGHT: 0, // Height of tank base (treads on ground)
+};
+
+// Generate random obstacles on server start
+function generateObstacles() {
+  const obstacles = [];
+  const mapSize = GAME_CONFIG.MAP_SIZE;
+  const numObstacles = Math.floor(mapSize / 20 + Math.random() * 3); // 5-7 obstacles
+  const minDistance = 15; // Minimum distance from center and other obstacles
+
+  for (let i = 0; i < numObstacles; i++) {
+    let attempts = 0;
+    let validPosition = false;
+    let obstacle;
+
+    while (!validPosition && attempts < 50) {
+      // Random position (avoid center spawn area)
+      const x = (Math.random() - 0.5) * (mapSize * 0.8);
+      const z = (Math.random() - 0.5) * (mapSize * 0.8);
+
+      // Random size
+      const w = 6 + Math.random() * 6; // Width 6-12
+      const d = 6 + Math.random() * 6; // Depth 6-12
+
+      // Random rotation (in radians)
+      const rotation = Math.random() * Math.PI * 2;
+
+      // Random height and base elevation
+      // 60% chance of ground obstacle, 40% chance of floating obstacle
+      let h, baseY;
+      if (Math.random() < 0.6) {
+        // Ground obstacle: 4-8 units tall, sits on ground
+        h = 4 + Math.random() * 4;
+        baseY = 0;
+      } else {
+        // Floating obstacle: 3-5 units tall, elevated 3-6 units above ground
+        h = 3 + Math.random() * 2;
+        baseY = 3 + Math.random() * 3;
+      }
+
+      obstacle = { x, z, w, d, h, baseY, rotation };
+
+      // Check distance from center
+      const distFromCenter = Math.sqrt(x * x + z * z);
+      if (distFromCenter < minDistance) {
+        attempts++;
+        continue;
+      }
+
+      // Check distance from other obstacles
+      validPosition = true;
+      for (const other of obstacles) {
+        const dist = Math.sqrt(
+          Math.pow(x - other.x, 2) + Math.pow(z - other.z, 2)
+        );
+        if (dist < (w + other.w) / 2 + minDistance) {
+          validPosition = false;
+          break;
+        }
+      }
+
+      attempts++;
+    }
+
+    if (validPosition && obstacle) {
+      obstacles.push(obstacle);
+    }
+  }
+
+  return obstacles;
+}
+
+const OBSTACLES = generateObstacles();
+
+// Generate random clouds with fractal pattern
+function generateClouds() {
+  const clouds = [];
+  const numClouds = 15;
+
+  for (let i = 0; i < numClouds; i++) {
+    // Random position in sky
+    const x = (Math.random() - 0.5) * 200;
+    const y = 30 + Math.random() * 40;
+    const z = (Math.random() - 0.5) * 200;
+
+    // Fractal puffs (multiple spheres clustered together)
+    const puffs = [];
+    const numPuffs = 5 + Math.floor(Math.random() * 8);
+
+    for (let j = 0; j < numPuffs; j++) {
+      puffs.push({
+        offsetX: (Math.random() - 0.5) * 10,
+        offsetY: (Math.random() - 0.5) * 3,
+        offsetZ: (Math.random() - 0.5) * 10,
+        radius: 2 + Math.random() * 4
+      });
+    }
+
+    clouds.push({ x, y, z, puffs });
+  }
+
+  return clouds;
+}
+
+// Calculate sun and moon positions based on time and estimated location
+function getCelestialPositions() {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const timeOfDay = hours + minutes / 60;
+
+  // Estimate location (US Eastern timezone based on typical usage)
+  const latitude = 40; // ~New York area
+
+  // Simple sun path calculation
+  // Sun rises at ~6am, sets at ~6pm, peaks at noon
+  const sunAngle = ((timeOfDay - 6) / 12) * Math.PI; // 0 to PI across day
+  const sunHeight = Math.sin(sunAngle) * 80; // Height in scene
+  const sunDistance = 150;
+
+  const sunPosition = {
+    x: Math.cos(sunAngle) * sunDistance,
+    y: Math.max(sunHeight, -20),
+    z: 0,
+    visible: sunHeight > -5
+  };
+
+  // Moon opposite side of sun
+  const moonAngle = sunAngle + Math.PI;
+  const moonHeight = Math.sin(moonAngle) * 80;
+
+  const moonPosition = {
+    x: Math.cos(moonAngle) * sunDistance,
+    y: Math.max(moonHeight, -20),
+    z: 0,
+    visible: moonHeight > -5
+  };
+
+  return { sun: sunPosition, moon: moonPosition };
+}
+
+// Game state
+const players = new Map();
+const projectiles = new Map();
+let projectileIdCounter = 0;
+const usedPlayerNumbers = new Set(); // Track which player numbers are in use
+
+// Get next available player number
+function getNextPlayerNumber() {
+  let num = 1;
+  while (usedPlayerNumbers.has(num)) {
+    num++;
+  }
+  usedPlayerNumbers.add(num);
+  return num;
+}
+
+// Player class
+class Player {
+  constructor(ws) {
+    this.id = getNextPlayerNumber().toString();
+    this.ws = ws;
+    this.playerNumber = parseInt(this.id, 10);
+    this.name = null;
+    this.x = 0;
+    this.y = GAME_CONFIG.TANK_HEIGHT;
+    this.z = 0;
+    this.rotation = 0;
+    this.health = 0;
+    this.lastShot = 0;
+    this.lastUpdate = Date.now();
+    this.kills = 0;
+    this.deaths = 0;
+    this.paused = false;
+    this.pauseCountdownStart = 0;
+    this.verticalVelocity = 0;
+    this.isJumping = false;
+    this.lastJumpTime = 0;
+    this.onObstacle = false;
+  }
+
+  respawn() {
+    const spawnPos = findValidSpawnPosition();
+    this.x = spawnPos.x;
+    this.y = spawnPos.y;
+    this.z = spawnPos.z;
+    this.rotation = Math.random() * Math.PI * 2;
+    this.health = 100;
+    this.verticalVelocity = 0;
+    this.isJumping = false;
+    this.onObstacle = false;
+  }
+
+  getState() {
+    return {
+      id: this.id,
+      name: this.name,
+      x: this.x,
+      y: this.y,
+      z: this.z,
+      rotation: this.rotation,
+      health: this.health,
+      kills: this.kills,
+      deaths: this.deaths,
+      paused: this.paused,
+      verticalVelocity: this.verticalVelocity,
+    };
+  }
+}
+
+// Projectile class
+class Projectile {
+  constructor(id, playerId, x, y, z, dirX, dirZ) {
+    this.id = id;
+    this.playerId = playerId;
+    this.x = x;
+    this.y = y || 2.2; // Default height if not specified (tank height + barrel height)
+    this.z = z;
+    this.dirX = dirX;
+    this.dirZ = dirZ;
+    this.createdAt = Date.now();
+  }
+}
+
+// Helper functions
+function distance(x1, z1, x2, z2) {
+  return Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
+}
+
+function normalizeAngle(angle) {
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function checkCollision(x, z, tankRadius = 2, y = null) {
+  const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+
+  // Check map boundaries (always check regardless of height)
+  if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
+      z - tankRadius < -halfMap || z + tankRadius > halfMap) {
+    return true;
+  }
+
+  // Check obstacles
+  for (const obs of OBSTACLES) {
+    const halfW = obs.w / 2;
+    const halfD = obs.d / 2;
+    const rotation = obs.rotation || 0;
+    const obstacleHeight = obs.h || 4;
+
+    // Transform tank position to obstacle's local space
+    const dx = x - obs.x;
+    const dz = z - obs.z;
+
+    // Rotate point to align with obstacle's axes
+    const cos = Math.cos(-rotation);
+    const sin = Math.sin(-rotation);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+
+    // Check if tank circle intersects with axis-aligned obstacle rectangle
+    const closestX = Math.max(-halfW, Math.min(localX, halfW));
+    const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
+
+    const distX = localX - closestX;
+    const distZ = localZ - closestZ;
+    const distSquared = distX * distX + distZ * distZ;
+
+    if (distSquared < tankRadius * tankRadius) {
+      // Tank is horizontally colliding with this obstacle
+      const obstacleBase = obs.baseY || 0;
+      const obstacleTop = obstacleBase + obstacleHeight;
+      
+      // Check if tank is in the vertical range of the obstacle
+      if (y !== null) {
+        // Tank can pass under if below base, or over if above 75% of height
+        if (y < obstacleBase || y >= obstacleTop * 0.75) {
+          continue; // Allow passing under or over
+        }
+      }
+      return true; // Block if in obstacle's vertical range
+    }
+  }
+
+  return false;
+}
+
+function findValidSpawnPosition(tankRadius = 2) {
+  const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+  const maxAttempts = 100;
+  const y = GAME_CONFIG.TANK_HEIGHT;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const x = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
+    const z = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
+
+    if (!checkCollision(x, z, tankRadius)) {
+      return { x, y, z };
+    }
+  }
+
+  // If we couldn't find a valid position after many attempts, return a safe default
+  return { x: 0, y: 0, z: 0 };
+}
+
+// Validate player movement
+function validateMovement(player, newX, newZ, newRotation, deltaTime) {
+  // Can't move while paused
+  if (player.paused) {
+    return false;
+  }
+
+  // Calculate distance moved
+  const distMoved = distance(player.x, player.z, newX, newZ);
+  const maxDist = GAME_CONFIG.TANK_SPEED * deltaTime * GAME_CONFIG.MAX_SPEED_TOLERANCE;
+
+  if (distMoved > maxDist) {
+    console.log(`Player "${player.name}" moved too fast: ${distMoved} > ${maxDist}`);
+    return false;
+  }
+
+  // Calculate rotation change
+  const rotDiff = Math.abs(normalizeAngle(newRotation - player.rotation));
+  const maxRot = GAME_CONFIG.TANK_ROTATION_SPEED * deltaTime * GAME_CONFIG.MAX_SPEED_TOLERANCE;
+
+  if (rotDiff > maxRot) {
+    console.log(`Player "${player.name}" rotated too fast: ${rotDiff} > ${maxRot}`);
+    return false;
+  }
+
+  // Check map boundaries
+  const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+  if (Math.abs(newX) > halfMap || Math.abs(newZ) > halfMap) {
+    console.log(`Player "${player.name}" out of bounds`);
+    return false;
+  }
+
+  // Check collision with obstacles (pass Y position)
+  if (checkCollision(newX, newZ, 2, player.y)) {
+    console.log(`Player "${player.name}" collided with obstacle`);
+    return false;
+  }
+
+  return true;
+}
+
+// Validate shot
+function validateShot(player, shotX, shotZ) {
+  // Shot originates from barrel end, which is ~3 units from tank center
+  const barrelLength = 3.0;
+  const dist = distance(player.x, player.z, shotX, shotZ);
+  if (dist > barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE) {
+    console.log(`Player "${player.name}" shot from invalid position: ${dist} units away`);
+    return false;
+  }
+
+  const now = Date.now();
+  if (now - player.lastShot < GAME_CONFIG.SHOT_COOLDOWN) {
+    console.log(`Player "${player.name}" shot too quickly`);
+    return false;
+  }
+
+  return true;
+}
+
+// Broadcast to all players except sender
+function broadcast(message, excludeWs = null) {
+  const data = JSON.stringify(message);
+  players.forEach((player) => {
+    if (player.ws !== excludeWs && player.ws.readyState === 1) {
+      player.ws.send(data);
+    }
+  });
+}
+
+// Broadcast to all players including sender
+function broadcastAll(message) {
+  const data = JSON.stringify(message);
+  players.forEach((player) => {
+    if (player.ws.readyState === 1) {
+      player.ws.send(data);
+    }
+  });
+}
+
+// Helper function to check if position is on top of an obstacle
+function checkObstacleCollision(x, y, z) {
+  const tankRadius = 2;
+  for (const obs of OBSTACLES) {
+    const halfW = obs.w / 2;
+    const halfD = obs.d / 2;
+    const rotation = obs.rotation || 0;
+
+    // Transform position to obstacle's local space
+    const dx = x - obs.x;
+    const dz = z - obs.z;
+
+    const cos = Math.cos(-rotation);
+    const sin = Math.sin(-rotation);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+
+    // Check if tank center is above this obstacle (with some margin for tank size)
+    const margin = tankRadius * 0.7;
+    if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
+      const obstacleBase = obs.baseY || 0;
+      const obstacleHeight = obs.h || 4;
+      const obstacleTop = obstacleBase + obstacleHeight;
+      // Check if tank is at or falling toward the top of obstacle
+      if (y >= obstacleTop - 1 && y <= obstacleTop + 2) {
+        return { onObstacle: true, obstacleHeight: obstacleTop };
+      }
+    }
+  }
+  return { onObstacle: false, obstacleHeight: 0 };
+}
+
+// Game loop - update projectiles and check collisions
+function gameLoop() {
+  const now = Date.now();
+  const deltaTime = 0.016; // ~60fps
+
+  // Update player jump physics
+  players.forEach((player) => {
+    if (player.verticalVelocity !== 0 || player.y > GAME_CONFIG.TANK_HEIGHT) {
+      // Apply gravity
+      player.verticalVelocity -= GAME_CONFIG.GRAVITY * deltaTime;
+      
+      // Update vertical position
+      player.y += player.verticalVelocity * deltaTime;
+
+      // Check for landing on ground or obstacle
+      const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
+      
+      if (obstacleCheck.onObstacle && player.verticalVelocity <= 0) {
+        // Land on obstacle - only end jump when actually landing
+        player.y = obstacleCheck.obstacleHeight;
+        player.verticalVelocity = 0;
+        player.isJumping = false;
+        player.onObstacle = true;
+      } else if (player.y <= GAME_CONFIG.TANK_HEIGHT && player.verticalVelocity <= 0) {
+        // Land on ground - only end jump when actually landing
+        player.y = GAME_CONFIG.TANK_HEIGHT;
+        player.verticalVelocity = 0;
+        player.isJumping = false;
+        player.onObstacle = false;
+      }
+      // Note: isJumping stays true throughout the jump arc (up, peak, down) until landing
+      
+      // Broadcast position update for jumping players
+      if (player.ws && player.ws.readyState === 1) {
+        broadcastAll({
+          type: 'playerMoved',
+          id: player.id,
+          x: player.x,
+          y: player.y,
+          z: player.z,
+          rotation: player.rotation,
+          verticalVelocity: player.verticalVelocity,
+        });
+      }
+    } else if (player.onObstacle) {
+      // Player is standing on obstacle - check if they've moved off
+      const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
+      if (!obstacleCheck.onObstacle) {
+        // Moved off obstacle - start falling
+        player.verticalVelocity = -1;
+        player.onObstacle = false;
+      }
+    }
+  });
+
+  // Update projectiles
+  projectiles.forEach((proj, id) => {
+    const deltaTime = (now - proj.createdAt) / 1000;
+    proj.x += proj.dirX * GAME_CONFIG.SHOT_SPEED * 0.016; // ~60fps
+    proj.z += proj.dirZ * GAME_CONFIG.SHOT_SPEED * 0.016;
+
+    // Remove if out of bounds or too old
+    const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > 10) {
+      projectiles.delete(id);
+      broadcastAll({ type: 'projectileRemoved', id });
+      return;
+    }
+
+    // Check collision with obstacles
+    for (const obs of OBSTACLES) {
+      const halfW = obs.w / 2;
+      const halfD = obs.d / 2;
+      const rotation = obs.rotation || 0;
+      const obstacleHeight = obs.h || 4;
+      const obstacleBase = obs.baseY || 0;
+      const obstacleTop = obstacleBase + obstacleHeight;
+
+      // Only check collision if projectile is within obstacle's vertical range
+      if (proj.y < obstacleBase || proj.y >= obstacleTop) {
+        continue; // Projectile is below or above this obstacle
+      }
+
+      // Transform projectile position to obstacle's local space
+      const dx = proj.x - obs.x;
+      const dz = proj.z - obs.z;
+
+      const cos = Math.cos(-rotation);
+      const sin = Math.sin(-rotation);
+      const localX = dx * cos - dz * sin;
+      const localZ = dx * sin + dz * cos;
+
+      // Check if projectile is inside obstacle bounds
+      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
+        // Hit obstacle!
+        projectiles.delete(id);
+        broadcastAll({ type: 'projectileRemoved', id });
+        return;
+      }
+    }
+
+    // Check collision with players
+    players.forEach((player) => {
+      if (player.id === proj.playerId) return; // Can't hit yourself
+      if (player.paused) return; // Can't hit paused players
+      if (player.health <= 0) return; // Can't hit dead players
+
+      // Check horizontal distance
+      const dist = distance(proj.x, proj.z, player.x, player.z);
+      if (dist < 2) { // Tank hitbox radius
+        // Check vertical collision - tank is roughly 2 units tall
+        const tankHeight = 2;
+        const playerBottom = player.y;
+        const playerTop = player.y + tankHeight;
+        
+        // Projectile must be within tank's vertical bounds
+        if (proj.y >= playerBottom && proj.y <= playerTop) {
+          // Hit!
+          projectiles.delete(id);
+          player.health = 0;
+          player.deaths++;
+
+          const shooter = players.get(proj.playerId);
+          if (shooter) {
+            shooter.kills++;
+          }
+
+          broadcastAll({
+            type: 'playerHit',
+            victimId: player.id,
+            shooterId: proj.playerId,
+            projectileId: id,
+          });
+
+          // Respawn player
+          setTimeout(() => {
+            if (players.has(player.id)) {
+              player.respawn();
+              broadcastAll({
+                type: 'playerRespawned',
+                player: player.getState(),
+              });
+            }
+          }, 2000);
+        }
+      }
+    });
+  });
+}
+
+setInterval(gameLoop, 16); // ~60fps
+
+// Function to force all clients to reload
+function forceClientReload() {
+  console.log('Forcing all clients to reload...');
+  broadcastAll({ type: 'reload' });
+
+  // Close all connections after a short delay
+  setTimeout(() => {
+    players.forEach((player) => {
+      if (player.ws.readyState === 1) {
+        player.ws.close();
+      }
+    });
+    players.clear();
+  }, 500);
+}
+
+// WebSocket connection handler
+wss.on('connection', (ws, req) => {
+  let player = new Player(ws);
+  players.set(player.id, player);
+  const playerNumber = player.playerNumber;
+  const playerId = player.id
+  console.log(`[DEBUG] Assigned player number: ${playerNumber}`);
+
+  // Get client IP and port
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const clientIP = forwardedFor ? forwardedFor.split(',')[0].trim() : req.socket.remoteAddress;
+  const clientPort = req.socket.remotePort;
+  const ipDisplay = forwardedFor ? `${clientIP} (via ${req.socket.remoteAddress})` : clientIP;
+  console.log(`Connection from ${ipDisplay}:${clientPort} - Assigned player #${playerNumber}`);
+
+  // Send initial server state in init message
+  // Send initial state to new player (do not add to players map or broadcast yet)
+  const celestialPositions = getCelestialPositions();
+  const clouds = generateClouds();
+
+  ws.send(JSON.stringify({
+    type: 'init',
+    playerId,
+    player: player.getState(),
+    players: Array.from(players.values()).map(p => p.getState()),
+    config: GAME_CONFIG,
+    obstacles: OBSTACLES,
+    celestial: celestialPositions,
+    clouds: clouds,
+  }));
+
+  // Handle messages
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data);
+
+      switch (message.type) {
+        case 'move':
+          const now = Date.now();
+          // Calculate deltaTime based on server's last update time
+          const deltaTime = (now - player.lastUpdate) / 1000;
+          player.lastUpdate = now;
+
+          // Clamp deltaTime to reasonable values (prevent abuse and handle reconnects)
+          const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 0.5);
+
+          // Accept client's vertical position first so collision detection uses correct Y
+          const oldY = player.y;
+          if (message.y !== undefined) {
+            player.y = message.y;
+          }
+
+          if (validateMovement(player, message.x, message.z, message.rotation, clampedDeltaTime)) {
+            player.x = message.x;
+            player.z = message.z;
+            player.rotation = message.rotation;
+            player.forwardSpeed = message.forwardSpeed || 0;
+            player.rotationSpeed = message.rotationSpeed || 0;
+            if (message.verticalVelocity !== undefined) {
+              // Check if client is attempting to jump (sudden positive velocity)
+              const isJumpAttempt = message.verticalVelocity >= GAME_CONFIG.JUMP_VELOCITY * 0.9 && 
+                                     player.verticalVelocity < GAME_CONFIG.JUMP_VELOCITY * 0.5;
+              
+              if (isJumpAttempt) {
+                // Validate jump - allow from ground or from top of any obstacle
+                const jumpTime = Date.now();
+                const timeSinceLastJump = jumpTime - player.lastJumpTime;
+                
+                // Check if on ground or on top of an obstacle
+                const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
+                const onValidSurface = player.y <= GAME_CONFIG.TANK_HEIGHT + 0.5 || 
+                                      (obstacleCheck.onObstacle && Math.abs(player.y - obstacleCheck.obstacleHeight) < 0.5);
+                
+                if (!player.isJumping && timeSinceLastJump >= GAME_CONFIG.JUMP_COOLDOWN && onValidSurface) {
+                  // Allow jump
+                  player.lastJumpTime = jumpTime;
+                  player.verticalVelocity = GAME_CONFIG.JUMP_VELOCITY;
+                  player.isJumping = true;
+                }
+                // Otherwise reject by keeping server's current velocity
+              } else {
+                // Accept velocity for falling/landing
+                player.verticalVelocity = message.verticalVelocity;
+              }
+            }
+
+            broadcast({
+              type: 'playerMoved',
+              id: playerId,
+              x: player.x,
+              y: player.y,
+              z: player.z,
+              rotation: player.rotation,
+              forwardSpeed: player.forwardSpeed,
+              rotationSpeed: player.rotationSpeed,
+              verticalVelocity: player.verticalVelocity,
+            }, ws);
+          } else {
+            // Validation failed - restore old Y position
+            player.y = oldY;
+            
+            // Send correction back to client
+            ws.send(JSON.stringify({
+              type: 'positionCorrection',
+              x: player.x,
+              y: player.y,
+              z: player.z,
+              rotation: player.rotation,
+              verticalVelocity: player.verticalVelocity,
+            }));
+          }
+          break;
+
+        case 'shoot': {
+          // message: { type: 'shot', x, y, z, dirX, dirZ }
+          if (player.health <= 0) break; // Dead players can't shoot
+          if (!validateShot(player, message.x, message.z)) break;
+          const now = Date.now();
+          player.lastShot = now;
+          const id = (++projectileIdCounter).toString();
+          const proj = new Projectile(
+            id,
+            playerId,
+            message.x,
+            message.y !== undefined ? message.y : (player.y + 2.2),
+            message.z,
+            message.dirX,
+            message.dirZ
+          );
+          projectiles.set(id, proj);
+          broadcastAll({
+            type: 'projectileCreated',
+            id: proj.id,
+            playerId: proj.playerId,
+            x: proj.x,
+            y: proj.y,
+            z: proj.z,
+            dirX: proj.dirX,
+            dirZ: proj.dirZ,
+            createdAt: proj.createdAt
+          });
+          break;
+        }
+
+        case 'joinGame':
+          let joinName = '';
+          if (message.name && message.name.trim().length > 0 && message.name.length <= 20)
+            joinName = message.name.trim();
+          else
+            joinName = `Player ${player.playerNumber}`; // Default name based on player number
+          player.name = joinName;
+          player.health = 100;
+          // spawn at valid position
+          const spawnPos = findValidSpawnPosition();
+          player.x = spawnPos.x;
+          player.y = spawnPos.y
+          player.z = spawnPos.z;
+          player.rotation = Math.random() * Math.PI * 2;
+          player.verticalVelocity = 0;
+          player.isJumping = false;
+          player.onObstacle = false;
+          player.deaths = 0;
+          player.kills = 0;
+          console.log(`Player ${playerId} joining game as "${joinName}"`);
+
+          // broadcast join to all
+          broadcastAll({
+            type: 'playerJoined',
+            player: player.getState(),
+          }, ws);
+          break;
+
+        case 'changeName':
+          let newName = '';
+
+          if (message.name && message.name.trim().length > 0 && message.name.length <= 20) {
+            newName = message.name.trim();
+          }
+
+          // Empty name means assign lowest available Player N
+          if (newName.length === 0) {
+            let num = 1;
+            let foundAvailable = false;
+            while (!foundAvailable) {
+              const testName = `Player ${num}`;
+              const nameTaken = Array.from(players.values()).some(p =>
+                p.id !== playerId && p.name && p.name.toLowerCase() === testName.toLowerCase()
+              );
+              if (!nameTaken) {
+                newName = testName;
+                foundAvailable = true;
+              } else {
+                num++;
+              }
+            }
+          }
+
+          if (newName) {
+            // Check if name is already taken by another player
+            const nameTaken = Array.from(players.values()).some(p =>
+              p.id !== playerId && p.name && p.name.toLowerCase() === newName.toLowerCase()
+            );
+
+            if (nameTaken) {
+              console.log(`Player "${player.name}" tried to change to "${newName}" (already taken)`);
+              // Send error back to client
+              ws.send(JSON.stringify({
+                type: 'nameError',
+                message: 'Name already taken',
+              }));
+            } else {
+              const oldName = player.name;
+              player.name = newName;
+              console.log(`Player name changed: "${oldName}" -> "${newName}"`);
+              broadcastAll({
+                type: 'nameChanged',
+                playerId,
+                name: player.name,
+              });
+            }
+          }
+          break;
+
+        case 'pause':
+          if (!player.paused && player.pauseCountdownStart === 0) {
+            // Start pause countdown
+            player.pauseCountdownStart = Date.now();
+
+            broadcastAll({
+              type: 'pauseCountdown',
+              playerId,
+            });
+
+            // After countdown, activate pause
+            setTimeout(() => {
+              if (players.has(playerId) && player.pauseCountdownStart > 0) {
+                player.paused = true;
+                player.pauseCountdownStart = 0;
+
+                broadcastAll({
+                  type: 'playerPaused',
+                  playerId,
+                  x: player.x,
+                  z: player.z,
+                });
+              }
+            }, GAME_CONFIG.PAUSE_COUNTDOWN);
+          } else if (player.paused) {
+            // Unpause
+            player.paused = false;
+            player.pauseCountdownStart = 0;
+
+            broadcastAll({
+              type: 'playerUnpaused',
+              playerId,
+            });
+          }
+          break;
+      }
+    } catch (err) {
+      console.error('Error handling message:', err);
+    }
+  });
+
+  // Handle disconnect
+  ws.on('close', () => {
+    const playerName = player.name;
+    const playerNum = player.playerNumber;
+    players.delete(playerId);
+    usedPlayerNumbers.delete(playerNum); // Free up the player number for reuse
+    console.log(`Player "${playerName}" (#${playerNum}) disconnected. Total players: ${players.size}`);
+
+    broadcast({
+      type: 'playerLeft',
+      id: playerId,
+    });
+  });
+});
+
+// Expose the forceClientReload function for manual triggering
+// You can call this from the Node.js console or via a signal
+global.forceReload = forceClientReload;
+
+// Optional: Listen for SIGUSR1 signal to trigger reload
+process.on('SIGUSR1', () => {
+  console.log('Received SIGUSR1 signal');
+  forceClientReload();
+});
+
+// Watch for file changes and auto-reload clients
+const filesToWatch = [
+  path.join(__dirname, 'public', 'game.js'),
+  path.join(__dirname, 'public', 'index.html'),
+  path.join(__dirname, 'public', 'styles.css'),
+  path.join(__dirname, 'server.js'),
+];
+
+console.log('Watching files for changes...');
+filesToWatch.forEach(file => {
+  if (fs.existsSync(file)) {
+    fs.watch(file, (eventType, filename) => {
+      if (eventType === 'change') {
+        console.log(`\n📝 File changed: ${filename || file}`);
+        console.log('🔄 Reloading all clients...\n');
+        forceClientReload();
+
+        // If server.js changed, restart the server
+        if (file.endsWith('server.js')) {
+          console.log('🔄 Restarting server...\n');
+          setTimeout(() => {
+            process.exit(0);
+          }, 1000);
+        }
+      }
+    });
+    console.log(`  ✓ Watching: ${path.basename(file)}`);
+  }
+});
