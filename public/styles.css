@@ -7,7 +7,6 @@
   width: 70vw;
   height: 33vh;
   max-width: 70vw;
-  min-width: 320px;
   background: rgba(0,0,0,0.5);
   color: #fff;
   font: 16px monospace;
@@ -49,15 +48,27 @@ body {
   color: #fff;
 }
 
-#hud {
-  position: absolute;
+#mainhud {
+  position: fixed;
   top: 10px;
   left: 10px;
   z-index: 100;
   background: rgba(0, 0, 0, 0.7);
   padding: 20px;
   border-radius: 10px;
-  min-width: 300px;
+  width: 25vw;
+  height: 33vh;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+@media (max-width: 900px), (max-width: 600px) {
+  #mainhud {
+    width: 80vw;
+    height: auto;
+    padding: 10px;
+    font-size: 14px;
+  }
 }
 
 #info h1 {
@@ -156,9 +167,6 @@ body {
   padding: 30px;
   border-radius: 15px;
   border: 2px solid #4CAF50;
-  min-width: 500px;
-  max-width: 600px;
-  max-height: 80vh;
   overflow-y: auto;
 }
 
@@ -202,7 +210,6 @@ body {
   padding: 30px;
   border-radius: 15px;
   border: 2px solid #4CAF50;
-  min-width: 400px;
 }
 
 #nameDialog h2 {
@@ -278,16 +285,26 @@ body {
 }
 
 #debugHud {
-  position: absolute;
+  position: fixed;
   bottom: 10px;
   right: 10px;
   z-index: 100;
   background: rgba(0, 0, 0, 0.8);
   padding: 15px;
   border-radius: 10px;
-  min-width: 250px;
+  width: 320px;
   font-family: 'Courier New', monospace;
   font-size: 12px;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+@media (max-width: 600px) {
+  #debugHud {
+    width: 90vw;
+    font-size: 11px;
+    padding: 8px;
+  }
 }
 
 #debugHud h3 {
@@ -310,12 +327,20 @@ body {
 
 #compass {
   position: fixed;
-  top: 10px;
-  right: calc(25vw + 20px);
-  width: 80px;
-  height: 80px;
   z-index: 100;
   opacity: 0.5;
+  width: 80px;
+  height: 80px;
+  top: 10px;
+  right: calc(18vw + 3vw + 10px); /* 3vw gap from radar in landscape */
+}
+
+@media (orientation: portrait) {
+  #compass {
+    top: calc(10px + 18vw + 3vh);
+    right: 10px;
+    left: auto;
+  }
 }
 
 .compass-ring {
@@ -498,4 +523,15 @@ canvas {
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   background: rgba(0, 0, 0, 0.8);
   opacity: 0.5;
+  width: 18vw;
+  height: 18vw;
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+  #radar {
+    width: 32vw;
+    height: 32vw;
+  }
 }
