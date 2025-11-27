@@ -625,14 +625,13 @@ wss.on('connection', (ws, req) => {
   players.set(player.id, player);
   const playerNumber = player.playerNumber;
   const playerId = player.id
-  console.log(`[DEBUG] Assigned player number: ${playerNumber}`);
 
   // Get client IP and port
   const forwardedFor = req.headers['x-forwarded-for'];
   const clientIP = forwardedFor ? forwardedFor.split(',')[0].trim() : req.socket.remoteAddress;
   const clientPort = req.socket.remotePort;
   const ipDisplay = forwardedFor ? `${clientIP} (via ${req.socket.remoteAddress})` : clientIP;
-  console.log(`Connection from ${ipDisplay}:${clientPort} - Assigned player #${playerNumber}`);
+  console.log(`Player ${playerNumber} connect from ${ipDisplay}:${clientPort}`);
 
   // Send initial server state in init message
   // Send initial state to new player (do not add to players map or broadcast yet)
