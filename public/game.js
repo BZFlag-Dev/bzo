@@ -194,24 +194,43 @@ function init() {
   chatInput = document.getElementById('chatInput');
 
   chatInput.addEventListener('keydown', (e) => {
+    // Prevent all game events while typing
+    e.stopPropagation();
     if (e.key === 'Enter') {
       const text = chatInput.value.trim();
       if (text.length > 0) {
         sendToServer({ type: 'chat', text });
         chatInput.value = '';
       }
-      chatActive = false;
-      chatInput.style.display = 'none';
       chatInput.blur();
       // Re-enable movement keys
       Object.keys(keys).forEach(k => keys[k] = false);
     } else if (e.key === 'Escape') {
-      chatActive = false;
-      chatInput.style.display = 'none';
       chatInput.blur();
       Object.keys(keys).forEach(k => keys[k] = false);
     }
+  });
+
+  // Prevent mouse/game events when chat input is focused or clicked
+  chatInput.addEventListener('focus', () => {
+    chatActive = true;
+  });
+  chatInput.addEventListener('blur', () => {
+    chatActive = false;
+  });
+  chatInput.addEventListener('mousedown', (e) => {
+    chatActive = true;
+    // Only prevent propagation for the input itself
     e.stopPropagation();
+  });
+
+  // Prevent chatActive from blocking mouse motion for clicks on chatWindow background
+  chatWindow.addEventListener('mousedown', (e) => {
+    // If the click is NOT on the input, allow mouse motion activation
+    if (e.target !== chatInput) {
+      chatInput.blur();
+      chatActive = false;
+    }
   });
   updateChatWindow();
 
@@ -368,14 +387,12 @@ function init() {
 
     // Activate chat with / or t, but NOT if name dialog is open
     if (!chatActive && !isNameDialogOpen && (e.key === '/' || e.key === 't' || e.key === 'T')) {
-      chatActive = true;
-      chatInput.style.display = 'block';
       chatInput.value = '';
-      setTimeout(() => chatInput.focus(), 10);
+      chatInput.focus();
       e.preventDefault();
       return;
     }
-    if (chatActive) {
+    if (chatActive || document.activeElement === chatInput) {
       // Disable all movement/game keys while chat is active
       e.preventDefault();
       return;
@@ -498,54 +515,37 @@ function init() {
   });
 
   // Mouse movement for analog control
+  // Mouse analog control using position relative to center (cursor always visible)
   document.addEventListener('mousemove', (e) => {
+    if (!mouseControlEnabled || chatActive || document.activeElement === chatInput) return;
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
-
-    // Control box size: 50% of smaller viewport dimension (matches CSS vmin)
-    const smallerDimension = Math.min(window.innerWidth, window.innerHeight);
-    const controlBoxSize = smallerDimension * 0.5;
-    const maxDistance = controlBoxSize / 2;
-
-    // Calculate distance from center in pixels
-    const deltaX = e.clientX - centerX;
-    const deltaY = e.clientY - centerY;
-
-    // Scale to -1 to 1 based on control box, reaching 100% at box edge
-    mouseX = deltaX / maxDistance;
-    mouseY = deltaY / maxDistance;
-
-    // Clamp values to -1 to 1 (100% at box edge, capped beyond)
+    mouseX = (e.clientX - centerX) / (window.innerWidth * 0.35); // 70% width
+    mouseY = (e.clientY - centerY) / (window.innerHeight * 0.33); // 33% height
+    // Clamp to -1..1
     mouseX = Math.max(-1, Math.min(1, mouseX));
     mouseY = Math.max(-1, Math.min(1, mouseY));
   });
 
   // Mouse click to shoot (or enable mouse controls on first click)
   document.addEventListener('mousedown', (e) => {
+    // Only block mouse actions if the click is on the chat input itself
+    if (e.target === chatInput) return;
+
+    // If the click is anywhere except the chat input, activate mouse mode
+    if (!mouseControlEnabled) {
+      mouseControlEnabled = true;
+      showMessage('Controls: Mouse');
+    }
+
+    // If the click is inside the chat window but not on the input, blur input and exit chat
+    if (e.target.closest && e.target.closest('#chatWindow') && e.target !== chatInput) {
+      chatInput.blur();
+      chatActive = false;
+    }
+    if (chatActive || document.activeElement === chatInput) return;
     if (e.button === 0) { // Left click
-      // Ignore clicks on HUD, radar, and name dialog
-      const target = e.target;
-      const isHudClick = target.closest('#hud') !== null;
-      const isRadarClick = target.id === 'radar' || target.closest('#radar') !== null;
-      const isDialogClick = target.closest('#nameDialog') !== null;
-
-      if (isHudClick || isRadarClick || isDialogClick) {
-        return;
-      }
-
-      if (!hasInteracted) {
-        hasInteracted = true;
-        mouseControlEnabled = true;
-        showMessage('Controls: Mouse');
-        return;
-      }
-      // If in keyboard mode, switch to mouse mode
-      if (!mouseControlEnabled) {
-        mouseControlEnabled = true;
-        showMessage('Controls: Mouse');
-        return;
-      }
-      // If already in mouse mode, shoot
+      // ...existing code...
       keys['Space'] = true;
     }
   });
@@ -553,6 +553,14 @@ function init() {
   document.addEventListener('mouseup', (e) => {
     if (e.button === 0) {
       keys['Space'] = false;
+    }
+  });
+
+  // Exit mouse mode on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Escape' && mouseControlEnabled) {
+      mouseControlEnabled = false;
+      showMessage('Controls: Keyboard');
     }
   });
 
@@ -1387,6 +1395,12 @@ function connectToServer() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
+  // Detect mobile browser
+  function isMobileBrowser() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  }
+  const isMobile = isMobileBrowser();
+
   ws.onopen = () => {
     showMessage('Connected to server!');
 
@@ -1402,8 +1416,15 @@ function connectToServer() {
         sendToServer({
           type: 'joinGame',
           name: trimmed,
+          isMobile,
         });
       }
+    } else {
+      // Always send isMobile on first join
+      sendToServer({
+        type: 'joinGame',
+        isMobile,
+      });
     }
   };
 
@@ -1588,23 +1609,27 @@ function handleServerMessage(message) {
         // Detect jump (vertical velocity suddenly became positive and large)
         if (oldVerticalVel < 10 && newVerticalVel >= 20) {
           // Play jump sound at tank's position
-          const jumpSoundClone = jumpSound.clone();
-          tank.add(jumpSoundClone);
-          jumpSoundClone.setVolume(0.4);
-          jumpSoundClone.play();
-          // Remove sound after playing
-          setTimeout(() => tank.remove(jumpSoundClone), 200);
+          if (jumpSound && jumpSound.context) {
+            const jumpSoundClone = jumpSound.clone();
+            tank.add(jumpSoundClone);
+            jumpSoundClone.setVolume(0.4);
+            jumpSoundClone.play();
+            // Remove sound after playing
+            setTimeout(() => tank.remove(jumpSoundClone), 200);
+          }
         }
 
         // Detect landing (was in air, now at ground/obstacle with zero velocity)
         if (oldY > 0.5 && y <= oldY - 0.5 && Math.abs(newVerticalVel) < 1) {
           // Play land sound at tank's position
-          const landSoundClone = landSound.clone();
-          tank.add(landSoundClone);
-          landSoundClone.setVolume(0.5);
-          landSoundClone.play();
-          // Remove sound after playing
-          setTimeout(() => tank.remove(landSoundClone), 150);
+          if (landSound && landSound.context) {
+            const landSoundClone = landSound.clone();
+            tank.add(landSoundClone);
+            landSoundClone.setVolume(0.5);
+            landSoundClone.play();
+            // Remove sound after playing
+            setTimeout(() => tank.remove(landSoundClone), 150);
+          }
         }
       }
       break;
@@ -2997,13 +3022,23 @@ let lastTime = performance.now();
 function updateChatWindow() {
   const chatWindow = document.getElementById('chatWindow');
   if (!chatWindow) return;
-  chatWindow.innerHTML = '';
+  // Only update the message area, not the input
+  const chatInput = document.getElementById('chatInput');
+  // Remove all children except the input
+  while (chatWindow.firstChild) {
+    if (chatWindow.firstChild !== chatInput) {
+      chatWindow.removeChild(chatWindow.firstChild);
+    } else {
+      break;
+    }
+  }
   let shown = 0;
-  for (let i = chatMessages.length - 1; i >= 0 && shown < CHAT_MAX_MESSAGES; i--) {
+  // Add messages above the input
+  for (let i = Math.max(0, chatMessages.length - CHAT_MAX_MESSAGES); i < chatMessages.length; i++) {
     const msg = chatMessages[i];
     const div = document.createElement('div');
     div.textContent = msg;
-    chatWindow.appendChild(div);
+    chatWindow.insertBefore(div, chatInput);
     shown++;
   }
 }

@@ -795,7 +795,11 @@ wss.on('connection', (ws, req) => {
           player.onObstacle = false;
           player.deaths = 0;
           player.kills = 0;
-          console.log(`Player ${playerId} joining game as "${joinName}"`);
+          if (message.isMobile) {
+            console.log(`Player ${playerId} joining game as "${joinName}" [MOBILE]`);
+          } else {
+            console.log(`Player ${playerId} joining game as "${joinName}"`);
+          }
 
           // broadcast join to all
           broadcastAll({
