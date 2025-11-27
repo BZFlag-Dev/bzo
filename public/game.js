@@ -190,45 +190,8 @@ function createObstacleTexture() {
 // Initialize Three.js
 function init() {
   // Chat UI
-  const chatWindow = document.createElement('div');
-  chatWindow.id = 'chatWindow';
-  chatWindow.style.position = 'absolute';
-  chatWindow.style.left = '50%';
-  chatWindow.style.bottom = '30px';
-  chatWindow.style.transform = 'translateX(-50%)';
-  chatWindow.style.width = '600px';
-  chatWindow.style.maxWidth = '90vw';
-  chatWindow.style.background = 'rgba(0,0,0,0.5)';
-  chatWindow.style.color = '#fff';
-  chatWindow.style.font = '16px monospace';
-  chatWindow.style.padding = '8px 12px 2px 12px';
-  chatWindow.style.borderRadius = '8px';
-  chatWindow.style.pointerEvents = 'none';
-  chatWindow.style.zIndex = '100';
-  chatWindow.style.display = 'flex';
-  chatWindow.style.flexDirection = 'column-reverse';
-  chatWindow.style.gap = '2px';
-  document.body.appendChild(chatWindow);
-
-  chatInput = document.createElement('input');
-  chatInput.id = 'chatInput';
-  chatInput.type = 'text';
-  chatInput.style.position = 'absolute';
-  chatInput.style.left = '50%';
-  chatInput.style.bottom = '0px';
-  chatInput.style.transform = 'translateX(-50%)';
-  chatInput.style.width = '600px';
-  chatInput.style.maxWidth = '90vw';
-  chatInput.style.font = '18px monospace';
-  chatInput.style.padding = '8px 12px';
-  chatInput.style.borderRadius = '8px';
-  chatInput.style.border = 'none';
-  chatInput.style.outline = 'none';
-  chatInput.style.background = 'rgba(0,0,0,0.8)';
-  chatInput.style.color = '#fff';
-  chatInput.style.zIndex = '101';
-  chatInput.style.display = 'none';
-  document.body.appendChild(chatInput);
+  const chatWindow = document.getElementById('chatWindow');
+  chatInput = document.getElementById('chatInput');
 
   chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -250,8 +213,8 @@ function init() {
     }
     e.stopPropagation();
   });
-
   updateChatWindow();
+  
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
   if (savedDebugState === 'true') {
@@ -1831,30 +1794,34 @@ function removeProjectile(id) {
 
 function handlePlayerHit(message) {
   if (message.victimId === myPlayerId) {
+    // Local player was killed
+    //if (myTank && myTank.userData.playerState) {
+    //  myTank.userData.playerState.deaths = (myTank.userData.playerState.deaths || 0) + 1;
+    //}
     showMessage('You were killed!', 'death');
-    updateScoreboard();
   } else if (message.shooterId === myPlayerId) {
+    // Local player got a kill
+    //if (myTank && myTank.userData.playerState) {
+    //  myTank.userData.playerState.kills = (myTank.userData.playerState.kills || 0) + 1;
+    //}
     showMessage('You got a kill!', 'kill');
-    updateScoreboard();
-  } else {
-    // Update other players' stats
-    const shooterTank = tanks.get(message.shooterId);
-    const victimTank = tanks.get(message.victimId);
-
-    if (shooterTank && shooterTank.userData.playerState) {
-      shooterTank.userData.playerState.kills = (shooterTank.userData.playerState.kills || 0) + 1;
-    }
-    if (victimTank && victimTank.userData.playerState) {
-      victimTank.userData.playerState.deaths = (victimTank.userData.playerState.deaths || 0) + 1;
-    }
-    updateScoreboard();
   }
+  // Update other players' stats
+  const shooterTank = tanks.get(message.shooterId);
+  const victimTank = tanks.get(message.victimId);
+
+  if (shooterTank && shooterTank.userData.playerState) {
+    shooterTank.userData.playerState.kills = (shooterTank.userData.playerState.kills || 0) + 1;
+  }
+  if (victimTank && victimTank.userData.playerState) {
+    victimTank.userData.playerState.deaths = (victimTank.userData.playerState.deaths || 0) + 1;
+  }
+  updateScoreboard();
 
   // Remove the projectile
   removeProjectile(message.projectileId);
 
   // Get victim tank and create explosion effect
-  const victimTank = tanks.get(message.victimId);
   if (victimTank) {
     // Immediately hide the tank from the scene
     victimTank.visible = false;
@@ -2222,23 +2189,11 @@ function updateScoreboard() {
 }
 
 function showMessage(text, type = '') {
-  const messagesDiv = document.getElementById('messages');
-  const messageEl = document.createElement('div');
-  messageEl.className = `message ${type}`;
-  messageEl.textContent = text;
-  messagesDiv.insertBefore(messageEl, messagesDiv.firstChild);
-
-  // Remove old messages
-  while (messagesDiv.children.length > 5) {
-    messagesDiv.removeChild(messagesDiv.lastChild);
-  }
-
-  // Auto remove after 5 seconds
-  setTimeout(() => {
-    if (messageEl.parentNode) {
-      messageEl.remove();
-    }
-  }, 5000);
+  // Show a message in the chat window as if from SERVER
+  const prefix = '<SERVER> ';
+  chatMessages.push(prefix + text);
+  if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
+  updateChatWindow();
 }
 
 function checkIfOnObstacle(x, z, tankRadius = 2, y = null) {
