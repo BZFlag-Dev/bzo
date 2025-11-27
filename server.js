@@ -18,7 +18,7 @@ const wss = new WebSocketServer({ server });
 
 // Game constants
 const GAME_CONFIG = {
-  MAP_SIZE: 50,
+  MAP_SIZE: 300,
   TANK_SPEED: 5, // units per second
   TANK_ROTATION_SPEED: 2, // radians per second
   SHOT_SPEED: 20,
@@ -306,7 +306,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
       // Tank is horizontally colliding with this obstacle
       const obstacleBase = obs.baseY || 0;
       const obstacleTop = obstacleBase + obstacleHeight;
-      
+
       // Check if tank is in the vertical range of the obstacle
       if (y !== null) {
         // Tank can pass under if below base, or over if above 75% of height
@@ -461,13 +461,13 @@ function gameLoop() {
     if (player.verticalVelocity !== 0 || player.y > GAME_CONFIG.TANK_HEIGHT) {
       // Apply gravity
       player.verticalVelocity -= GAME_CONFIG.GRAVITY * deltaTime;
-      
+
       // Update vertical position
       player.y += player.verticalVelocity * deltaTime;
 
       // Check for landing on ground or obstacle
       const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
-      
+
       if (obstacleCheck.onObstacle && player.verticalVelocity <= 0) {
         // Land on obstacle - only end jump when actually landing
         player.y = obstacleCheck.obstacleHeight;
@@ -482,7 +482,7 @@ function gameLoop() {
         player.onObstacle = false;
       }
       // Note: isJumping stays true throughout the jump arc (up, peak, down) until landing
-      
+
       // Broadcast position update for jumping players
       if (player.ws && player.ws.readyState === 1) {
         broadcastAll({
@@ -565,7 +565,7 @@ function gameLoop() {
         const tankHeight = 2;
         const playerBottom = player.y;
         const playerTop = player.y + tankHeight;
-        
+
         // Projectile must be within tank's vertical bounds
         if (proj.y >= playerBottom && proj.y <= playerTop) {
           // Hit!
@@ -679,19 +679,19 @@ wss.on('connection', (ws, req) => {
             player.rotationSpeed = message.rotationSpeed || 0;
             if (message.verticalVelocity !== undefined) {
               // Check if client is attempting to jump (sudden positive velocity)
-              const isJumpAttempt = message.verticalVelocity >= GAME_CONFIG.JUMP_VELOCITY * 0.9 && 
+              const isJumpAttempt = message.verticalVelocity >= GAME_CONFIG.JUMP_VELOCITY * 0.9 &&
                                      player.verticalVelocity < GAME_CONFIG.JUMP_VELOCITY * 0.5;
-              
+
               if (isJumpAttempt) {
                 // Validate jump - allow from ground or from top of any obstacle
                 const jumpTime = Date.now();
                 const timeSinceLastJump = jumpTime - player.lastJumpTime;
-                
+
                 // Check if on ground or on top of an obstacle
                 const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
-                const onValidSurface = player.y <= GAME_CONFIG.TANK_HEIGHT + 0.5 || 
+                const onValidSurface = player.y <= GAME_CONFIG.TANK_HEIGHT + 0.5 ||
                                       (obstacleCheck.onObstacle && Math.abs(player.y - obstacleCheck.obstacleHeight) < 0.5);
-                
+
                 if (!player.isJumping && timeSinceLastJump >= GAME_CONFIG.JUMP_COOLDOWN && onValidSurface) {
                   // Allow jump
                   player.lastJumpTime = jumpTime;
@@ -719,7 +719,7 @@ wss.on('connection', (ws, req) => {
           } else {
             // Validation failed - restore old Y position
             player.y = oldY;
-            
+
             // Send correction back to client
             ws.send(JSON.stringify({
               type: 'positionCorrection',

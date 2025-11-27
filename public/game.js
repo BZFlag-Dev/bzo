@@ -333,12 +333,12 @@ function init() {
     // Check if name dialog is open - if so, ignore game controls
     const nameDialog = document.getElementById('nameDialog');
     const isNameDialogOpen = nameDialog && nameDialog.style.display === 'block';
-    
+
     // Don't register game keys if dialog is open (except allow Escape to close things)
     if (!isNameDialogOpen || e.code === 'Escape') {
       keys[e.code] = true;
     }
-    
+
     // If name dialog is open, only allow Escape and don't process other game controls
     if (isNameDialogOpen && e.code !== 'Escape') {
       return;
@@ -401,7 +401,7 @@ function init() {
         if (Math.abs(currentVelocity) < 1) {
           myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
           myTank.userData.hasLanded = false; // Reset landing flag when jumping
-          
+
           // Play jump sound
           if (jumpSound && jumpSound.isPlaying) {
             jumpSound.stop();
@@ -409,7 +409,7 @@ function init() {
           if (jumpSound) {
             jumpSound.play();
           }
-          
+
           // Capture current momentum for the jump from input state
           if (mouseControlEnabled) {
             jumpMomentumForward = -mouseY; // Negative because screen Y is inverted
@@ -434,7 +434,7 @@ function init() {
         nameDialog.style.display = 'none';
         return;
       }
-      
+
       mouseControlEnabled = false;
       showMessage(`Controls: Keyboard`);
     }
@@ -443,7 +443,7 @@ function init() {
     // Check if name dialog is open
     const nameDialog = document.getElementById('nameDialog');
     const isNameDialogOpen = nameDialog && nameDialog.style.display === 'block';
-    
+
     // Only clear keys if dialog is not open
     if (!isNameDialogOpen) {
       keys[e.code] = false;
@@ -1375,14 +1375,14 @@ function connectToServer() {
 
   ws.onclose = (event) => {
     console.log('Disconnected from server', event.code, event.reason);
-    
+
     // Ignore 503 (Service Unavailable) and silently retry
     if (event.code === 1008 || event.reason === '503') {
       console.log('Server temporarily unavailable (503), retrying...');
       setTimeout(connectToServer, 2000);
       return;
     }
-    
+
     showMessage('Disconnected from server', 'death');
     setTimeout(connectToServer, 3000);
   };
@@ -1437,7 +1437,7 @@ function handleServerMessage(message) {
       });
       const ground = new THREE.Mesh(groundGeometry, groundMaterial);
       ground.rotation.x = -Math.PI / 2;
-      ground.receiveShadow = true;  
+      ground.receiveShadow = true;
       scene.add(ground);
 
       // Ground grid
@@ -1516,14 +1516,14 @@ function handleServerMessage(message) {
         const oldY = tank.position.y;
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
         const newVerticalVel = message.verticalVelocity || 0;
-        
+
         tank.position.set(message.x, y, message.z);
         tank.rotation.y = message.rotation;
         // Store velocity for tread animation
         tank.userData.forwardSpeed = message.forwardSpeed || 0;
         tank.userData.rotationSpeed = message.rotationSpeed || 0;
         tank.userData.verticalVelocity = newVerticalVel;
-        
+
         // Detect jump (vertical velocity suddenly became positive and large)
         if (oldVerticalVel < 10 && newVerticalVel >= 20) {
           // Play jump sound at tank's position
@@ -1534,7 +1534,7 @@ function handleServerMessage(message) {
           // Remove sound after playing
           setTimeout(() => tank.remove(jumpSoundClone), 200);
         }
-        
+
         // Detect landing (was in air, now at ground/obstacle with zero velocity)
         if (oldY > 0.5 && y <= oldY - 0.5 && Math.abs(newVerticalVel) < 1) {
           // Play land sound at tank's position
@@ -2154,7 +2154,7 @@ function checkIfOnObstacle(x, z, tankRadius = 2, y = null) {
     const obstacleBase = obs.baseY || 0;
     const obstacleHeight = obs.h || 4;
     const obstacleTop = obstacleBase + obstacleHeight;
-    
+
     // If Y provided, only check obstacles near that height
     if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
       continue;
@@ -2194,7 +2194,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
-    
+
     // If y is provided, check if tank can pass under or over
     if (y !== null) {
       // Allow passing under if below base, or over if above 75% of top
@@ -2289,7 +2289,7 @@ function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
-    
+
     // If tank can pass under or over, skip its normal
     if (y !== null && (y < obstacleBase || y >= obstacleTop * 0.75)) {
       continue;
@@ -2388,7 +2388,7 @@ function handleInput(deltaTime) {
   }
   // Tank is in air if not on ground AND not on obstacle (velocity doesn't matter)
   const isInAir = myTank && !onGround && !onObstacle;
-  
+
   // If just started jumping and momentum not yet captured, capture it now
   if (isInAir && verticalVel > 5 && jumpMomentumForward === 0 && jumpMomentumRotation === 0) {
     if (mouseControlEnabled) {
@@ -2426,7 +2426,7 @@ function handleInput(deltaTime) {
         moved = true;
       }
     }
-    
+
     if (jumpMomentumRotation !== 0) {
       const rotChange = jumpMomentumRotation * gameConfig.TANK_ROTATION_SPEED * deltaTime;
       playerRotation += rotChange;
@@ -2492,12 +2492,12 @@ function handleInput(deltaTime) {
         moved = true;
       }
     }
-    
+
     // When on ground and not jumping, maintain proper height (ground or obstacle)
     let currentlyOnObstacle = false;
     if (myTank && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
       const obstacle = checkIfOnObstacle(playerX, playerZ, 2, myTank.position.y);
-      
+
       if (obstacle) {
         // On top of obstacle - maintain height
         const obstacleBase = obstacle.baseY || 0;
@@ -2509,7 +2509,7 @@ function handleInput(deltaTime) {
         // Not on obstacle but elevated - start falling (drove off edge)
         if (!myTank.userData.verticalVelocity || myTank.userData.verticalVelocity === 0) {
           myTank.userData.verticalVelocity = -1; // Start falling
-          
+
           // Capture momentum when falling off edge (like jumping)
           if (jumpMomentumForward === 0 && jumpMomentumRotation === 0) {
             if (mouseControlEnabled) {
@@ -2528,7 +2528,7 @@ function handleInput(deltaTime) {
         myTank.position.y = 0;
       }
     }
-    
+
     // Reset jump momentum only when actually on stable ground or obstacle (after movement)
     const currentlyOnGround = myTank && Math.abs(myTank.position.y) < 0.5;
     if (currentlyOnGround || currentlyOnObstacle) {
@@ -2599,7 +2599,7 @@ function handleInput(deltaTime) {
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
     const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
     const y = myTank ? myTank.position.y : 1;
-    
+
     sendToServer({
       type: 'move',
       x: playerX,
@@ -2950,18 +2950,18 @@ function animate() {
   lastTime = now;
 
   handleInput(deltaTime);
-  
+
   // Client-side jump physics prediction
   if (myTank && gameConfig) {
     const verticalVelocity = myTank.userData.verticalVelocity || 0;
-    
+
     if (verticalVelocity !== 0 || myTank.position.y > 0.1) {
       // Apply gravity
       myTank.userData.verticalVelocity = verticalVelocity - gameConfig.GRAVITY * deltaTime;
-      
+
       // Update vertical position
       myTank.position.y += myTank.userData.verticalVelocity * deltaTime;
-      
+
       // Prevent tank from going below ground
       if (myTank.position.y < 0) {
         myTank.position.y = 0;
@@ -2969,12 +2969,12 @@ function animate() {
         jumpMomentumForward = 0;
         jumpMomentumRotation = 0;
       }
-      
+
       // Check for landing
       if (myTank.userData.verticalVelocity <= 0) {
         // Check if landing on top of an obstacle
         const obstacle = checkIfOnObstacle(myTank.position.x, myTank.position.z, 2);
-        
+
         if (obstacle) {
           const obstacleBase = obstacle.baseY || 0;
           const obstacleHeight = obstacle.h || 4;
@@ -2985,7 +2985,7 @@ function animate() {
             myTank.userData.verticalVelocity = 0;
             jumpMomentumForward = 0;
             jumpMomentumRotation = 0;
-            
+
             // Play land sound only if we haven't already played it for this landing
             if (!myTank.userData.hasLanded) {
               if (landSound && landSound.isPlaying) {
@@ -3003,7 +3003,7 @@ function animate() {
           myTank.userData.verticalVelocity = 0;
           jumpMomentumForward = 0;
           jumpMomentumRotation = 0;
-          
+
           // Play land sound only if we haven't already played it for this landing
           if (!myTank.userData.hasLanded) {
             if (landSound && landSound.isPlaying) {
@@ -3018,7 +3018,7 @@ function animate() {
       }
     }
   }
-  
+
   updateProjectiles();
   // Debug: log number of projectiles in scene
   // console.log('[DEBUG] Projectiles in scene:', projectiles.size);
