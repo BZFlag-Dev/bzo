@@ -528,6 +528,7 @@ function init() {
   });
 
   // Mouse click to shoot (or enable mouse controls on first click)
+  let justActivatedMouseControl = false;
   document.addEventListener('mousedown', (e) => {
     // Only block mouse actions if the click is on the chat input itself
     if (e.target === chatInput) return;
@@ -536,6 +537,7 @@ function init() {
     if (!mouseControlEnabled) {
       mouseControlEnabled = true;
       showMessage('Controls: Mouse');
+      justActivatedMouseControl = true;
     }
 
     // If the click is inside the chat window but not on the input, blur input and exit chat
@@ -545,6 +547,10 @@ function init() {
     }
     if (chatActive || document.activeElement === chatInput) return;
     if (e.button === 0) { // Left click
+      if (justActivatedMouseControl) {
+        justActivatedMouseControl = false;
+        return;
+      }
       // ...existing code...
       keys['Space'] = true;
     }
