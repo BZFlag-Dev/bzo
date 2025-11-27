@@ -1490,6 +1490,7 @@ function handleServerMessage(message) {
         myTank.position.set(playerX, playerY, playerZ);
         myTank.rotation.y = playerRotation;
         myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
+        myTank.userData.playerState = message.player;
         scene.add(myTank);
         tanks.set(myPlayerId, myTank);
 
