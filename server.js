@@ -23,6 +23,7 @@ const GAME_CONFIG = {
   TANK_ROTATION_SPEED: 2, // radians per second
   SHOT_SPEED: 20,
   SHOT_COOLDOWN: 1000, // ms
+  SHOT_DISTANCE: 50, // Max distance a shot can travel
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
   SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
   PAUSE_COUNTDOWN: 2000, // ms
@@ -250,6 +251,8 @@ class Projectile {
     this.dirX = dirX;
     this.dirZ = dirZ;
     this.createdAt = Date.now();
+    this.originX = x;
+    this.originZ = z;
   }
 }
 
@@ -512,9 +515,12 @@ function gameLoop() {
     proj.x += proj.dirX * GAME_CONFIG.SHOT_SPEED * 0.016; // ~60fps
     proj.z += proj.dirZ * GAME_CONFIG.SHOT_SPEED * 0.016;
 
-    // Remove if out of bounds or too old
+    // Remove if out of bounds, too old, or traveled > SHOT_DISTANCE units
     const halfMap = GAME_CONFIG.MAP_SIZE / 2;
-    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > 10) {
+    const dx = proj.x - proj.originX;
+    const dz = proj.z - proj.originZ;
+    const distTraveled = Math.sqrt(dx * dx + dz * dz);
+    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > 10 || distTraveled > GAME_CONFIG.SHOT_DISTANCE) {
       projectiles.delete(id);
       broadcastAll({ type: 'projectileRemoved', id });
       return;
