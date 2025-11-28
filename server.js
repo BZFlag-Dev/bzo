@@ -280,7 +280,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
   // Check map boundaries (always check regardless of height)
   if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
       z - tankRadius < -halfMap || z + tankRadius > halfMap) {
-    return true;
+    return { type: 'boundary' };
   }
 
   // Check obstacles
@@ -321,16 +321,16 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
         }
         // Block jumping up into obstacle: if tank bottom is below base and top is above base
         if (y < obstacleBase && y + tankHeight > obstacleBase) {
-          return true;
+          return obs;
         }
         // Allow passing over if above 75% of top
         if (y >= obstacleTop * 0.75) {
           continue;
         }
         // Block if inside the vertical range
-        if (y >= obstacleBase && y < obstacleTop * 0.75) return true;
+        if (y >= obstacleBase && y < obstacleTop * 0.75) return obs;
       } else {
-        return true;
+        return obs;
       }
     }
   }
@@ -389,8 +389,18 @@ function validateMovement(player, newX, newZ, newRotation, deltaTime) {
   }
 
   // Check collision with obstacles (pass Y position)
-  if (checkCollision(newX, newZ, 2, player.y)) {
-    console.log(`Player "${player.name}" collided with obstacle`);
+  const collision = checkCollision(newX, newZ, 2, player.y);
+  if (collision) {
+    if (collision === true) {
+      // Should not happen, but fallback
+      console.log(`Player "${player.name}" collided with unknown object`);
+    } else if (collision.type === 'boundary') {
+      console.log(`Player "${player.name}" collided with map boundary`);
+    } else {
+      // Log obstacle details
+      const { x, z, w, d, h, baseY, rotation } = collision;
+      console.log(`Player "${player.name}" collided with obstacle at x:${x}, z:${z}, w:${w}, d:${d}, h:${h}, baseY:${baseY}, rotation:${rotation}`);
+    }
     return false;
   }
 
