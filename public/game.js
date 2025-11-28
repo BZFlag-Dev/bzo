@@ -2278,13 +2278,6 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
 
-    // If y is provided, check if tank can pass under or over
-    if (y !== null) {
-      // Allow passing under if below base, or over if above 75% of top
-      if (y < obstacleBase || y >= obstacleTop * 0.75) {
-        continue;
-      }
-    }
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const rotation = obs.rotation || 0;
@@ -2292,8 +2285,6 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     // Transform tank position to obstacle's local space
     const dx = x - obs.x;
     const dz = z - obs.z;
-
-    // Rotate point to align with obstacle's axes
     const cos = Math.cos(-rotation);
     const sin = Math.sin(-rotation);
     const localX = dx * cos - dz * sin;
@@ -2302,13 +2293,30 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     // Check if tank circle intersects with axis-aligned obstacle rectangle
     const closestX = Math.max(-halfW, Math.min(localX, halfW));
     const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
-
     const distX = localX - closestX;
     const distZ = localZ - closestZ;
     const distSquared = distX * distX + distZ * distZ;
 
     if (distSquared < tankRadius * tankRadius) {
-      return true;
+      if (y !== null) {
+        const tankHeight = 2; // Default tank height
+        // Allow passing under if tank top is below obstacle base
+        if (y + tankHeight <= obstacleBase) {
+          continue;
+        }
+        // Block jumping up into obstacle: if tank bottom is below base and top is above base
+        if (y < obstacleBase && y + tankHeight > obstacleBase) {
+          return true;
+        }
+        // Allow passing over if above 75% of top
+        if (y >= obstacleTop * 0.75) {
+          continue;
+        }
+        // Block if inside the vertical range
+        if (y >= obstacleBase && y < obstacleTop * 0.75) return true;
+      } else {
+        return true;
+      }
     }
   }
 
@@ -3066,10 +3074,17 @@ function animate() {
 
     if (verticalVelocity !== 0 || myTank.position.y > 0.1) {
       // Apply gravity
-      myTank.userData.verticalVelocity = verticalVelocity - gameConfig.GRAVITY * deltaTime;
-
-      // Update vertical position
-      myTank.position.y += myTank.userData.verticalVelocity * deltaTime;
+      const nextVerticalVelocity = verticalVelocity - gameConfig.GRAVITY * deltaTime;
+      const tankHeight = 2;
+      const nextY = myTank.position.y + nextVerticalVelocity * deltaTime;
+      // Check for collision above (jumping up into obstacle)
+      if (nextVerticalVelocity > 0 && checkCollision(myTank.position.x, myTank.position.z, 2, nextY)) {
+        // Block upward movement into obstacle
+        myTank.userData.verticalVelocity = 0;
+      } else {
+        myTank.userData.verticalVelocity = nextVerticalVelocity;
+        myTank.position.y += myTank.userData.verticalVelocity * deltaTime;
+      }
 
       // Prevent tank from going below ground
       if (myTank.position.y < 0) {

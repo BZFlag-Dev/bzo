@@ -309,15 +309,26 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
       // Tank is horizontally colliding with this obstacle
       const obstacleBase = obs.baseY || 0;
       const obstacleTop = obstacleBase + obstacleHeight;
+      const tankHeight = 2;
 
-      // Check if tank is in the vertical range of the obstacle
       if (y !== null) {
-        // Tank can pass under if below base, or over if above 75% of height
-        if (y < obstacleBase || y >= obstacleTop * 0.75) {
-          continue; // Allow passing under or over
+        // Allow passing under if tank top is below obstacle base
+        if (y + tankHeight <= obstacleBase) {
+          continue;
         }
+        // Block jumping up into obstacle: if tank bottom is below base and top is above base
+        if (y < obstacleBase && y + tankHeight > obstacleBase) {
+          return true;
+        }
+        // Allow passing over if above 75% of top
+        if (y >= obstacleTop * 0.75) {
+          continue;
+        }
+        // Block if inside the vertical range
+        if (y >= obstacleBase && y < obstacleTop * 0.75) return true;
+      } else {
+        return true;
       }
-      return true; // Block if in obstacle's vertical range
     }
   }
 
