@@ -238,6 +238,7 @@ class Player {
       deaths: this.deaths,
       paused: this.paused,
       verticalVelocity: this.verticalVelocity,
+      connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
     };
   }
 }

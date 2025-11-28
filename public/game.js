@@ -2210,6 +2210,7 @@ function updateScoreboard() {
       name: myPlayerName,
       kills: myTank.userData.playerState.kills || 0,
       deaths: myTank.userData.playerState.deaths || 0,
+      connectDate: myTank.userData.playerState.connectDate ? new Date(myTank.userData.playerState.connectDate) : new Date(0),
       isCurrent: true
     });
   }
@@ -2222,18 +2223,20 @@ function updateScoreboard() {
         name: tank.userData.playerState.name || 'Player',
         kills: tank.userData.playerState.kills || 0,
         deaths: tank.userData.playerState.deaths || 0,
+        connectDate: tank.userData.playerState.connectDate ? new Date(tank.userData.playerState.connectDate) : new Date(0),
         isCurrent: false
       });
     }
   });
 
-  // Sort by (kills - deaths) descending, then kills descending, then deaths ascending
+  // Sort by (kills - deaths) descending, then kills descending, then deaths ascending, then connectDate ascending (oldest first)
   playerData.sort((a, b) => {
     const aScore = (a.kills || 0) - (a.deaths || 0);
     const bScore = (b.kills || 0) - (b.deaths || 0);
     if (bScore !== aScore) return bScore - aScore;
     if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
-    return (a.deaths || 0) - (b.deaths || 0);
+    if ((a.deaths || 0) !== (b.deaths || 0)) return (a.deaths || 0) - (b.deaths || 0);
+    return a.connectDate - b.connectDate;
   });
 
   // Create scoreboard entries
