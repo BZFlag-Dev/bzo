@@ -189,11 +189,12 @@ function getNextPlayerNumber() {
 
 // Player class
 class Player {
-  constructor(ws) {
-    this.id = getNextPlayerNumber().toString();
+  constructor(ws, name = null, playerNumber = null) {
+    this.playerNumber = playerNumber !== null ? playerNumber : getNextPlayerNumber();
+    this.id = this.playerNumber.toString();
     this.ws = ws;
-    this.playerNumber = parseInt(this.id, 10);
-    this.name = null;
+    // Always assign a default name if none provided
+    this.name = name && name.trim() ? name : `Player ${this.playerNumber}`;
     this.x = 0;
     this.y = GAME_CONFIG.TANK_HEIGHT;
     this.z = 0;
@@ -209,6 +210,7 @@ class Player {
     this.isJumping = false;
     this.lastJumpTime = 0;
     this.onObstacle = false;
+    this.connectDate = new Date();
   }
 
   respawn() {
@@ -637,18 +639,24 @@ function forceClientReload() {
 }
 
 // WebSocket connection handler
+// When a new player connects, assign a default name and number
 wss.on('connection', (ws, req) => {
   let player = new Player(ws);
   players.set(player.id, player);
-  const playerNumber = player.playerNumber;
-  const playerId = player.id
 
   // Get client IP and port
   const forwardedFor = req.headers['x-forwarded-for'];
+  const forwardedPort = req.headers['x-forwarded-port'];
   const clientIP = forwardedFor ? forwardedFor.split(',')[0].trim() : req.socket.remoteAddress;
-  const clientPort = req.socket.remotePort;
+  const clientPort = forwardedPort ? forwardedPort : req.socket.remotePort;
   const ipDisplay = forwardedFor ? `${clientIP} (via ${req.socket.remoteAddress})` : clientIP;
-  console.log(`Player ${playerNumber} connect from ${ipDisplay}:${clientPort}`);
+  if (forwardedFor && forwardedPort) {
+    console.log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for + x-forwarded-port)`);
+  } else if (forwardedFor) {
+    console.log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for)`);
+  } else {
+    console.log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort}`);
+  }
 
   // Send initial server state in init message
   // Send initial state to new player (do not add to players map or broadcast yet)
@@ -657,7 +665,6 @@ wss.on('connection', (ws, req) => {
 
   ws.send(JSON.stringify({
     type: 'init',
-    playerId,
     player: player.getState(),
     players: Array.from(players.values()).map(p => p.getState()),
     config: GAME_CONFIG,
@@ -739,7 +746,7 @@ wss.on('connection', (ws, req) => {
 
             broadcast({
               type: 'playerMoved',
-              id: playerId,
+              id: player.id,
               x: player.x,
               y: player.y,
               z: player.z,
@@ -773,7 +780,7 @@ wss.on('connection', (ws, req) => {
           const id = (++projectileIdCounter).toString();
           const proj = new Projectile(
             id,
-            playerId,
+            player.id,
             message.x,
             message.y !== undefined ? message.y : (player.y + 2.2),
             message.z,
@@ -815,9 +822,9 @@ wss.on('connection', (ws, req) => {
           player.deaths = 0;
           player.kills = 0;
           if (message.isMobile) {
-            console.log(`Player ${playerId} joining game as "${joinName}" [MOBILE]`);
+            console.log(`Player ${player.id} joining game as "${joinName}" [MOBILE]`);
           } else {
-            console.log(`Player ${playerId} joining game as "${joinName}"`);
+            console.log(`Player ${player.id} joining game as "${joinName}"`);
           }
 
           // broadcast join to all
@@ -841,7 +848,7 @@ wss.on('connection', (ws, req) => {
             while (!foundAvailable) {
               const testName = `Player ${num}`;
               const nameTaken = Array.from(players.values()).some(p =>
-                p.id !== playerId && p.name && p.name.toLowerCase() === testName.toLowerCase()
+                p.id !== player.id && p.name && p.name.toLowerCase() === testName.toLowerCase()
               );
               if (!nameTaken) {
                 newName = testName;
@@ -855,7 +862,7 @@ wss.on('connection', (ws, req) => {
           if (newName) {
             // Check if name is already taken by another player
             const nameTaken = Array.from(players.values()).some(p =>
-              p.id !== playerId && p.name && p.name.toLowerCase() === newName.toLowerCase()
+              p.id !== player.id && p.name && p.name.toLowerCase() === newName.toLowerCase()
             );
 
             if (nameTaken) {
@@ -871,7 +878,7 @@ wss.on('connection', (ws, req) => {
               console.log(`Player name changed: "${oldName}" -> "${newName}"`);
               broadcastAll({
                 type: 'nameChanged',
-                playerId,
+                playerId: player.id,
                 name: player.name,
               });
             }
@@ -885,12 +892,12 @@ wss.on('connection', (ws, req) => {
 
             broadcastAll({
               type: 'pauseCountdown',
-              playerId,
+              playerId: player.id,
             });
 
             // After countdown, activate pause
             setTimeout(() => {
-              if (players.has(playerId) && player.pauseCountdownStart > 0) {
+              if (players.has(player.id) && player.pauseCountdownStart > 0) {
                 player.paused = true;
                 player.pauseCountdownStart = 0;
 
@@ -923,13 +930,13 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     const playerName = player.name;
     const playerNum = player.playerNumber;
-    players.delete(playerId);
+    players.delete(player.id);
     usedPlayerNumbers.delete(playerNum); // Free up the player number for reuse
     console.log(`Player "${playerName}" (#${playerNum}) disconnected. Total players: ${players.size}`);
 
     broadcast({
       type: 'playerLeft',
-      id: playerId,
+      id: player.id,
     });
   });
 });

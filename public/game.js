@@ -1477,6 +1477,12 @@ function handleServerMessage(message) {
   }
   switch (message.type) {
     case 'init':
+      // Update player name at the top of the scoreboard and set myPlayerName to the name field
+      if (message.player && message.player.name) {
+        myPlayerName = message.player.name;
+        const playerNameEl = document.getElementById('playerName');
+        if (playerNameEl) playerNameEl.textContent = myPlayerName;
+      }
       // Clear any existing tanks from previous connections
       tanks.forEach((tank, id) => {
         scene.remove(tank);
@@ -1501,11 +1507,24 @@ function handleServerMessage(message) {
       });
       clouds.length = 0;
 
-      myPlayerId = message.playerId;
+      myPlayerId = message.player.id;
       gameConfig = message.config;
       playerX = message.player.x;
       playerZ = message.player.z;
       playerRotation = message.player.rotation;
+
+      // If a default name is provided, use it for the join dialog
+      if (message.player && message.player.defaultName) {
+        const nameInput = document.getElementById('nameInput');
+        const nameDialog = document.getElementById('nameDialog');
+        if (nameInput && nameDialog) {
+          nameInput.value = message.player.defaultName;
+          nameDialog.style.display = 'block';
+          isPaused = true;
+          nameInput.focus();
+          nameInput.select();
+        }
+      }
       // Only set up world, not join yet
       // Ground with texture
       const groundGeometry = new THREE.PlaneGeometry(gameConfig.MAP_SIZE * 3, gameConfig.MAP_SIZE * 3);
@@ -1588,14 +1607,20 @@ function handleServerMessage(message) {
       } else {
         addPlayer(message.player);
         updatePlayerCount();
-        showMessage(`Player joined the game`);
+        showMessage(`${message.player.name} joined the game`);
       }
       break;
 
     case 'playerLeft':
+      // Show the player's name before removing
+      let leftName = 'Player';
+      const leftTank = tanks.get(message.id);
+      if (leftTank && leftTank.userData && leftTank.userData.playerState && leftTank.userData.playerState.name) {
+        leftName = leftTank.userData.playerState.name;
+      }
+      showMessage(`${leftName} left the game`);
       removePlayer(message.id);
       updatePlayerCount();
-      showMessage(`Player left the game`);
       break;
 
     case 'playerMoved':
