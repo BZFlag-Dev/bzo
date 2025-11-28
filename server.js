@@ -682,6 +682,8 @@ wss.on('connection', (ws, req) => {
               text: message.text.trim(),
               id: player.id
             };
+            // Log chat message to server console
+            console.log(`[CHAT] ${chatMsg.from}: ${chatMsg.text}`);
             broadcastAll(chatMsg);
           }
           break;
