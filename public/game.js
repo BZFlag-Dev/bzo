@@ -28,7 +28,8 @@ let lastShotTime = 0;
 let OBSTACLES = [];
 
 // Camera mode
-let cameraMode = 'first-person'; // 'first-person' or 'third-person'
+let cameraMode = 'first-person'; // 'first-person', 'third-person', or 'overview'
+let lastCameraMode = 'first-person';
 
 // Pause state
 let isPaused = false;
@@ -1826,10 +1827,16 @@ function removeProjectile(id) {
 function handlePlayerHit(message) {
   if (message.victimId === myPlayerId) {
     // Local player was killed
-    //if (myTank && myTank.userData.playerState) {
-    //  myTank.userData.playerState.deaths = (myTank.userData.playerState.deaths || 0) + 1;
-    //}
     showMessage('You were killed!', 'death');
+    // Switch to overview mode and hide crosshair
+    lastCameraMode = cameraMode;
+    cameraMode = 'overview';
+    // Set camera to initial overview position (not attached to tank)
+    camera.position.set(0, 15, 20);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, 0, 0);
+    const crosshair = document.getElementById('crosshair');
+    if (crosshair) crosshair.style.display = 'none';
   } else if (message.shooterId === myPlayerId) {
     // Local player got a kill
     //if (myTank && myTank.userData.playerState) {
@@ -1876,6 +1883,10 @@ function handlePlayerRespawn(message) {
     playerZ = message.player.z;
     playerRotation = message.player.rotation;
     showMessage('You respawned!');
+    // Restore normal view and crosshair
+    cameraMode = lastCameraMode === 'overview' ? 'first-person' : lastCameraMode;
+    const crosshair = document.getElementById('crosshair');
+    if (crosshair) crosshair.style.display = '';
   }
 }
 
@@ -2766,7 +2777,13 @@ function updateShields() {
 }
 
 function updateCamera() {
-  if (!myTank) return;
+  if (cameraMode === 'overview' || !myTank) {
+    // Overview camera (used at name dialog and after death)
+    camera.position.set(0, 15, 20);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, 0, 0);
+    return;
+  }
 
   if (cameraMode === 'first-person') {
     // Hide tank body and turret in first-person view
