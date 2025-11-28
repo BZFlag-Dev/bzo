@@ -1477,6 +1477,7 @@ function handleServerMessage(message) {
   }
   switch (message.type) {
     case 'init':
+        showMessage(`Map size from server: ${message.config && message.config.MAP_SIZE}`);
       // Update player name at the top of the scoreboard and set myPlayerName to the name field
       if (message.player && message.player.name) {
         myPlayerName = message.player.name;
@@ -2368,7 +2369,10 @@ function slideMove(currentX, currentZ, deltaX, deltaZ, tankRadius = 2, y = null)
 
   // Try full movement first
   if (!checkCollision(newX, newZ, tankRadius, y)) {
-    return { x: newX, z: newZ, moved: true };
+    const actualDX = newX - currentX;
+    const actualDZ = newZ - currentZ;
+    const altered = Math.abs(actualDX - deltaX) > 1e-6 || Math.abs(actualDZ - deltaZ) > 1e-6;
+    return { x: newX, z: newZ, moved: true, altered };
   }
 
   // Find the collision normal
@@ -2385,23 +2389,30 @@ function slideMove(currentX, currentZ, deltaX, deltaZ, tankRadius = 2, y = null)
     const slideNewZ = currentZ + slideZ;
 
     if (!checkCollision(slideNewX, slideNewZ, tankRadius, y)) {
-      return { x: slideNewX, z: slideNewZ, moved: true };
+      const altered = Math.abs(slideX - deltaX) > 1e-6 || Math.abs(slideZ - deltaZ) > 1e-6;
+      return { x: slideNewX, z: slideNewZ, moved: true, altered };
     }
   }
 
   // Fallback: try axis-aligned sliding
   // Try sliding along X axis only
   if (!checkCollision(newX, currentZ, tankRadius, y)) {
-    return { x: newX, z: currentZ, moved: true };
+    const actualDX = newX - currentX;
+    const actualDZ = 0;
+    const altered = Math.abs(actualDX - deltaX) > 1e-6 || Math.abs(actualDZ - deltaZ) > 1e-6;
+    return { x: newX, z: currentZ, moved: true, altered };
   }
 
   // Try sliding along Z axis only
   if (!checkCollision(currentX, newZ, tankRadius, y)) {
-    return { x: currentX, z: newZ, moved: true };
+    const actualDX = 0;
+    const actualDZ = newZ - currentZ;
+    const altered = Math.abs(actualDX - deltaX) > 1e-6 || Math.abs(actualDZ - deltaZ) > 1e-6;
+    return { x: currentX, z: newZ, moved: true, altered };
   }
 
   // No movement possible
-  return { x: currentX, z: currentZ, moved: false };
+  return { x: currentX, z: currentZ, moved: false, altered: false };
 }
 
 function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
@@ -2541,130 +2552,108 @@ function handleInput(deltaTime) {
   const oldZ = playerZ;
   const oldRotation = playerRotation;
 
-  // Check if we're in air - if so, apply jump momentum
+  // --- Accumulate all intended movement ---
+  let intendedDeltaX = 0;
+  let intendedDeltaZ = 0;
+  let intendedRotation = 0;
+
+  // Apply jump/momentum if in air
   if (isInAir) {
-    // While in air, maintain momentum - continue moving at the velocity from when jump occurred
     if (jumpMomentumForward !== 0) {
       const moveAmount = jumpMomentumForward * gameConfig.TANK_SPEED * deltaTime;
-      const deltaX = Math.sin(playerRotation) * moveAmount;
-      const deltaZ = Math.cos(playerRotation) * moveAmount;
-      const tankY = myTank ? myTank.position.y : 0;
-      const result = slideMove(playerX, playerZ, deltaX, deltaZ, 2, tankY);
-      if (result.moved) {
-        playerX = result.x;
-        playerZ = result.z;
-        moved = true;
-      }
+      intendedDeltaX += Math.sin(playerRotation) * moveAmount;
+      intendedDeltaZ += Math.cos(playerRotation) * moveAmount;
     }
-
     if (jumpMomentumRotation !== 0) {
-      const rotChange = jumpMomentumRotation * gameConfig.TANK_ROTATION_SPEED * deltaTime;
-      playerRotation += rotChange;
-      moved = true;
+      intendedRotation += jumpMomentumRotation * gameConfig.TANK_ROTATION_SPEED * deltaTime;
     }
   } else {
-    // Only allow movement control when on the ground
     // Mouse analog control (only if enabled)
     if (mouseControlEnabled) {
-      // Horizontal mouse position controls turning (-1 left, 1 right)
-      // No dead zone - any movement from center affects rotation
       if (mouseX !== 0) {
-        playerRotation -= mouseX * rotSpeed;
-        moved = true;
+        intendedRotation -= mouseX * rotSpeed;
       }
-
-      // Vertical mouse position controls forward/backward (-1 back, 1 forward)
-      // Invert mouseY so moving mouse up moves forward
-      // No dead zone - any movement from center affects position
       if (mouseY !== 0) {
-        const moveAmount = -mouseY * speed; // Negative because screen Y is inverted
-        const deltaX = Math.sin(playerRotation) * moveAmount;
-        const deltaZ = Math.cos(playerRotation) * moveAmount;
-        const tankY = myTank ? myTank.position.y : 0;
-        const result = slideMove(playerX, playerZ, deltaX, deltaZ, 2, tankY);
-        if (result.moved) {
-          playerX = result.x;
-          playerZ = result.z;
-          moved = true;
-        }
+        const moveAmount = -mouseY * speed;
+        intendedDeltaX += Math.sin(playerRotation) * moveAmount;
+        intendedDeltaZ += Math.cos(playerRotation) * moveAmount;
       }
     }
-
     // Keyboard controls
-    if (keys['KeyA']) {
-      playerRotation += rotSpeed;
-      moved = true;
-    }
-    if (keys['KeyD']) {
-      playerRotation -= rotSpeed;
-      moved = true;
-    }
-
+    if (keys['KeyA']) intendedRotation += rotSpeed;
+    if (keys['KeyD']) intendedRotation -= rotSpeed;
     if (keys['KeyW']) {
-      const deltaX = Math.sin(playerRotation) * speed;
-      const deltaZ = Math.cos(playerRotation) * speed;
-      const tankY = myTank ? myTank.position.y : 0;
-      const result = slideMove(playerX, playerZ, deltaX, deltaZ, 2, tankY);
-      if (result.moved) {
-        playerX = result.x;
-        playerZ = result.z;
-        moved = true;
-      }
+      intendedDeltaX += Math.sin(playerRotation) * speed;
+      intendedDeltaZ += Math.cos(playerRotation) * speed;
     }
     if (keys['KeyS']) {
-      const deltaX = -Math.sin(playerRotation) * speed;
-      const deltaZ = -Math.cos(playerRotation) * speed;
-      const tankY = myTank ? myTank.position.y : 0;
-      const result = slideMove(playerX, playerZ, deltaX, deltaZ, 2, tankY);
-      if (result.moved) {
-        playerX = result.x;
-        playerZ = result.z;
-        moved = true;
-      }
+      intendedDeltaX -= Math.sin(playerRotation) * speed;
+      intendedDeltaZ -= Math.cos(playerRotation) * speed;
     }
+  }
 
-    // When on ground and not jumping, maintain proper height (ground or obstacle)
-    let currentlyOnObstacle = false;
-    if (myTank && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
-      const obstacle = checkIfOnObstacle(playerX, playerZ, 2, myTank.position.y);
+  // Apply total intended rotation
+  playerRotation += intendedRotation;
 
-      if (obstacle) {
-        // On top of obstacle - maintain height
-        const obstacleBase = obstacle.baseY || 0;
-        const obstacleHeight = obstacle.h || 4;
-        const obstacleTop = obstacleBase + obstacleHeight;
-        myTank.position.y = obstacleTop;
-        currentlyOnObstacle = true;
-      } else if (myTank.position.y > 0.5) {
-        // Not on obstacle but elevated - start falling (drove off edge)
-        if (!myTank.userData.verticalVelocity || myTank.userData.verticalVelocity === 0) {
-          myTank.userData.verticalVelocity = -1; // Start falling
+  // --- Now apply collision/slide logic to the total intended move ---
+  const tankY = myTank ? myTank.position.y : 0;
+  const result = slideMove(playerX, playerZ, intendedDeltaX, intendedDeltaZ, 2, tankY);
+  if (result.altered) {
+    showMessage(`slideMove: from (${playerX.toFixed(2)}, ${playerZ.toFixed(2)}) by (Δx=${intendedDeltaX.toFixed(2)}, Δz=${intendedDeltaZ.toFixed(2)}) → (${result.x.toFixed(2)}, ${result.z.toFixed(2)}) moved=${result.moved} altered=${result.altered}`);
+  }
+  if (result.moved) {
+    playerX = result.x;
+    playerZ = result.z;
+    moved = true;
+    // Only log if altered
+  } else {
+    // If blocked, zero out input that would push into the wall
+    if (mouseControlEnabled && mouseY !== 0) mouseY = 0;
+    if (keys['KeyW']) keys['KeyW'] = false;
+    if (keys['KeyS']) keys['KeyS'] = false;
+  }
 
-          // Capture momentum when falling off edge (like jumping)
-          if (jumpMomentumForward === 0 && jumpMomentumRotation === 0) {
-            if (mouseControlEnabled) {
-              jumpMomentumForward = -mouseY;
-              jumpMomentumRotation = -mouseX;
-            } else {
-              if (keys['KeyW']) jumpMomentumForward = 1.0;
-              else if (keys['KeyS']) jumpMomentumForward = -1.0;
-              if (keys['KeyA']) jumpMomentumRotation = 1.0;
-              else if (keys['KeyD']) jumpMomentumRotation = -1.0;
-            }
+  // When on ground and not jumping, maintain proper height (ground or obstacle)
+  let currentlyOnObstacle = false;
+  if (myTank && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
+    const obstacle = checkIfOnObstacle(playerX, playerZ, 2, myTank.position.y);
+
+    if (obstacle) {
+      // On top of obstacle - maintain height
+      const obstacleBase = obstacle.baseY || 0;
+      const obstacleHeight = obstacle.h || 4;
+      const obstacleTop = obstacleBase + obstacleHeight;
+      myTank.position.y = obstacleTop;
+      currentlyOnObstacle = true;
+    } else if (myTank.position.y > 0.5) {
+      // Not on obstacle but elevated - start falling (drove off edge)
+      if (!myTank.userData.verticalVelocity || myTank.userData.verticalVelocity === 0) {
+        myTank.userData.verticalVelocity = -1; // Start falling
+
+        // Capture momentum when falling off edge (like jumping)
+        if (jumpMomentumForward === 0 && jumpMomentumRotation === 0) {
+          if (mouseControlEnabled) {
+            jumpMomentumForward = -mouseY;
+            jumpMomentumRotation = -mouseX;
+          } else {
+            if (keys['KeyW']) jumpMomentumForward = 1.0;
+            else if (keys['KeyS']) jumpMomentumForward = -1.0;
+            if (keys['KeyA']) jumpMomentumRotation = 1.0;
+            else if (keys['KeyD']) jumpMomentumRotation = -1.0;
           }
         }
-      } else {
-        // On ground
-        myTank.position.y = 0;
       }
+    } else {
+      // On ground
+      myTank.position.y = 0;
     }
+  }
 
-    // Reset jump momentum only when actually on stable ground or obstacle (after movement)
-    const currentlyOnGround = myTank && Math.abs(myTank.position.y) < 0.5;
-    if (currentlyOnGround || currentlyOnObstacle) {
-      jumpMomentumForward = 0;
-      jumpMomentumRotation = 0;
-    }
+  // Reset jump momentum only when actually on stable ground or obstacle (after movement)
+  const currentlyOnGround = myTank && Math.abs(myTank.position.y) < 0.5;
+  if (currentlyOnGround || currentlyOnObstacle) {
+    jumpMomentumForward = 0;
+    jumpMomentumRotation = 0;
   }
 
   // Calculate velocity based on actual movement that occurred

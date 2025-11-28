@@ -389,17 +389,36 @@ function validateMovement(player, newX, newZ, newRotation, deltaTime) {
   }
 
   // Check collision with obstacles (pass Y position)
-  const collision = checkCollision(newX, newZ, 2, player.y);
+  let collision = checkCollision(newX, newZ, 2, player.y);
+  if (collision && collision.type === 'boundary') {
+    // Try sliding along X axis only
+    let slideX = checkCollision(newX, player.z, 2, player.y);
+    if (!slideX) {
+      // Allow movement along X only
+      newZ = player.z;
+      collision = null;
+    } else {
+      // Try sliding along Z axis only
+      let slideZ = checkCollision(player.x, newZ, 2, player.y);
+      if (!slideZ) {
+        // Allow movement along Z only
+        newX = player.x;
+        collision = null;
+      }
+    }
+    if (collision && collision.type === 'boundary') {
+      console.log(`Player "${player.name}" collided with map boundary at x:${player.x}, y:${player.y}, z:${player.z}`);
+      return false;
+    }
+  }
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback
-      console.log(`Player "${player.name}" collided with unknown object`);
-    } else if (collision.type === 'boundary') {
-      console.log(`Player "${player.name}" collided with map boundary`);
+      console.log(`Player "${player.name}" collided with unknown object at x:${player.x}, y:${player.y}, z:${player.z}`);
     } else {
       // Log obstacle details
       const { x, z, w, d, h, baseY, rotation } = collision;
-      console.log(`Player "${player.name}" collided with obstacle at x:${x}, z:${z}, w:${w}, d:${d}, h:${h}, baseY:${baseY}, rotation:${rotation}`);
+      console.log(`Player "${player.name}" collided with obstacle at x:${x}, z:${z}, w:${w}, d:${d}, h:${h}, baseY:${baseY}, rotation:${rotation} (player at x:${player.x}, y:${player.y}, z:${player.z})`);
     }
     return false;
   }
