@@ -334,7 +334,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // --- Attach Key Handlers ---
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // Block all game/keyboard navigation keys if typing in chat
+    if (document.activeElement === chatInput) return;
     if (e.key === 'm' || e.key === 'M') toggleMouseMode();
     else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
     else if (e.key === 'i' || e.key === 'I') toggleDebugHud();
@@ -883,7 +884,8 @@ function init() {
   // Mouse movement for analog control
   // Mouse analog control using position relative to center (cursor always visible)
   document.addEventListener('mousemove', (e) => {
-    if (!mouseControlEnabled || chatActive || document.activeElement === chatInput) return;
+    if (!mouseControlEnabled) return;
+    // Allow mouse movement even if chat is active or chatInput is focused
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
     mouseX = (e.clientX - centerX) / (window.innerWidth * 0.35); // 70% width
