@@ -1,4 +1,7 @@
 const express = require('express');
+const logPath = require('path').join(__dirname, 'server.log');
+// Clear server.log on restart
+require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
