@@ -156,11 +156,17 @@ window.addEventListener('DOMContentLoaded', () => {
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
-      localStorage.setItem('fullscreenEnabled', 'true');
     } else {
       document.exitFullscreen();
-      localStorage.setItem('fullscreenEnabled', 'false');
     }
+    // Log screen resolution to chat
+    setTimeout(() => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const msg = `Screen resolution: ${w}x${h}`;
+      chatMessages.push(msg);
+      updateChatWindow();
+    }, 200);
     setTimeout(updateHudButtons, 100);
   }
 
@@ -192,11 +198,6 @@ window.addEventListener('DOMContentLoaded', () => {
   // (savedCameraMode already declared above)
   const savedMouseMode = localStorage.getItem('mouseControlEnabled');
   if (savedMouseMode === 'true') mouseControlEnabled = true;
-  const savedFullscreen = localStorage.getItem('fullscreenEnabled');
-  // Optionally, auto-enter fullscreen if previously enabled
-  if (fullscreenBtn && savedFullscreen === 'true' && !document.fullscreenElement) {
-    document.documentElement.requestFullscreen();
-  }
 
   // --- Attach HUD Button Handlers ---
   if (mouseBtn) mouseBtn.addEventListener('click', toggleMouseMode);
@@ -1762,7 +1763,16 @@ function handleServerMessage(message) {
         myPlayerName = message.player.name;
         const playerNameEl = document.getElementById('playerName');
         if (playerNameEl) playerNameEl.textContent = myPlayerName;
-        showMessage(`Connected to server as "${myPlayerName}"!`);
+        // Gather screen info
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        // Use isMobile from isMobileBrowser() defined in connectToServer scope
+        const mobileText = (typeof isMobile !== 'undefined' && isMobile) ? 'Mobile' : 'Desktop';
+        // Show in chat window
+        const msg = `Connected as \"${myPlayerName}\"! (${w}x${h}, ${mobileText})`;
+        chatMessages.push(msg);
+        updateChatWindow();
+        showMessage(msg);
       }
       // Clear any existing tanks from previous connections
       tanks.forEach((tank, id) => {

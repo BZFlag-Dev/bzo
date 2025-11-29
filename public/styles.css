@@ -80,7 +80,7 @@ body {
   top: 10px;
   left: 10px;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.5);
   padding: 20px;
   border-radius: 10px;
   width: 25vw;
@@ -91,10 +91,10 @@ body {
 
 @media (max-width: 900px), (max-width: 600px) {
   #mainhud {
-    width: 80vw;
+    width: 35vw;
     height: auto;
-    padding: 10px;
-    font-size: 14px;
+    padding: 5px;
+    font-size: 5px;
   }
 }
 
