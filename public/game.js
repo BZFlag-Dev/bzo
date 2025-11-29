@@ -3104,9 +3104,12 @@ function handleInput(deltaTime) {
   // Tank is in air if not on ground AND not on obstacle (velocity doesn't matter)
   const isInAir = myTank && !onGround && !onObstacle;
 
-  // If just started jumping and momentum not yet captured, capture it now
-  if (isInAir && verticalVel > 5 && jumpMomentumForward === 0 && jumpMomentumRotation === 0) {
-    if (mouseControlEnabled) {
+  // Always update jump momentum from virtual controls on mobile if jumping
+  if (isInAir && verticalVel > 5) {
+    if (isMobile && virtualInput.jump) {
+      jumpMomentumForward = virtualInput.forward;
+      jumpMomentumRotation = -virtualInput.turn;
+    } else if (mouseControlEnabled) {
       jumpMomentumForward = -mouseY;
       jumpMomentumRotation = -mouseX;
     } else {
