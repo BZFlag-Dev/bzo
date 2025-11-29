@@ -44,6 +44,7 @@ let mouseY = 0; // Percentage from center (-1 to 1)
 
 // Player tank position (for movement prediction)
 let playerX = 0;
+let playerY = 0; // Y is vertical position
 let playerZ = 0;
 let playerRotation = 0;
 
@@ -1583,9 +1584,9 @@ function handleServerMessage(message) {
         // This is our join confirmation, now create our tank and finish join
         myPlayerName = message.player.name;
         playerX = message.player.x;
+        playerY = message.player.y;
         playerZ = message.player.z;
         playerRotation = message.player.rotation;
-        const playerY = message.player.y !== undefined ? message.player.y : 0;
 
         // Save the name to localStorage (server may have kept our requested name or assigned default)
         localStorage.setItem('playerName', myPlayerName);
@@ -1773,8 +1774,7 @@ function addPlayer(player) {
   if (tanks.has(player.id)) return;
 
   const tank = createTank(0xFF5722, player.name || 'Player');
-  const y = player.y !== undefined ? player.y : 0;
-  tank.position.set(player.x, y, player.z);
+  tank.position.set(player.x, player.y, player.z);
   tank.rotation.y = player.rotation;
   tank.userData.playerState = player; // Store player state for scoreboard
   tank.userData.verticalVelocity = player.verticalVelocity || 0;
@@ -1897,8 +1897,7 @@ function handlePlayerHit(message) {
 function handlePlayerRespawn(message) {
   const tank = tanks.get(message.player.id);
   if (tank) {
-    const y = message.player.y !== undefined ? message.player.y : 0;
-    tank.position.set(message.player.x, y, message.player.z);
+    tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
     tank.userData.verticalVelocity = message.player.verticalVelocity || 0;
     tank.visible = true; // Make tank visible again after respawn
@@ -2288,8 +2287,8 @@ function checkIfOnObstacle(x, z, tankRadius = 2, y = null) {
     const dz = z - obs.z;
 
     // Rotate point to align with obstacle's axes
-    const cos = Math.cos(-rotation);
-    const sin = Math.sin(-rotation);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
 
@@ -2303,7 +2302,7 @@ function checkIfOnObstacle(x, z, tankRadius = 2, y = null) {
 }
 
 function checkCollision(x, z, tankRadius = 2, y = null) {
-  const mapSize = gameConfig;
+  const mapSize = gameConfig.MAP_SIZE || gameConfig.mapSize || 100;
   const halfMap = mapSize / 2;
 
   // Check map boundaries (always apply regardless of height)
@@ -2325,8 +2324,8 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     // Transform tank position to obstacle's local space
     const dx = x - obs.x;
     const dz = z - obs.z;
-    const cos = Math.cos(-rotation);
-    const sin = Math.sin(-rotation);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
 
@@ -2443,8 +2442,8 @@ function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
     const dx = toX - obs.x;
     const dz = toZ - obs.z;
 
-    const cos = Math.cos(-rotation);
-    const sin = Math.sin(-rotation);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
 
@@ -2515,8 +2514,8 @@ function handleInput(deltaTime) {
       if (Math.abs(myTank.position.y - obstacleTop) < 0.5) {
         const dx = myTank.position.x - obs.x;
         const dz = myTank.position.z - obs.z;
-        const cos = Math.cos(-obs.rotation || 0);
-        const sin = Math.sin(-obs.rotation || 0);
+        const cos = Math.cos(obs.rotation || 0);
+        const sin = Math.sin(obs.rotation || 0);
         const localX = dx * cos - dz * sin;
         const localZ = dx * sin + dz * cos;
         const margin = 2 * 0.7;

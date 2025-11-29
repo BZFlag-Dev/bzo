@@ -3,6 +3,22 @@ const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
 
+
+// Common log function: logs to console and to server.log
+function log(...args) {
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  // Write to console
+  console.log(msg);
+  // Append to server.log
+  fs.appendFileSync(path.join(__dirname, 'server.log'), msg + '\n');
+}
+
+function logError(...args) {
+  const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  console.error(msg);
+  fs.appendFileSync(path.join(__dirname, 'server.log'), '[ERROR] ' + msg + '\n');
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -10,7 +26,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static('public'));
 
 const server = app.listen(PORT, '::', () => {
-  console.log(`Server running on http://[::]:${PORT}`);
+  log(`Server running on http://[::]:${PORT}`);
 });
 
 // WebSocket server
@@ -368,7 +384,7 @@ function validateMovement(player, newX, newZ, newRotation, deltaTime) {
   const maxDist = GAME_CONFIG.TANK_SPEED * deltaTime * GAME_CONFIG.MAX_SPEED_TOLERANCE;
 
   if (distMoved > maxDist) {
-    console.log(`Player "${player.name}" moved too fast: ${distMoved} > ${maxDist}`);
+    log(`Player "${player.name}" moved too fast: ${distMoved} > ${maxDist}`);
     return false;
   }
 
@@ -377,14 +393,14 @@ function validateMovement(player, newX, newZ, newRotation, deltaTime) {
   const maxRot = GAME_CONFIG.TANK_ROTATION_SPEED * deltaTime * GAME_CONFIG.MAX_SPEED_TOLERANCE;
 
   if (rotDiff > maxRot) {
-    console.log(`Player "${player.name}" rotated too fast: ${rotDiff} > ${maxRot}`);
+    log(`Player "${player.name}" rotated too fast: ${rotDiff} > ${maxRot}`);
     return false;
   }
 
   // Check map boundaries
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
   if (Math.abs(newX) > halfMap || Math.abs(newZ) > halfMap) {
-    console.log(`Player "${player.name}" out of bounds`);
+    log(`Player "${player.name}" out of bounds`);
     return false;
   }
 
@@ -407,18 +423,18 @@ function validateMovement(player, newX, newZ, newRotation, deltaTime) {
       }
     }
     if (collision && collision.type === 'boundary') {
-      console.log(`Player "${player.name}" collided with map boundary at x:${player.x}, y:${player.y}, z:${player.z}`);
+      log(`Player "${player.name}" collided with map boundary at x:${player.x}, y:${player.y}, z:${player.z}`);
       return false;
     }
   }
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback
-      console.log(`Player "${player.name}" collided with unknown object at x:${player.x}, y:${player.y}, z:${player.z}`);
+      log(`Player "${player.name}" collided with unknown object at x:${player.x}, y:${player.y}, z:${player.z}`);
     } else {
       // Log obstacle details
       const { x, z, w, d, h, baseY, rotation } = collision;
-      console.log(`Player "${player.name}" collided with obstacle at x:${x}, z:${z}, w:${w}, d:${d}, h:${h}, baseY:${baseY}, rotation:${rotation} (player at x:${player.x}, y:${player.y}, z:${player.z})`);
+      log(`Player "${player.name}" collided with obstacle at x:${x}, z:${z}, w:${w}, d:${d}, h:${h}, baseY:${baseY}, rotation:${rotation} (player at x:${player.x}, y:${player.y}, z:${player.z})`);
     }
     return false;
   }
@@ -432,13 +448,13 @@ function validateShot(player, shotX, shotZ) {
   const barrelLength = 3.0;
   const dist = distance(player.x, player.z, shotX, shotZ);
   if (dist > barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE) {
-    console.log(`Player "${player.name}" shot from invalid position: ${dist} units away`);
+    log(`Player "${player.name}" shot from invalid position: ${dist} units away`);
     return false;
   }
 
   const now = Date.now();
   if (now - player.lastShot < GAME_CONFIG.SHOT_COOLDOWN) {
-    console.log(`Player "${player.name}" shot too quickly`);
+    log(`Player "${player.name}" shot too quickly`);
     return false;
   }
 
@@ -654,7 +670,7 @@ setInterval(gameLoop, 16); // ~60fps
 
 // Function to force all clients to reload
 function forceClientReload() {
-  console.log('Forcing all clients to reload...');
+  log('Forcing all clients to reload...');
   broadcastAll({ type: 'reload' });
 
   // Close all connections after a short delay
@@ -681,11 +697,11 @@ wss.on('connection', (ws, req) => {
   const clientPort = forwardedPort ? forwardedPort : req.socket.remotePort;
   const ipDisplay = forwardedFor ? `${clientIP} (via ${req.socket.remoteAddress})` : clientIP;
   if (forwardedFor && forwardedPort) {
-    console.log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for + x-forwarded-port)`);
+    log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for + x-forwarded-port)`);
   } else if (forwardedFor) {
-    console.log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for)`);
+    log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for)`);
   } else {
-    console.log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort}`);
+    log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort}`);
   }
 
   // Send initial server state in init message
@@ -720,7 +736,7 @@ wss.on('connection', (ws, req) => {
               id: player.id
             };
             // Log chat message to server console
-            console.log(`[CHAT] ${chatMsg.from}: ${chatMsg.text}`);
+            log(`[CHAT] ${chatMsg.from}: ${chatMsg.text}`);
             broadcastAll(chatMsg);
           }
           break;
@@ -852,9 +868,9 @@ wss.on('connection', (ws, req) => {
           player.deaths = 0;
           player.kills = 0;
           if (message.isMobile) {
-            console.log(`Player ${player.id} joining game as "${joinName}" [MOBILE]`);
+            log(`Player ${player.id} joining game as "${joinName}" [MOBILE]`);
           } else {
-            console.log(`Player ${player.id} joining game as "${joinName}"`);
+            log(`Player ${player.id} joining game as "${joinName}"`);
           }
 
           // broadcast join to all
@@ -896,7 +912,7 @@ wss.on('connection', (ws, req) => {
             );
 
             if (nameTaken) {
-              console.log(`Player "${player.name}" tried to change to "${newName}" (already taken)`);
+              log(`Player "${player.name}" tried to change to "${newName}" (already taken)`);
               // Send error back to client
               ws.send(JSON.stringify({
                 type: 'nameError',
@@ -905,7 +921,7 @@ wss.on('connection', (ws, req) => {
             } else {
               const oldName = player.name;
               player.name = newName;
-              console.log(`Player name changed: "${oldName}" -> "${newName}"`);
+              log(`Player name changed: "${oldName}" -> "${newName}"`);
               broadcastAll({
                 type: 'nameChanged',
                 playerId: player.id,
@@ -952,7 +968,7 @@ wss.on('connection', (ws, req) => {
           break;
       }
     } catch (err) {
-      console.error('Error handling message:', err);
+      logError('Error handling message:', err);
     }
   });
 
@@ -962,7 +978,7 @@ wss.on('connection', (ws, req) => {
     const playerNum = player.playerNumber;
     players.delete(player.id);
     usedPlayerNumbers.delete(playerNum); // Free up the player number for reuse
-    console.log(`Player "${playerName}" (#${playerNum}) disconnected. Total players: ${players.size}`);
+    log(`Player "${playerName}" (#${playerNum}) disconnected. Total players: ${players.size}`);
 
     broadcast({
       type: 'playerLeft',
