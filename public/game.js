@@ -1,3 +1,62 @@
+// Cobblestone texture for boundary walls
+function createCobblestoneTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+
+  // Fill with dark grey
+  ctx.fillStyle = '#333';
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Draw cobblestones
+  const rows = 8;
+  const cols = 8;
+  const stoneW = 28;
+  const stoneH = 28;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      // Offset every other row
+      const offsetX = (y % 2) * (stoneW / 2);
+      const cx = x * stoneW + offsetX + stoneW / 2 + 4 * Math.random();
+      const cy = y * stoneH + stoneH / 2 + 4 * Math.random();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, stoneW * 0.45, stoneH * 0.4, 0, 0, Math.PI * 2);
+      // Vary color for realism
+      const shade = Math.floor(40 + Math.random() * 40);
+      ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
+      ctx.fill();
+      // Draw highlight
+      ctx.beginPath();
+      ctx.ellipse(cx - 4, cy - 4, stoneW * 0.12, stoneH * 0.10, 0, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200,200,200,0.08)`;
+      ctx.fill();
+      // Draw shadow
+      ctx.beginPath();
+      ctx.ellipse(cx + 4, cy + 4, stoneW * 0.12, stoneH * 0.10, 0, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(0,0,0,0.12)`;
+      ctx.fill();
+    }
+  }
+  // Draw mortar lines
+  ctx.strokeStyle = 'rgba(80,80,80,0.5)';
+  ctx.lineWidth = 2;
+  for (let y = 0; y <= rows; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * stoneH);
+    ctx.lineTo(256, y * stoneH);
+    ctx.stroke();
+  }
+  for (let x = 0; x <= cols; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * stoneW, 0);
+    ctx.lineTo(x * stoneW, 256);
+    ctx.stroke();
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
@@ -191,6 +250,55 @@ function createObstacleTexture() {
 
 // Initialize Three.js
 function init() {
+    // HUD Buttons
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const debugBtn = document.getElementById('debugBtn');
+    if (fullscreenBtn) {
+      fullscreenBtn.addEventListener('click', () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen();
+        } else {
+          document.exitFullscreen();
+        }
+      });
+    }
+    if (debugBtn) {
+      debugBtn.addEventListener('click', () => {
+        debugEnabled = !debugEnabled;
+        localStorage.setItem('debugEnabled', debugEnabled);
+        const debugHud = document.getElementById('debugHud');
+        if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
+        if (debugEnabled && !debugUpdateInterval) {
+          debugUpdateInterval = setInterval(updateDebugDisplay, 500);
+        } else if (!debugEnabled && debugUpdateInterval) {
+          clearInterval(debugUpdateInterval);
+          debugUpdateInterval = null;
+        }
+      });
+    }
+
+    // Hotkeys for F (fullscreen) and D (debug)
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'f' || e.key === 'F') {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen();
+        } else {
+          document.exitFullscreen();
+        }
+      } else if (e.key === 'd' || e.key === 'D') {
+        debugEnabled = !debugEnabled;
+        localStorage.setItem('debugEnabled', debugEnabled);
+        const debugHud = document.getElementById('debugHud');
+        if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
+        if (debugEnabled && !debugUpdateInterval) {
+          debugUpdateInterval = setInterval(updateDebugDisplay, 500);
+        } else if (!debugEnabled && debugUpdateInterval) {
+          clearInterval(debugUpdateInterval);
+          debugUpdateInterval = null;
+        }
+      }
+    });
   // Chat UI
   const chatWindow = document.getElementById('chatWindow');
   chatInput = document.getElementById('chatInput');
@@ -722,8 +830,9 @@ function createMapBoundaries(mapSize = 100) {
   // Create materials for each wall with proper texture scaling
   // Scale texture to show 1 brick repeat per 2 units for consistent brick size
 
+
   // North/South walls: mapSize × wallHeight × wallThickness (100 × 5 × 1)
-  const nsWallTexture = createWallTexture();
+  const nsWallTexture = createCobblestoneTexture();
   nsWallTexture.wrapS = THREE.RepeatWrapping;
   nsWallTexture.wrapT = THREE.RepeatWrapping;
 
@@ -745,7 +854,7 @@ function createMapBoundaries(mapSize = 100) {
   nsWallMaterials[5].map.repeat.set(mapSize / 2, wallHeight / 2);       // back: 100×5
 
   // East/West walls: wallThickness × wallHeight × mapSize (1 × 5 × 100)
-  const ewWallTexture = createWallTexture();
+  const ewWallTexture = createCobblestoneTexture();
   ewWallTexture.wrapS = THREE.RepeatWrapping;
   ewWallTexture.wrapT = THREE.RepeatWrapping;
 
@@ -935,18 +1044,41 @@ function recreateObstacles() {
     const h = obs.h || 4;
     const baseY = obs.baseY || 0;
 
-    // Create texture with scaling based on obstacle size
-    const obstacleTexture = createObstacleTexture();
-    obstacleTexture.wrapS = THREE.RepeatWrapping;
-    obstacleTexture.wrapT = THREE.RepeatWrapping;
-    // Scale texture based on physical size (1 repeat per 2 units)
-    obstacleTexture.repeat.set(obs.w / 2, h / 2);
+    // Create textures
+    const concreteTexture = createObstacleTexture();
+    concreteTexture.wrapS = THREE.RepeatWrapping;
+    concreteTexture.wrapT = THREE.RepeatWrapping;
+    concreteTexture.repeat.set(obs.w / 2, h / 2);
 
-    const obstacleMaterial = new THREE.MeshLambertMaterial({ map: obstacleTexture });
+    const wallTexture = createWallTexture();
+    wallTexture.wrapS = THREE.RepeatWrapping;
+    wallTexture.wrapT = THREE.RepeatWrapping;
+    wallTexture.repeat.set(obs.d / 2, h / 2); // Default repeat, will adjust per face
+
+    // Materials: [right, left, top, bottom, front, back]
+    const materials = [
+      new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // right
+      new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // left
+      new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // top
+      new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // bottom
+      new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // front
+      new THREE.MeshLambertMaterial({ map: wallTexture.clone() })  // back
+    ];
+
+    // Set repeat for each face
+    // Sides (right/left/front/back): repeat by obstacle size
+    materials[0].map.repeat.set(obs.d / 2, h / 2); // right
+    materials[1].map.repeat.set(obs.d / 2, h / 2); // left
+    materials[4].map.repeat.set(obs.w / 2, h / 2); // front
+    materials[5].map.repeat.set(obs.w / 2, h / 2); // back
+    // Top/bottom: repeat by obstacle width/depth
+    materials[2].map.repeat.set(obs.w / 2, obs.d / 2); // top
+    materials[3].map.repeat.set(obs.w / 2, obs.d / 2); // bottom
+    materials.forEach(m => { m.map.needsUpdate = true; });
 
     const obstacle = new THREE.Mesh(
       new THREE.BoxGeometry(obs.w, h, obs.d),
-      obstacleMaterial
+      materials
     );
     // Position at baseY + half height
     obstacle.position.set(obs.x, baseY + h / 2, obs.z);
@@ -2601,7 +2733,7 @@ function handleInput(deltaTime) {
   const tankY = myTank ? myTank.position.y : 0;
   const result = slideMove(playerX, playerZ, intendedDeltaX, intendedDeltaZ, 2, tankY);
   if (result.altered) {
-    showMessage(`slideMove: from (${playerX.toFixed(2)}, ${playerZ.toFixed(2)}) by (Δx=${intendedDeltaX.toFixed(2)}, Δz=${intendedDeltaZ.toFixed(2)}) → (${result.x.toFixed(2)}, ${result.z.toFixed(2)}) moved=${result.moved} altered=${result.altered}`);
+    //showMessage(`slideMove: from (${playerX.toFixed(2)}, ${playerZ.toFixed(2)}) by (Δx=${intendedDeltaX.toFixed(2)}, Δz=${intendedDeltaZ.toFixed(2)}) → (${result.x.toFixed(2)}, ${result.z.toFixed(2)}) moved=${result.moved} altered=${result.altered}`);
   }
   if (result.moved) {
     playerX = result.x;
