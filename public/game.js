@@ -83,6 +83,90 @@ let radarCanvas, radarCtx;
 const keys = {};
 let lastShotTime = 0;
 
+// Mouse movement toggle button
+window.addEventListener('DOMContentLoaded', () => {
+    // Pause mouse control when window loses focus
+    window.addEventListener('blur', () => {
+      if (mouseControlEnabled) {
+        mouseControlEnabled = false;
+        if (typeof updateHudButtons === 'function') updateHudButtons();
+      }
+    });
+  const mouseBtn = document.getElementById('mouseBtn');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const debugBtn = document.getElementById('debugBtn');
+  const helpBtn = document.getElementById('helpBtn');
+  if (helpBtn) {
+    const helpPanel = document.getElementById('helpPanel');
+    function updateHelpBtn() {
+      if (!helpPanel) return;
+      if (helpPanel.style.display === 'block') {
+        helpBtn.classList.add('active');
+        helpBtn.title = 'Hide Help (?)';
+      } else {
+        helpBtn.classList.remove('active');
+        helpBtn.title = 'Show Help (?)';
+      }
+    }
+    helpBtn.addEventListener('click', () => {
+      if (!helpPanel) return;
+      helpPanel.style.display = (helpPanel.style.display === 'none' || !helpPanel.style.display) ? 'block' : 'none';
+      updateHelpBtn();
+    });
+    // Also update on load in case help is open by default
+    updateHelpBtn();
+  }
+
+  function setActive(btn, active, activeTitle, inactiveTitle) {
+    if (!btn) return;
+    if (active) {
+      btn.classList.add('active');
+      if (activeTitle) btn.title = activeTitle;
+    } else {
+      btn.classList.remove('active');
+      if (inactiveTitle) btn.title = inactiveTitle;
+    }
+  }
+
+  function updateHudButtons() {
+    setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
+    setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
+    setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
+  }
+
+  if (mouseBtn) {
+    mouseBtn.addEventListener('click', () => {
+      mouseControlEnabled = !mouseControlEnabled;
+      updateHudButtons();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'm' || e.key === 'M') {
+      mouseControlEnabled = !mouseControlEnabled;
+      updateHudButtons();
+    }
+  });
+  if (debugBtn) {
+    debugBtn.addEventListener('click', () => {
+      debugEnabled = !debugEnabled;
+      updateHudButtons();
+    });
+  }
+  if (fullscreenBtn) {
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+      } else {
+        document.exitFullscreen();
+      }
+      setTimeout(updateHudButtons, 100); // update after fullscreen change
+    });
+    document.addEventListener('fullscreenchange', updateHudButtons);
+  }
+  updateHudButtons();
+});
+
 // Obstacle definitions (received from server)
 let OBSTACLES = [];
 
@@ -263,6 +347,7 @@ function init() {
       });
     }
     if (debugBtn) {
+      debugBtn.title = 'Toggle Debug HUD (I)';
       debugBtn.addEventListener('click', () => {
         debugEnabled = !debugEnabled;
         localStorage.setItem('debugEnabled', debugEnabled);
@@ -277,7 +362,7 @@ function init() {
       });
     }
 
-    // Hotkeys for F (fullscreen) and D (debug)
+    // Hotkeys for F (fullscreen) and I (debug info)
     window.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       if (e.key === 'f' || e.key === 'F') {
@@ -286,7 +371,7 @@ function init() {
         } else {
           document.exitFullscreen();
         }
-      } else if (e.key === 'd' || e.key === 'D') {
+      } else if (e.key === 'i' || e.key === 'I') {
         debugEnabled = !debugEnabled;
         localStorage.setItem('debugEnabled', debugEnabled);
         const debugHud = document.getElementById('debugHud');
@@ -643,12 +728,7 @@ function init() {
     // Only block mouse actions if the click is on the chat input itself
     if (e.target === chatInput) return;
 
-    // If the click is anywhere except the chat input, activate mouse mode
-    if (!mouseControlEnabled) {
-      mouseControlEnabled = true;
-      showMessage('Controls: Mouse');
-      justActivatedMouseControl = true;
-    }
+
 
     // If the click is inside the chat window but not on the input, blur input and exit chat
     if (e.target.closest && e.target.closest('#chatWindow') && e.target !== chatInput) {
@@ -666,6 +746,15 @@ function init() {
     }
   });
 
+  // Allow switching to mouse mode with M key
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if ((e.key === 'm' || e.key === 'M') && !mouseControlEnabled) {
+      mouseControlEnabled = true;
+      showMessage('Controls: Mouse');
+    }
+  });
+
   document.addEventListener('mouseup', (e) => {
     if (e.button === 0) {
       keys['Space'] = false;
@@ -677,6 +766,7 @@ function init() {
     if (e.code === 'Escape' && mouseControlEnabled) {
       mouseControlEnabled = false;
       showMessage('Controls: Keyboard');
+      if (typeof updateHudButtons === 'function') updateHudButtons();
     }
   });
 
@@ -1610,7 +1700,6 @@ function handleServerMessage(message) {
   }
   switch (message.type) {
     case 'init':
-        showMessage(`Map size from server: ${message.config && message.config.MAP_SIZE}`);
       // Update player name at the top of the scoreboard and set myPlayerName to the name field
       if (message.player && message.player.name) {
         myPlayerName = message.player.name;

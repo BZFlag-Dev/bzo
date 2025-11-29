@@ -1,3 +1,30 @@
+#hudButtons button {
+  background: rgba(76,175,80,0.15);
+  color: #4CAF50;
+  border: 2px solid #4CAF50;
+  border-radius: 5px;
+  font-weight: bold;
+  padding: 6px 12px;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+  outline: none;
+  cursor: pointer;
+}
+
+#hudButtons button.active {
+  background: #4CAF50;
+  color: #fff;
+  border-color: #66bb6a;
+  box-shadow: 0 0 6px #4CAF5088;
+}
+
+#hudButtons button:focus {
+  border-color: #81c784;
+}
+
+#hudButtons button:hover {
+  background: rgba(76,175,80,0.35);
+  color: #fff;
+}
 /* Chat Window Styles */
 #chatWindow {
   position: fixed;
@@ -81,10 +108,16 @@ body {
   margin-bottom: 15px;
   font-size: 16px;
   line-height: 1.6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-#stats div {
-  margin: 5px 0;
+#hudButtons {
+  display: flex !important;
+  gap: 6px;
+  margin-left: 8px;
+  justify-content: flex-end;
 }
 
 #stats span {

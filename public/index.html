@@ -9,12 +9,14 @@
 </head>
 <body>
   <div id="mainhud">
-    <div id="stats">
-      <div><span id="playerName" style="cursor: pointer; color: #4CAF50; font-weight: bold; font-size: 20px;" title="Click to change name">Player</span></div>
-    </div>
-    <div id="hudButtons" style="margin: 8px 0;">
-      <button id="fullscreenBtn" title="Toggle Fullscreen (F)" style="margin-right: 8px;">F</button>
-      <button id="debugBtn" title="Toggle Debug HUD (D)">D</button>
+    <div id="stats" style="display: flex; align-items: center; gap: 12px;">
+      <span id="playerName" style="cursor: pointer; color: #4CAF50; font-weight: bold; font-size: 20px;" title="Click to change name">Player</span>
+      <div id="hudButtons" style="display: inline-flex; gap: 6px; margin-left: 8px;">
+        <button id="fullscreenBtn" title="Toggle Fullscreen (F)">F</button>
+        <button id="debugBtn" title="Toggle Debug HUD (I)">I</button>
+        <button id="mouseBtn" title="Toggle Mouse Movement (M)">M</button>
+        <button id="helpBtn" title="Show Help (?)">?</button>
+      </div>
     </div>
     <div id="scoreboard">
       <h3>Scoreboard</h3>
@@ -24,7 +26,6 @@
       </div>
       <div id="scoreboardList"></div>
     </div>
-    <div id="helpHint">Press <strong>?</strong> for help</div>
   </div>
 
   <div id="chatWindow">
@@ -53,25 +54,39 @@
   <div id="helpPanel" style="display: none;">
     <h1>BZFlagWeb</h1>
     <div id="helpContent">
-      <h2>Mouse Controls</h2>
-      <p><strong>First Click:</strong> Enable Mouse Controls</p>
-      <p><strong>Move Up/Down:</strong> Control Speed (Forward/Backward)</p>
-      <p><strong>Move Left/Right:</strong> Turn Tank</p>
-      <p><strong>Click:</strong> Shoot</p>
-      <p><strong>ESC:</strong> Switch to Keyboard Mode</p>
+      <h2>HUD Buttons</h2>
+      <ul>
+        <li><strong>F</strong> — <b>Fullscreen</b> (or click <b>F</b> button)</li>
+        <li><strong>I</strong> — <b>Debug HUD</b> (or click <b>I</b> button)</li>
+        <li><strong>M</strong> — <b>Mouse Movement</b> (or click <b>M</b> button)</li>
+        <li><strong>?</strong> — <b>Show/Hide Help</b> (or click <b>?</b> button)</li>
+      </ul>
 
-      <h2>Keyboard Controls</h2>
-      <p><strong>W/S:</strong> Forward/Backward</p>
-      <p><strong>A/D:</strong> Turn Left/Right</p>
-      <p><strong>Space:</strong> Shoot</p>
-      <p><strong>Tab:</strong> Jump</p>
-      <p><strong>Click:</strong> Switch to Mouse Mode</p>
+      <h2>Movement & Actions</h2>
+      <ul>
+        <li><strong>W/S</strong> — Move Forward/Backward</li>
+        <li><strong>A/D</strong> — Turn Left/Right</li>
+        <li><strong>Space</strong> — Shoot</li>
+        <li><strong>Tab</strong> — Jump</li>
+        <li><strong>C</strong> — Toggle Camera View</li>
+        <li><strong>P</strong> — Pause Game</li>
+      </ul>
 
-      <h2>Other Controls</h2>
-      <p><strong>C:</strong> Toggle Camera View</p>
-      <p><strong>P:</strong> Pause Game</p>
-      <p><strong>/ or T:</strong> Chat</p>
-      <p><strong>?:</strong> Toggle This Help</p>
+      <h2>Mouse Mode</h2>
+      <ul>
+        <li><strong>M</strong> or <b>M</b> button — Enable/Disable Mouse Movement</li>
+        <li><strong>ESC</strong> — Exit Mouse Mode (return to keyboard)</li>
+        <li><strong>Mouse Up/Down</strong> — Control Speed</li>
+        <li><strong>Mouse Left/Right</strong> — Turn Tank</li>
+        <li><strong>Left Click</strong> — Shoot</li>
+      </ul>
+
+      <h2>Chat & Misc</h2>
+      <ul>
+        <li><strong>/</strong> or <strong>T</strong> — Open Chat</li>
+        <li><strong>Enter</strong> — Send Chat</li>
+        <li><strong>Click Player Name</strong> — Change Name</li>
+      </ul>
     </div>
   </div>
 

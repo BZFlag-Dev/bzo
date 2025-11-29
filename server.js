@@ -234,7 +234,7 @@ class Player {
     this.x = spawnPos.x;
     this.y = spawnPos.y;
     this.z = spawnPos.z;
-    this.rotation = Math.random() * Math.PI * 2;
+    this.rotation = spawnPos.rotation;
     this.health = 100;
     this.verticalVelocity = 0;
     this.isJumping = false;
@@ -362,14 +362,15 @@ function findValidSpawnPosition(tankRadius = 2) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const x = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
     const z = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
+    const rotation = Math.random() * Math.PI * 2;
 
     if (!checkCollision(x, z, tankRadius)) {
-      return { x, y, z };
+      return { x, y, z, rotation };
     }
   }
 
   // If we couldn't find a valid position after many attempts, return a safe default
-  return { x: 0, y: 0, z: 0 };
+  return { x: 0, y: 0, z: 0, rotation: 0 };
 }
 
 // Validate player movement
@@ -861,7 +862,7 @@ wss.on('connection', (ws, req) => {
           player.x = spawnPos.x;
           player.y = spawnPos.y
           player.z = spawnPos.z;
-          player.rotation = Math.random() * Math.PI * 2;
+          player.rotation = spawnPos.rotation;
           player.verticalVelocity = 0;
           player.isJumping = false;
           player.onObstacle = false;
