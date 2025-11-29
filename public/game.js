@@ -63,16 +63,28 @@ if (isMobile) {
       window.addEventListener('mouseup', handleJoystickEnd);
     }
     if (fireBtn) {
-      fireBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.fire = true; });
-      fireBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.fire = false; });
-      fireBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.fire = true; });
-      fireBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.fire = false; });
+      function setFirePressed(pressed) {
+        if (pressed) fireBtn.classList.add('pressed');
+        else fireBtn.classList.remove('pressed');
+      }
+      fireBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
+      fireBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
+      fireBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
+      fireBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
+      fireBtn.addEventListener('mouseleave', e => { setFirePressed(false); });
+      fireBtn.addEventListener('touchcancel', e => { setFirePressed(false); });
     }
     if (jumpBtn) {
-      jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.jump = true; });
-      jumpBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.jump = false; });
-      jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.jump = true; });
-      jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.jump = false; });
+      function setJumpPressed(pressed) {
+        if (pressed) jumpBtn.classList.add('pressed');
+        else jumpBtn.classList.remove('pressed');
+      }
+      jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
+      jumpBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
+      jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
+      jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
+      jumpBtn.addEventListener('mouseleave', e => { setJumpPressed(false); });
+      jumpBtn.addEventListener('touchcancel', e => { setJumpPressed(false); });
     }
   });
 }
@@ -601,15 +613,7 @@ function init() {
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
   if (savedDebugState === 'true') {
-    debugEnabled = true;
-    const debugHud = document.getElementById('debugHud');
-    if (debugHud) {
-      debugHud.style.display = 'block';
-    }
-    // Start updating debug display
-    if (!debugUpdateInterval) {
-      debugUpdateInterval = setInterval(updateDebugDisplay, 500);
-    }
+    toggleDebugHud();
   }
 
   // Scene

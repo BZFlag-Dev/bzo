@@ -1,16 +1,55 @@
+/* Chat window responsive wrapping and scrolling */
+#chatWindow {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 95vw;
+  max-width: 600px;
+  min-width: 120px;
+  max-height: 33vh;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  font: 16px monospace;
+  padding: 8px 10px 6px 10px;
+  border-radius: 12px 12px 0 0;
+  pointer-events: auto;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#chatWindow div {
+  overflow-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 /* Responsive chat area for small screens */
 @media (max-width: 800px) {
   #chatWindow {
-    width: 90vw;
-    max-width: 320px;
-    min-width: 120px;
-    height: 120px;
-    max-height: 30vh;
-    font-size: 10px;
-    bottom: 60px;
-    right: 5vw;
-    padding: 4px 6px;
-    border-radius: 8px;
+    width: 98vw;
+    max-width: 98vw;
+    min-width: 0;
+    max-height: 33vh;
+    font-size: 12px;
+    left: 50%;
+    right: auto !important;
+    top: auto !important;
+    bottom: 0 !important;
+    transform: translateX(-50%) !important;
+    margin: 0 !important;
+    padding: 4px 4px 2px 4px;
+    border-radius: 10px 10px 0 0;
+    position: fixed !important;
+    box-sizing: border-box;
+    z-index: 100;
   }
   #chatWindow input,
   #chatWindow textarea {
@@ -20,6 +59,7 @@
   #chatWindow div {
     font-size: 12px;
     margin-bottom: 2px;
+    max-width: 100%;
   }
 }
 /* Mobile Controls Overlay Styles */
@@ -32,7 +72,7 @@
 
 .mobile-joystick {
   position: absolute;
-  left: 5vw;
+  left: 2vw;
   bottom: 10vh;
   width: 120px;
   height: 120px;
@@ -56,7 +96,7 @@
 
 .mobile-btn {
   position: absolute;
-  right: 5vw;
+  right: 2vw;
   width: 80px;
   height: 80px;
   background: rgba(76,175,80,0.85);
@@ -71,6 +111,13 @@
   align-items: center;
   justify-content: center;
   user-select: none;
+}
+
+.mobile-btn.pressed {
+  filter: brightness(1.2) drop-shadow(0 0 12px #fff8);
+  transform: scale(0.93);
+  opacity: 0.85;
+  transition: filter 0.1s, transform 0.1s, opacity 0.1s;
 }
 
 #jumpBtn { bottom: 25vh; }
@@ -106,39 +153,17 @@
   background: rgba(76,175,80,0.35);
   color: #fff;
 }
-/* Chat Window Styles */
-#chatWindow {
-  position: fixed;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
-  width: 70vw;
-  height: 33vh;
-  max-width: 70vw;
-  background: rgba(0,0,0,0.5);
-  color: #fff;
-  font: 16px monospace;
-  padding: 12px 18px 8px 18px;
-  border-radius: 12px 12px 0 0;
-  pointer-events: auto;
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 2px;
-  box-sizing: border-box;
-}
 
 #chatInput {
   width: 100%;
-  font: 18px monospace;
-  padding: 8px 12px;
+  font: 16px monospace;
+  padding: 6px 8px;
   border-radius: 8px;
   border: none;
   outline: none;
   background: rgba(0,0,0,0.8);
   color: #fff;
-  margin-top: 8px;
+  margin-top: 2px;
   z-index: 101;
   display: block;
   box-sizing: border-box;
@@ -402,7 +427,7 @@ body {
   bottom: 10px;
   right: 10px;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.5);
   padding: 15px;
   border-radius: 10px;
   width: 320px;
@@ -629,7 +654,7 @@ canvas {
 #radar {
   position: fixed;
   top: 10px;
-  right: 10px;
+  right: 2vw;
   z-index: 100;
   border: 2px solid rgba(76, 175, 80, 0.6);
   border-radius: 5px;
@@ -637,7 +662,11 @@ canvas {
   background: rgba(0, 0, 0, 0.8);
   opacity: 0.5;
   width: 18vw;
+  max-width: 120px;
+  min-width: 60px;
   height: 18vw;
+  max-height: 120px;
+  min-height: 60px;
   aspect-ratio: 1 / 1;
   box-sizing: border-box;
 }
@@ -646,5 +675,10 @@ canvas {
   #radar {
     width: 32vw;
     height: 32vw;
+    max-width: calc(100vw - 8vw);
+    max-height: calc(100vw - 8vw);
+    right: 2vw;
+    min-width: 40px;
+    min-height: 40px;
   }
 }
