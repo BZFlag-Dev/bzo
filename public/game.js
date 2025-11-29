@@ -95,6 +95,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const mouseBtn = document.getElementById('mouseBtn');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
   const debugBtn = document.getElementById('debugBtn');
+  const cameraBtn = document.getElementById('cameraBtn');
   const helpBtn = document.getElementById('helpBtn');
   if (helpBtn) {
     const helpPanel = document.getElementById('helpPanel');
@@ -132,38 +133,87 @@ window.addEventListener('DOMContentLoaded', () => {
     setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
     setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
     setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
+    if (cameraBtn) {
+      let camTitle = 'Toggle Camera View (C)';
+      if (typeof cameraMode !== 'undefined') {
+        camTitle = `Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'} (C)`;
+      }
+      cameraBtn.title = camTitle;
+    }
+  }
+  // Restore camera mode from localStorage
+  const savedCameraMode = localStorage.getItem('cameraMode');
+  if (savedCameraMode === 'first-person' || savedCameraMode === 'third-person' || savedCameraMode === 'overview') {
+    cameraMode = savedCameraMode;
+  }
+  // --- HUD/Key Handler Functions ---
+  function toggleMouseMode() {
+    mouseControlEnabled = !mouseControlEnabled;
+    localStorage.setItem('mouseControlEnabled', mouseControlEnabled);
+    updateHudButtons();
   }
 
-  if (mouseBtn) {
-    mouseBtn.addEventListener('click', () => {
-      mouseControlEnabled = !mouseControlEnabled;
-      updateHudButtons();
-    });
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+      localStorage.setItem('fullscreenEnabled', 'true');
+    } else {
+      document.exitFullscreen();
+      localStorage.setItem('fullscreenEnabled', 'false');
+    }
+    setTimeout(updateHudButtons, 100);
   }
+
+  function toggleDebugHud() {
+    debugEnabled = !debugEnabled;
+    updateHudButtons();
+  }
+
+  function toggleCameraMode() {
+    if (cameraMode === 'first-person') {
+      cameraMode = 'third-person';
+    } else if (cameraMode === 'third-person') {
+      cameraMode = 'overview';
+    } else {
+      cameraMode = 'first-person';
+    }
+    localStorage.setItem('cameraMode', cameraMode);
+    showMessage(`Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'}`);
+    if (typeof updateHudButtons === 'function') updateHudButtons();
+  }
+
+  function toggleHelpPanel() {
+    if (!helpPanel) return;
+    helpPanel.style.display = (helpPanel.style.display === 'none' || !helpPanel.style.display) ? 'block' : 'none';
+    updateHelpBtn();
+  }
+
+  // Restore states from localStorage
+  // (savedCameraMode already declared above)
+  const savedMouseMode = localStorage.getItem('mouseControlEnabled');
+  if (savedMouseMode === 'true') mouseControlEnabled = true;
+  const savedFullscreen = localStorage.getItem('fullscreenEnabled');
+  // Optionally, auto-enter fullscreen if previously enabled
+  if (fullscreenBtn && savedFullscreen === 'true' && !document.fullscreenElement) {
+    document.documentElement.requestFullscreen();
+  }
+
+  // --- Attach HUD Button Handlers ---
+  if (mouseBtn) mouseBtn.addEventListener('click', toggleMouseMode);
+  if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullscreen);
+  if (debugBtn) debugBtn.addEventListener('click', toggleDebugHud);
+  if (cameraBtn) cameraBtn.addEventListener('click', toggleCameraMode);
+  if (helpBtn) helpBtn.addEventListener('click', toggleHelpPanel);
+
+  // --- Attach Key Handlers ---
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    if (e.key === 'm' || e.key === 'M') {
-      mouseControlEnabled = !mouseControlEnabled;
-      updateHudButtons();
-    }
+    if (e.key === 'm' || e.key === 'M') toggleMouseMode();
+    else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+    else if (e.key === 'i' || e.key === 'I') toggleDebugHud();
+    else if (e.key === 'c' || e.key === 'C') toggleCameraMode();
+    else if (e.key === '?' || e.key === '/') toggleHelpPanel();
   });
-  if (debugBtn) {
-    debugBtn.addEventListener('click', () => {
-      debugEnabled = !debugEnabled;
-      updateHudButtons();
-    });
-  }
-  if (fullscreenBtn) {
-    fullscreenBtn.addEventListener('click', () => {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen();
-      } else {
-        document.exitFullscreen();
-      }
-      setTimeout(updateHudButtons, 100); // update after fullscreen change
-    });
-    document.addEventListener('fullscreenchange', updateHudButtons);
-  }
   updateHudButtons();
 });
 
@@ -728,7 +778,14 @@ function init() {
     // Only block mouse actions if the click is on the chat input itself
     if (e.target === chatInput) return;
 
-
+    // Prevent firing if clicking on HUD elements and not in mouse mode
+    const hudSelectors = ['#playerName', '#mouseBtn', '#fullscreenBtn', '#debugBtn', '#cameraBtn', '#helpBtn'];
+    for (const sel of hudSelectors) {
+      const el = document.querySelector(sel);
+      if (el && (e.target === el || el.contains(e.target))) {
+        if (!mouseControlEnabled) return;
+      }
+    }
 
     // If the click is inside the chat window but not on the input, blur input and exit chat
     if (e.target.closest && e.target.closest('#chatWindow') && e.target !== chatInput) {
@@ -1705,6 +1762,7 @@ function handleServerMessage(message) {
         myPlayerName = message.player.name;
         const playerNameEl = document.getElementById('playerName');
         if (playerNameEl) playerNameEl.textContent = myPlayerName;
+        showMessage(`Connected to server as "${myPlayerName}"!`);
       }
       // Clear any existing tanks from previous connections
       tanks.forEach((tank, id) => {
