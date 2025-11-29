@@ -1,4 +1,81 @@
+// Detect mobile browser
+function isMobileBrowser() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+const isMobile = isMobileBrowser();
+
 // --- Mobile Device Orientation Debugging ---
+// --- Mobile Controls Overlay (Joystick, Jump, Fire) ---
+let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
+let lastVirtualJump = false;
+if (isMobile) {
+  console.log('Mobile device detected, enabling virtual joystick and buttons.');
+  window.addEventListener('DOMContentLoaded', () => {
+    const overlay = document.getElementById('controlsOverlay');
+    if (overlay) overlay.style.display = 'block';
+    const joystick = document.getElementById('joystick');
+    const knob = document.getElementById('joystickKnob');
+    const fireBtn = document.getElementById('fireBtn');
+    const jumpBtn = document.getElementById('jumpBtn');
+    let joystickActive = false;
+    let joystickCenter = { x: 0, y: 0 };
+    function setJoystick(x, y) {
+      // Clamp to circle
+      const mag = Math.sqrt(x * x + y * y);
+      if (mag > 1) { x /= mag; y /= mag; }
+      virtualInput.forward = -y; // Up is forward
+      virtualInput.turn = x;
+      if (knob) knob.style.transform = `translate(${x * 35}px, ${y * 35}px)`;
+    }
+    function handleJoystickStart(e) {
+      joystickActive = true;
+      const rect = joystick.getBoundingClientRect();
+      joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      handleJoystickMove(e);
+      e.preventDefault();
+    }
+    function handleJoystickMove(e) {
+      if (!joystickActive) return;
+      let clientX, clientY;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      const dx = clientX - joystickCenter.x;
+      const dy = clientY - joystickCenter.y;
+      setJoystick(dx / 60, dy / 60);
+      e.preventDefault();
+    }
+    function handleJoystickEnd(e) {
+      joystickActive = false;
+      setJoystick(0, 0);
+      e.preventDefault();
+    }
+    if (joystick) {
+      joystick.addEventListener('touchstart', handleJoystickStart);
+      joystick.addEventListener('touchmove', handleJoystickMove);
+      joystick.addEventListener('touchend', handleJoystickEnd);
+      joystick.addEventListener('mousedown', handleJoystickStart);
+      window.addEventListener('mousemove', handleJoystickMove);
+      window.addEventListener('mouseup', handleJoystickEnd);
+    }
+    if (fireBtn) {
+      fireBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.fire = true; });
+      fireBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.fire = false; });
+      fireBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.fire = true; });
+      fireBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.fire = false; });
+    }
+    if (jumpBtn) {
+      jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.jump = true; });
+      jumpBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.jump = false; });
+      jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.jump = true; });
+      jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.jump = false; });
+    }
+  });
+}
 let latestOrientation = { alpha: null, beta: null, gamma: null, status: '' };
 function setupMobileOrientationDebug() {
   function handleOrientation(event) {
@@ -32,7 +109,6 @@ function setupMobileOrientationDebug() {
   }
 
   // Only activate on mobile devices
-  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
   if (isMobile) {
     latestOrientation.status = 'Mobile device detected';
     requestOrientationPermission();
@@ -298,7 +374,6 @@ Object.defineProperty(window, 'mouseControlEnabled', {
 
 // Orientation analog control state
 let orientationCenter = null;
-let isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
 let orientationMode = null; // 'portrait' or 'landscape'
 
 function detectOrientationMode() {
@@ -775,7 +850,7 @@ function init() {
 
     // Jump with Tab key
     if (e.code === 'Tab') {
-      e.preventDefault(); // Prevent defwwwwb behavior
+      e.preventDefault();
       if (myTank && gameConfig) {
         const currentVelocity = myTank.userData.verticalVelocity || 0;
         // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
@@ -1760,12 +1835,6 @@ function connectToServer() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
-  // Detect mobile browser
-  function isMobileBrowser() {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  }
-  const isMobile = isMobileBrowser();
-
   ws.onopen = () => {
     showMessage('Connected to server!');
 
@@ -2139,11 +2208,11 @@ function handleServerMessage(message) {
 function addPlayer(player) {
   if (tanks.has(player.id)) return;
 
-  const tank = createTank(0xFF5722, player.name || 'Player');
+  const tank = createTank(0xFF5722, player.name);
   tank.position.set(player.x, player.y, player.z);
   tank.rotation.y = player.rotation;
   tank.userData.playerState = player; // Store player state for scoreboard
-  tank.userData.verticalVelocity = player.verticalVelocity || 0;
+  tank.userData.verticalVelocity = player.verticalVelocity;
   scene.add(tank);
   tanks.set(player.id, tank);
   updateScoreboard();
@@ -2266,9 +2335,10 @@ function handlePlayerHit(message) {
 function handlePlayerRespawn(message) {
   const tank = tanks.get(message.player.id);
   if (tank) {
+    const y = 0;
     tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
-    tank.userData.verticalVelocity = message.player.verticalVelocity || 0;
+    tank.userData.verticalVelocity = message.player.verticalVelocity;
     tank.visible = true; // Make tank visible again after respawn
   }
 
@@ -3047,10 +3117,21 @@ function handleInput(deltaTime) {
     }
   }
 
+
   // --- Step 1: Gather intended speed and angular motion from all sources ---
   let intendedForward = 0; // -1..1
   let intendedRotation = 0; // -1..1
 
+  if (isMobile) {
+    // Use virtual joystick input on mobile
+    if (!isInAir) {
+      intendedForward = virtualInput.forward;
+      intendedRotation = -virtualInput.turn; // Invert so right/left match tank controls
+    } else {
+      intendedForward = 0;
+      intendedRotation = 0;
+    }
+  } else {
     // WASD keys: pressing any disables mouse move mode
     const wasdKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
     let wasdPressed = false;
@@ -3065,10 +3146,11 @@ function handleInput(deltaTime) {
       toggleMouseMode();
     }
 
-  // Mouse analog (if enabled)
-  if (mouseControlEnabled) {
-    if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
-    if (typeof mouseX !== 'undefined') intendedRotation += -mouseX;
+    // Mouse analog (if enabled)
+    if (mouseControlEnabled) {
+      if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
+      if (typeof mouseX !== 'undefined') intendedRotation += -mouseX;
+    }
   }
 
   // Jump/momentum (if in air)
@@ -3224,14 +3306,43 @@ function handleInput(deltaTime) {
     lastSentTime = now;
   }
 
-  // Shooting
-  if (keys['Space']) {
+  // Shooting (Space or virtual fire button)
+  if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space'])) {
     const now = Date.now();
     if (now - lastShotTime > gameConfig.SHOT_COOLDOWN) {
       shoot();
       lastShotTime = now;
     }
   }
+
+  // Jumping (Tab or virtual jump button, only on rising edge)
+  if (isMobile && virtualInput.jump && !lastVirtualJump) {
+    if (myTank && gameConfig) {
+      const currentVelocity = myTank.userData.verticalVelocity || 0;
+      // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
+      if (Math.abs(currentVelocity) <= 1) {
+        // Use validateMove to check if on ground or obstacle
+        const moveResult = validateMove(myTank.position.x, myTank.position.y, myTank.position.z, 0, 0, 0, 2);
+        if (moveResult.landedType === 'ground' || moveResult.landedType === 'obstacle') {
+          myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
+          myTank.userData.hasLanded = false; // Reset landing flag when jumping
+
+          // Play jump sound
+          if (jumpSound && jumpSound.isPlaying) {
+            jumpSound.stop();
+          }
+          if (jumpSound) {
+            jumpSound.play();
+          }
+
+          // Capture current momentum for the jump from input state
+          jumpMomentumForward = virtualInput.forward;
+          jumpMomentumRotation = virtualInput.turn;
+        }
+      }
+    }
+  }
+  lastVirtualJump = virtualInput.jump;
 }
 
 function shoot() {

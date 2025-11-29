@@ -1,10 +1,91 @@
+/* Responsive chat area for small screens */
+@media (max-width: 800px) {
+  #chatWindow {
+    width: 90vw;
+    max-width: 320px;
+    min-width: 120px;
+    height: 120px;
+    max-height: 30vh;
+    font-size: 10px;
+    bottom: 60px;
+    right: 5vw;
+    padding: 4px 6px;
+    border-radius: 8px;
+  }
+  #chatWindow input,
+  #chatWindow textarea {
+    font-size: 12px;
+    padding: 2px 4px;
+  }
+  #chatWindow div {
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+}
+/* Mobile Controls Overlay Styles */
+#controlsOverlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.mobile-joystick {
+  position: absolute;
+  left: 5vw;
+  bottom: 10vh;
+  width: 120px;
+  height: 120px;
+  background: rgba(60,60,60,0.18);
+  border-radius: 50%;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.joystick-knob {
+  width: 60px;
+  height: 60px;
+  background: rgba(200,200,200,0.7);
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  pointer-events: auto;
+  transition: background 0.1s;
+}
+
+.mobile-btn {
+  position: absolute;
+  right: 5vw;
+  width: 80px;
+  height: 80px;
+  background: rgba(76,175,80,0.85);
+  color: #fff;
+  font-size: 2.2em;
+  border: none;
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: manipulation;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+#jumpBtn { bottom: 25vh; }
+#fireBtn { bottom: 2vh; background: rgba(244,67,54,0.85); }
+
+@media (min-width: 900px) {
+  #controlsOverlay { display: none; }
+}
 #hudButtons button {
   background: rgba(76,175,80,0.15);
   color: #4CAF50;
   border: 2px solid #4CAF50;
   border-radius: 5px;
   font-weight: bold;
-  padding: 6px 12px;
+  padding: 6px 6px;
   transition: background 0.2s, color 0.2s, border-color 0.2s;
   outline: none;
   cursor: pointer;
@@ -119,7 +200,6 @@ body {
   margin-left: 8px;
   justify-content: flex-end;
 }
-
 #stats span {
   font-weight: bold;
   color: #4CAF50;

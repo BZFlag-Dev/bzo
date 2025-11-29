@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Mobile Controls Overlay (only visible on mobile) -->
+  <!-- (Moved to end of body for z-index/DOM order reasons) -->
   <div id="mainhud">
     <div id="stats" style="display: flex; align-items: center; gap: 12px;">
       <span id="playerName" style="cursor: pointer; color: #4CAF50; font-weight: bold; font-size: 20px;" title="Click to change name">Player</span>
@@ -116,4 +118,12 @@
   </script>
   <script type="module" src="game.js"></script>
 </body>
+<!-- Mobile Controls Overlay (only visible on mobile) -->
+<div id="controlsOverlay" style="display:none;">
+  <div class="mobile-joystick" id="joystick">
+    <div class="joystick-knob" id="joystickKnob"></div>
+  </div>
+  <button class="mobile-btn" id="jumpBtn">⤒</button>
+  <button class="mobile-btn" id="fireBtn">●</button>
+</div>
 </html>
