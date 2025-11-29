@@ -199,6 +199,45 @@ let gameConfig = null;
 let audioListener, shootSound, jumpSound, landSound;
 let radarCanvas, radarCtx;
 
+function setActive(btn, active, activeTitle, inactiveTitle) {
+  if (!btn) return;
+  if (active) {
+    btn.classList.add('active');
+    if (activeTitle) btn.title = activeTitle;
+  } else {
+    btn.classList.remove('active');
+    if (inactiveTitle) btn.title = inactiveTitle;
+  }
+}
+
+function updateHudButtons() {
+  setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
+  setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
+  setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
+  if (cameraBtn) {
+    let camTitle = 'Toggle Camera View (C)';
+    if (typeof cameraMode !== 'undefined') {
+      camTitle = `Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'} (C)`;
+    }
+    cameraBtn.title = camTitle;
+  }
+}
+
+function toggleDebugHud() {
+  debugEnabled = !debugEnabled;
+  localStorage.setItem('debugEnabled', debugEnabled.toString());
+  const debugHud = document.getElementById('debugHud');
+  if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
+  if (debugEnabled && !debugUpdateInterval) {
+    debugUpdateInterval = setInterval(updateDebugDisplay, 500);
+  } else if (!debugEnabled && debugUpdateInterval) {
+    clearInterval(debugUpdateInterval);
+    debugUpdateInterval = null;
+  }
+  updateHudButtons();
+  showMessage(`Debug Mode: ${debugEnabled ? 'ON' : 'OFF'}`);
+}
+
 // Input state
 const keys = {};
 let lastShotTime = 0;
@@ -238,29 +277,6 @@ window.addEventListener('DOMContentLoaded', () => {
     updateHelpBtn();
   }
 
-  function setActive(btn, active, activeTitle, inactiveTitle) {
-    if (!btn) return;
-    if (active) {
-      btn.classList.add('active');
-      if (activeTitle) btn.title = activeTitle;
-    } else {
-      btn.classList.remove('active');
-      if (inactiveTitle) btn.title = inactiveTitle;
-    }
-  }
-
-  function updateHudButtons() {
-    setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
-    setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
-    setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
-    if (cameraBtn) {
-      let camTitle = 'Toggle Camera View (C)';
-      if (typeof cameraMode !== 'undefined') {
-        camTitle = `Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'} (C)`;
-      }
-      cameraBtn.title = camTitle;
-    }
-  }
   // Restore camera mode from localStorage
   const savedCameraMode = localStorage.getItem('cameraMode');
   if (savedCameraMode === 'first-person' || savedCameraMode === 'third-person' || savedCameraMode === 'overview') {
@@ -283,21 +299,6 @@ window.addEventListener('DOMContentLoaded', () => {
       updateChatWindow();
     }, 200);
     setTimeout(updateHudButtons, 100);
-  }
-
-  function toggleDebugHud() {
-    debugEnabled = !debugEnabled;
-    localStorage.setItem('debugEnabled', debugEnabled.toString());
-    const debugHud = document.getElementById('debugHud');
-    if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
-    if (debugEnabled && !debugUpdateInterval) {
-      debugUpdateInterval = setInterval(updateDebugDisplay, 500);
-    } else if (!debugEnabled && debugUpdateInterval) {
-      clearInterval(debugUpdateInterval);
-      debugUpdateInterval = null;
-    }
-    updateHudButtons();
-    showMessage(`Debug Mode: ${debugEnabled ? 'ON' : 'OFF'}`);
   }
 
   function toggleCameraMode() {
@@ -550,38 +551,7 @@ function createObstacleTexture() {
 
 // Initialize Three.js
 function init() {
-    // HUD Buttons
-    const fullscreenBtn = document.getElementById('fullscreenBtn');
-    const debugBtn = document.getElementById('debugBtn');
-    if (fullscreenBtn) {
-      fullscreenBtn.addEventListener('click', () => {
-        if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen();
-        } else {
-          document.exitFullscreen();
-        }
-      });
-    }
-    if (debugBtn) {
-      debugBtn.title = 'Toggle Debug HUD (I)';
-      debugBtn.addEventListener('click', () => {
-        toggleDebugHud();
-      });
-    }
 
-    // Hotkeys for F (fullscreen) and I (debug info)
-    window.addEventListener('keydown', (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'f' || e.key === 'F') {
-        if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen();
-        } else {
-          document.exitFullscreen();
-        }
-      } else if (e.key === 'i' || e.key === 'I') {
-        toggleDebugHud();
-      }
-    });
   // Chat UI
   const chatWindow = document.getElementById('chatWindow');
   chatInput = document.getElementById('chatInput');
