@@ -953,7 +953,7 @@ wss.on('connection', (ws, req) => {
 
                 broadcastAll({
                   type: 'playerPaused',
-                  playerId,
+                  playerId: player.id,
                   x: player.x,
                   z: player.z,
                 });
@@ -966,7 +966,7 @@ wss.on('connection', (ws, req) => {
 
             broadcastAll({
               type: 'playerUnpaused',
-              playerId,
+              playerId: player.id,
             });
           }
           break;
