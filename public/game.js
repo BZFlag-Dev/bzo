@@ -796,7 +796,7 @@ function init() {
     // Jump with Tab key
     if (e.code === 'Tab') {
       e.preventDefault();
-      if (myTank && gameConfig) {
+      if (myTank && gameConfig && !isPaused && pauseCountdownStart <= 0) {
         const currentVelocity = myTank.userData.verticalVelocity || 0;
         // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
         if (Math.abs(currentVelocity) < 1) {
@@ -3265,28 +3265,30 @@ function handleInput(deltaTime) {
   }
 
   // Jumping (Tab or virtual jump button, only on rising edge)
-  if (isMobile && virtualInput.jump && !lastVirtualJump) {
-    if (myTank && gameConfig) {
-      const currentVelocity = myTank.userData.verticalVelocity || 0;
-      // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
-      if (Math.abs(currentVelocity) <= 1) {
-        // Use validateMove to check if on ground or obstacle
-        const moveResult = validateMove(myTank.position.x, myTank.position.y, myTank.position.z, 0, 0, 0, 2);
-        if (moveResult.landedType === 'ground' || moveResult.landedType === 'obstacle') {
-          myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
-          myTank.userData.hasLanded = false; // Reset landing flag when jumping
+  if (!isPaused && pauseCountdownStart <= 0) {
+    if (isMobile && virtualInput.jump && !lastVirtualJump) {
+      if (myTank && gameConfig) {
+        const currentVelocity = myTank.userData.verticalVelocity || 0;
+        // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
+        if (Math.abs(currentVelocity) <= 1) {
+          // Use validateMove to check if on ground or obstacle
+          const moveResult = validateMove(myTank.position.x, myTank.position.y, myTank.position.z, 0, 0, 0, 2);
+          if (moveResult.landedType === 'ground' || moveResult.landedType === 'obstacle') {
+            myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
+            myTank.userData.hasLanded = false; // Reset landing flag when jumping
 
-          // Play jump sound
-          if (jumpSound && jumpSound.isPlaying) {
-            jumpSound.stop();
-          }
-          if (jumpSound) {
-            jumpSound.play();
-          }
+            // Play jump sound
+            if (jumpSound && jumpSound.isPlaying) {
+              jumpSound.stop();
+            }
+            if (jumpSound) {
+              jumpSound.play();
+            }
 
-          // Capture current momentum for the jump from input state
-          jumpMomentumForward = virtualInput.forward;
-          jumpMomentumRotation = virtualInput.turn;
+            // Capture current momentum for the jump from input state
+            jumpMomentumForward = virtualInput.forward;
+            jumpMomentumRotation = virtualInput.turn;
+          }
         }
       }
     }
