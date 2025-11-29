@@ -1,3 +1,46 @@
+// --- Mobile Device Orientation Debugging ---
+let latestOrientation = { alpha: null, beta: null, gamma: null, status: '' };
+function setupMobileOrientationDebug() {
+  function handleOrientation(event) {
+    const { alpha, beta, gamma } = event;
+    latestOrientation.alpha = alpha;
+    latestOrientation.beta = beta;
+    latestOrientation.gamma = gamma;
+    latestOrientation.status = 'OK';
+
+    // No analog tank controls from orientation; only update latestOrientation for debug HUD
+  }
+
+  // iOS 13+ requires permission for device orientation
+  function requestOrientationPermission() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then(permissionState => {
+        if (permissionState === 'granted') {
+          window.addEventListener('deviceorientation', handleOrientation);
+          latestOrientation.status = 'Permission granted';
+        } else {
+          latestOrientation.status = 'Permission denied';
+        }
+      }).catch(err => {
+        latestOrientation.status = 'Permission error: ' + err;
+      });
+    } else {
+      // Android Chrome and others
+      window.addEventListener('deviceorientation', handleOrientation);
+      latestOrientation.status = 'Listener attached';
+    }
+  }
+
+  // Only activate on mobile devices
+  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+  if (isMobile) {
+    latestOrientation.status = 'Mobile device detected';
+    requestOrientationPermission();
+  }
+}
+window.addEventListener('DOMContentLoaded', () => {
+  setupMobileOrientationDebug();
+});
 // Cobblestone texture for boundary walls
 function createCobblestoneTexture() {
   const canvas = document.createElement('canvas');
@@ -57,6 +100,7 @@ function createCobblestoneTexture() {
   texture.needsUpdate = true;
   return texture;
 }
+
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
@@ -147,11 +191,6 @@ window.addEventListener('DOMContentLoaded', () => {
     cameraMode = savedCameraMode;
   }
   // --- HUD/Key Handler Functions ---
-  function toggleMouseMode() {
-    mouseControlEnabled = !mouseControlEnabled;
-    localStorage.setItem('mouseControlEnabled', mouseControlEnabled);
-    updateHudButtons();
-  }
 
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
@@ -172,7 +211,17 @@ window.addEventListener('DOMContentLoaded', () => {
 
   function toggleDebugHud() {
     debugEnabled = !debugEnabled;
+    localStorage.setItem('debugEnabled', debugEnabled.toString());
+    const debugHud = document.getElementById('debugHud');
+    if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
+    if (debugEnabled && !debugUpdateInterval) {
+      debugUpdateInterval = setInterval(updateDebugDisplay, 500);
+    } else if (!debugEnabled && debugUpdateInterval) {
+      clearInterval(debugUpdateInterval);
+      debugUpdateInterval = null;
+    }
     updateHudButtons();
+    showMessage(`Debug Mode: ${debugEnabled ? 'ON' : 'OFF'}`);
   }
 
   function toggleCameraMode() {
@@ -200,11 +249,11 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedMouseMode === 'true') mouseControlEnabled = true;
 
   // --- Attach HUD Button Handlers ---
-  if (mouseBtn) mouseBtn.addEventListener('click', toggleMouseMode);
-  if (fullscreenBtn) fullscreenBtn.addEventListener('click', toggleFullscreen);
-  if (debugBtn) debugBtn.addEventListener('click', toggleDebugHud);
-  if (cameraBtn) cameraBtn.addEventListener('click', toggleCameraMode);
-  if (helpBtn) helpBtn.addEventListener('click', toggleHelpPanel);
+  if (mouseBtn) mouseBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleMouseMode(); });
+  if (fullscreenBtn) fullscreenBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
+  if (debugBtn) debugBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleDebugHud(); });
+  if (cameraBtn) cameraBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleCameraMode(); });
+  if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel(); });
 
   // --- Attach Key Handlers ---
   document.addEventListener('keydown', (e) => {
@@ -235,6 +284,47 @@ let mouseControlEnabled = false;
 let hasInteracted = false;
 let mouseX = 0; // Percentage from center (-1 to 1)
 let mouseY = 0; // Percentage from center (-1 to 1)
+
+// Watch for mouseControlEnabled toggle to reset orientation center
+Object.defineProperty(window, 'mouseControlEnabled', {
+  get() { return mouseControlEnabled; },
+  set(val) {
+    if (val && isMobile) {
+      orientationCenter = null; // recenter on enable
+    }
+    mouseControlEnabled = val;
+  }
+});
+
+// Orientation analog control state
+let orientationCenter = null;
+let isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+let orientationMode = null; // 'portrait' or 'landscape'
+
+function detectOrientationMode() {
+  if (window.matchMedia('(orientation: landscape)').matches) {
+    orientationMode = 'landscape';
+  } else {
+    orientationMode = 'portrait';
+  }
+}
+detectOrientationMode();
+window.addEventListener('orientationchange', () => {
+  detectOrientationMode();
+  if (isMobile && mouseControlEnabled) {
+    orientationCenter = null; // recenter analog controls
+    if (latestOrientation) latestOrientation.status = 'Orientation changed, recentered';
+  }
+});
+// Fallback for browsers that don't fire orientationchange
+window.addEventListener('resize', () => {
+  const prev = orientationMode;
+  detectOrientationMode();
+  if (orientationMode !== prev && isMobile && mouseControlEnabled) {
+    orientationCenter = null;
+    if (latestOrientation) latestOrientation.status = 'Orientation changed (resize), recentered';
+  }
+});
 
 // Player tank position (for movement prediction)
 let playerX = 0;
@@ -400,16 +490,7 @@ function init() {
     if (debugBtn) {
       debugBtn.title = 'Toggle Debug HUD (I)';
       debugBtn.addEventListener('click', () => {
-        debugEnabled = !debugEnabled;
-        localStorage.setItem('debugEnabled', debugEnabled);
-        const debugHud = document.getElementById('debugHud');
-        if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
-        if (debugEnabled && !debugUpdateInterval) {
-          debugUpdateInterval = setInterval(updateDebugDisplay, 500);
-        } else if (!debugEnabled && debugUpdateInterval) {
-          clearInterval(debugUpdateInterval);
-          debugUpdateInterval = null;
-        }
+        toggleDebugHud();
       });
     }
 
@@ -423,16 +504,7 @@ function init() {
           document.exitFullscreen();
         }
       } else if (e.key === 'i' || e.key === 'I') {
-        debugEnabled = !debugEnabled;
-        localStorage.setItem('debugEnabled', debugEnabled);
-        const debugHud = document.getElementById('debugHud');
-        if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
-        if (debugEnabled && !debugUpdateInterval) {
-          debugUpdateInterval = setInterval(updateDebugDisplay, 500);
-        } else if (!debugEnabled && debugUpdateInterval) {
-          clearInterval(debugUpdateInterval);
-          debugUpdateInterval = null;
-        }
+        toggleDebugHud();
       }
     });
   // Chat UI
@@ -668,8 +740,7 @@ function init() {
 
     // Toggle camera view with C key
     if (e.code === 'KeyC') {
-      cameraMode = cameraMode === 'first-person' ? 'third-person' : 'first-person';
-      showMessage(`Camera: ${cameraMode === 'first-person' ? 'First Person' : 'Third Person'}`);
+      toggleCameraMode();
     }
 
     // Toggle debug HUD with backtick key
@@ -704,34 +775,38 @@ function init() {
 
     // Jump with Tab key
     if (e.code === 'Tab') {
-      e.preventDefault(); // Prevent default tab behavior
+      e.preventDefault(); // Prevent defwwwwb behavior
       if (myTank && gameConfig) {
         const currentVelocity = myTank.userData.verticalVelocity || 0;
-        // Only jump if not already jumping (vertical velocity near zero)
+        // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
         if (Math.abs(currentVelocity) < 1) {
-          myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
-          myTank.userData.hasLanded = false; // Reset landing flag when jumping
+          // Use validateMove to check if on ground or obstacle
+          const moveResult = validateMove(myTank.position.x, myTank.position.y, myTank.position.z, 0, 0, 0, 2);
+          if (moveResult.landedType === 'ground' || moveResult.landedType === 'obstacle') {
+            myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
+            myTank.userData.hasLanded = false; // Reset landing flag when jumping
 
-          // Play jump sound
-          if (jumpSound && jumpSound.isPlaying) {
-            jumpSound.stop();
-          }
-          if (jumpSound) {
-            jumpSound.play();
-          }
+            // Play jump sound
+            if (jumpSound && jumpSound.isPlaying) {
+              jumpSound.stop();
+            }
+            if (jumpSound) {
+              jumpSound.play();
+            }
 
-          // Capture current momentum for the jump from input state
-          if (mouseControlEnabled) {
-            jumpMomentumForward = -mouseY; // Negative because screen Y is inverted
-            jumpMomentumRotation = -mouseX; // Match the rotation logic below
-          } else {
-            // Keyboard control
-            jumpMomentumForward = 0;
-            jumpMomentumRotation = 0;
-            if (keys['KeyW']) jumpMomentumForward = 1.0;
-            else if (keys['KeyS']) jumpMomentumForward = -1.0;
-            if (keys['KeyA']) jumpMomentumRotation = 1.0; // A = turn left = positive rotation
-            else if (keys['KeyD']) jumpMomentumRotation = -1.0; // D = turn right = negative rotation
+            // Capture current momentum for the jump from input state
+            if (mouseControlEnabled) {
+              jumpMomentumForward = -mouseY; // Negative because screen Y is inverted
+              jumpMomentumRotation = -mouseX; // Match the rotation logic below
+            } else {
+              // Keyboard control
+              jumpMomentumForward = 0;
+              jumpMomentumRotation = 0;
+              if (keys['KeyW']) jumpMomentumForward = 1.0;
+              else if (keys['KeyS']) jumpMomentumForward = -1.0;
+              if (keys['KeyA']) jumpMomentumRotation = 1.0; // A = turn left = positive rotation
+              else if (keys['KeyD']) jumpMomentumRotation = -1.0; // D = turn right = negative rotation
+            }
           }
         }
       }
@@ -801,15 +876,6 @@ function init() {
       }
       // ...existing code...
       keys['Space'] = true;
-    }
-  });
-
-  // Allow switching to mouse mode with M key
-  window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    if ((e.key === 'm' || e.key === 'M') && !mouseControlEnabled) {
-      mouseControlEnabled = true;
-      showMessage('Controls: Mouse');
     }
   });
 
@@ -1612,70 +1678,81 @@ function sendToServer(message) {
 }
 
 function updateDebugDisplay() {
+
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
 
   let html = '<div style="margin-bottom: 10px; font-weight: bold;">PLAYER STATUS:</div>';
 
-  // Calculate current speed from input
-  let forwardSpeed = 0;
-  let rotationSpeed = 0;
-
-  if (mouseControlEnabled) {
-    // Mouse control - proportional to distance from center, no dead zone
-    forwardSpeed = -mouseY; // Negative because screen Y is inverted
-    rotationSpeed = -mouseX; // Negative because positive mouseX means turn right
+  // Mobile orientation status
+  if (typeof latestOrientation !== 'undefined' && latestOrientation.status) {
+    html += `<div><span class="label">Orientation Status:</span><span class="value">${latestOrientation.status}</span></div>`;
+    if (latestOrientation.alpha !== null && latestOrientation.beta !== null && latestOrientation.gamma !== null) {
+      html += `<div><span class="label">Orientation α:</span><span class="value">${latestOrientation.alpha.toFixed(1)}</span></div>`;
+      html += `<div><span class="label">Orientation β:</span><span class="value">${latestOrientation.beta.toFixed(1)}</span></div>`;
+      html += `<div><span class="label">Orientation γ:</span><span class="value">${latestOrientation.gamma.toFixed(1)}</span></div>`;
+    }
+    html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
-    // Keyboard control - digital on/off
-    if (keys['KeyW']) {
-      forwardSpeed = 1.0;
-    } else if (keys['KeyS']) {
-      forwardSpeed = -1.0;
+    // Calculate current speed from input
+    let forwardSpeed = 0;
+    let rotationSpeed = 0;
+
+    if (mouseControlEnabled) {
+      // Mouse control - proportional to distance from center, no dead zone
+      forwardSpeed = -mouseY; // Negative because screen Y is inverted
+      rotationSpeed = -mouseX; // Negative because positive mouseX means turn right
+    } else {
+      // Keyboard control - digital on/off
+      if (keys['KeyW']) {
+        forwardSpeed = 1.0;
+      } else if (keys['KeyS']) {
+        forwardSpeed = -1.0;
+      }
+
+      if (keys['KeyA']) {
+        rotationSpeed = 1.0;
+      } else if (keys['KeyD']) {
+        rotationSpeed = -1.0;
+      }
     }
 
-    if (keys['KeyA']) {
-      rotationSpeed = 1.0;
-    } else if (keys['KeyD']) {
-      rotationSpeed = -1.0;
-    }
+    const tankSpeed = gameConfig ? gameConfig.TANK_SPEED : 5;
+    const tankRotSpeed = gameConfig ? gameConfig.TANK_ROTATION_SPEED : 2;
+    const linearSpeed = forwardSpeed * tankSpeed;
+    const angularSpeed = rotationSpeed * tankRotSpeed;
+    const verticalSpeed = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
+
+    html += `<div><span class="label">Linear Speed:</span><span class="value">${linearSpeed.toFixed(2)} u/s</span></div>`;
+    html += `<div><span class="label">Angular Speed:</span><span class="value">${angularSpeed.toFixed(2)} rad/s</span></div>`;
+    html += `<div><span class="label">Vertical Speed:</span><span class="value">${verticalSpeed.toFixed(2)} u/s</span></div>`;
+    html += `<div><span class="label">Position:</span><span class="value">(${playerX.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${playerZ.toFixed(1)})</span></div>`;
+    html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
+
+    html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
+
+    // Count scene objects
+    let totalObjects = 0;
+    scene.traverse(() => totalObjects++);
+    html += `<div><span class="label">Total Objects:</span><span class="value">${totalObjects}</span></div>`;
+    html += `<div><span class="label">Tanks:</span><span class="value">${tanks.size}</span></div>`;
+    html += `<div><span class="label">Projectiles:</span><span class="value">${projectiles.size}</span></div>`;
+    html += `<div><span class="label">Shields:</span><span class="value">${playerShields.size}</span></div>`;
+
+    html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS SENT:</div>';
+
+    const sentTypes = Array.from(packetsSent.entries()).sort((a, b) => b[1] - a[1]);
+    sentTypes.forEach(([type, count]) => {
+      html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
+    });
+
+    html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS RECEIVED:</div>';
+
+    const receivedTypes = Array.from(packetsReceived.entries()).sort((a, b) => b[1] - a[1]);
+    receivedTypes.forEach(([type, count]) => {
+      html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
+    });
   }
-
-  const tankSpeed = gameConfig ? gameConfig.TANK_SPEED : 5;
-  const tankRotSpeed = gameConfig ? gameConfig.TANK_ROTATION_SPEED : 2;
-  const linearSpeed = forwardSpeed * tankSpeed;
-  const angularSpeed = rotationSpeed * tankRotSpeed;
-  const verticalSpeed = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
-
-  html += `<div><span class="label">Linear Speed:</span><span class="value">${linearSpeed.toFixed(2)} u/s</span></div>`;
-  html += `<div><span class="label">Angular Speed:</span><span class="value">${angularSpeed.toFixed(2)} rad/s</span></div>`;
-  html += `<div><span class="label">Vertical Speed:</span><span class="value">${verticalSpeed.toFixed(2)} u/s</span></div>`;
-  html += `<div><span class="label">Position:</span><span class="value">(${playerX.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${playerZ.toFixed(1)})</span></div>`;
-  html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
-
-  html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
-
-  // Count scene objects
-  let totalObjects = 0;
-  scene.traverse(() => totalObjects++);
-  html += `<div><span class="label">Total Objects:</span><span class="value">${totalObjects}</span></div>`;
-  html += `<div><span class="label">Tanks:</span><span class="value">${tanks.size}</span></div>`;
-  html += `<div><span class="label">Projectiles:</span><span class="value">${projectiles.size}</span></div>`;
-  html += `<div><span class="label">Shields:</span><span class="value">${playerShields.size}</span></div>`;
-
-  html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS SENT:</div>';
-
-  const sentTypes = Array.from(packetsSent.entries()).sort((a, b) => b[1] - a[1]);
-  sentTypes.forEach(([type, count]) => {
-    html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
-  });
-
-  html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS RECEIVED:</div>';
-
-  const receivedTypes = Array.from(packetsReceived.entries()).sort((a, b) => b[1] - a[1]);
-  receivedTypes.forEach(([type, count]) => {
-    html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
-  });
-
   debugContent.innerHTML = html;
 }
 
@@ -2631,20 +2708,21 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     if (distSquared < tankRadius * tankRadius) {
       if (y !== null) {
         const tankHeight = 2; // Default tank height
+        const margin = 0.1;
         // Allow passing under if tank top is below obstacle base
-        if (y + tankHeight <= obstacleBase) {
+        if (y + tankHeight <= obstacleBase + margin) {
           continue;
         }
-        // Block jumping up into obstacle: if tank bottom is below base and top is above base
-        if (y < obstacleBase && y + tankHeight > obstacleBase) {
+        // Allow passing over if tank bottom is at or above obstacle top (with margin)
+        if (y >= obstacleTop - margin) {
+          continue;
+        }
+        // Block if any part of tank is inside the vertical range of the obstacle
+        if (y > 0 && y < obstacleTop - margin && y + tankHeight > obstacleBase + margin) {
+          const msg = `[COLLISION] Tank at (${x.toFixed(2)}, ${z.toFixed(2)}, y=${y !== null ? y.toFixed(2) : 'null'}) collided with obstacle at (${obs.x}, ${obs.z}), obstacleTop=${obstacleTop}, obstacleBase=${obstacleBase}`;
+          sendToServer({ type: 'chat', text: msg });
           return true;
         }
-        // Allow passing over if above 75% of top
-        if (y >= obstacleTop * 0.75) {
-          continue;
-        }
-        // Block if inside the vertical range
-        if (y >= obstacleBase && y < obstacleTop * 0.75) return true;
       } else {
         return true;
       }
@@ -2654,56 +2732,185 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
   return false;
 }
 
-function slideMove(currentX, currentZ, deltaX, deltaZ, tankRadius = 2, y = null) {
-  const newX = currentX + deltaX;
-  const newZ = currentZ + deltaZ;
+function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, tankRadius = 2) {
+
+  // Pure function: no references to global state
+
+  const newX = x + intendedDeltaX;
+  const newZ = z + intendedDeltaZ;
+  let landedOn = null;
+  let landedType = null; // 'ground' or 'obstacle'
+  // startedFalling is now just a flag for the caller to use if needed
+  let startedFalling = false;
 
   // Try full movement first
   if (!checkCollision(newX, newZ, tankRadius, y)) {
-    const actualDX = newX - currentX;
-    const actualDZ = newZ - currentZ;
-    const altered = Math.abs(actualDX - deltaX) > 1e-6 || Math.abs(actualDZ - deltaZ) > 1e-6;
-    return { x: newX, z: newZ, moved: true, altered };
+    // Check for landing on obstacle
+    let obstacle = null;
+    for (const obs of OBSTACLES) {
+      const halfW = obs.w / 2;
+      const halfD = obs.d / 2;
+      const rotation = obs.rotation || 0;
+      const obstacleBase = obs.baseY || 0;
+      const obstacleHeight = obs.h || 4;
+      const obstacleTop = obstacleBase + obstacleHeight;
+      const tankHeight = 2;
+      const margin = 0.1;
+      const dx = newX - obs.x;
+      const dz = newZ - obs.z;
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      const localX = dx * cos - dz * sin;
+      const localZ = dx * sin + dz * cos;
+      const xyInBounds = Math.abs(localX) <= halfW + tankRadius * 0.7 && Math.abs(localZ) <= halfD + tankRadius * 0.7;
+      // Only consider landing if tank is above obstacle base and below obstacle top
+      if (xyInBounds && y !== null && y + tankHeight > obstacleBase + margin && y < obstacleTop - margin) {
+        obstacle = obs;
+        break;
+      }
+    }
+    if (obstacle) {
+      landedOn = obstacle;
+      landedType = 'obstacle';
+    } else if (y !== null && Math.abs(y) < 0.5) {
+      landedType = 'ground';
+    }
+    // If not on obstacle or ground and y > 0.5, we are driving off an edge and should start falling
+    if (!obstacle && (!y || y > 0.5)) {
+      startedFalling = true;
+    }
+    const actualDX = newX - x;
+    const actualDZ = newZ - z;
+    const altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
+    return { x: newX, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
   }
 
   // Find the collision normal
-  const normal = getCollisionNormal(currentX, currentZ, newX, newZ, tankRadius, y);
+  const normal = getCollisionNormal(x, z, newX, newZ, tankRadius, y);
 
   if (normal) {
     // Project movement vector onto the surface (perpendicular to normal)
-    const dot = deltaX * normal.x + deltaZ * normal.z;
-    const slideX = deltaX - normal.x * dot;
-    const slideZ = deltaZ - normal.z * dot;
+    const dot = intendedDeltaX * normal.x + intendedDeltaZ * normal.z;
+    const slideX = intendedDeltaX - normal.x * dot;
+    const slideZ = intendedDeltaZ - normal.z * dot;
 
     // Try sliding along the surface
-    const slideNewX = currentX + slideX;
-    const slideNewZ = currentZ + slideZ;
+    const slideNewX = x + slideX;
+    const slideNewZ = z + slideZ;
 
     if (!checkCollision(slideNewX, slideNewZ, tankRadius, y)) {
-      const altered = Math.abs(slideX - deltaX) > 1e-6 || Math.abs(slideZ - deltaZ) > 1e-6;
-      return { x: slideNewX, z: slideNewZ, moved: true, altered };
+      // Check for landing on obstacle
+      let obstacle = null;
+      for (const obs of OBSTACLES) {
+        const halfW = obs.w / 2;
+        const halfD = obs.d / 2;
+        const rotation = obs.rotation || 0;
+        const obstacleBase = obs.baseY || 0;
+        const obstacleHeight = obs.h || 4;
+        const obstacleTop = obstacleBase + obstacleHeight;
+        if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
+          continue;
+        }
+        const dx = slideNewX - obs.x;
+        const dz = slideNewZ - obs.z;
+        const cos = Math.cos(rotation);
+        const sin = Math.sin(rotation);
+        const localX = dx * cos - dz * sin;
+        const localZ = dx * sin + dz * cos;
+        const margin = tankRadius * 0.7;
+        if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
+          obstacle = obs;
+          break;
+        }
+      }
+      if (obstacle) {
+        landedOn = obstacle;
+        landedType = 'obstacle';
+      } else if (y !== null && Math.abs(y) < 0.5) {
+        landedType = 'ground';
+      }
+      const altered = Math.abs(slideX - intendedDeltaX) > 1e-6 || Math.abs(slideZ - intendedDeltaZ) > 1e-6;
+      return { x: slideNewX, z: slideNewZ, moved: true, altered, landedOn, landedType };
     }
   }
 
   // Fallback: try axis-aligned sliding
   // Try sliding along X axis only
-  if (!checkCollision(newX, currentZ, tankRadius, y)) {
-    const actualDX = newX - currentX;
+  if (!checkCollision(newX, z, tankRadius, y)) {
+    let obstacle = null;
+    for (const obs of OBSTACLES) {
+      const halfW = obs.w / 2;
+      const halfD = obs.d / 2;
+      const rotation = obs.rotation || 0;
+      const obstacleBase = obs.baseY || 0;
+      const obstacleHeight = obs.h || 4;
+      const obstacleTop = obstacleBase + obstacleHeight;
+      if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
+        continue;
+      }
+      const dx = newX - obs.x;
+      const dz = z - obs.z;
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      const localX = dx * cos - dz * sin;
+      const localZ = dx * sin + dz * cos;
+      const margin = tankRadius * 0.7;
+      if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
+        obstacle = obs;
+        break;
+      }
+    }
+    if (obstacle) {
+      landedOn = obstacle;
+      landedType = 'obstacle';
+    } else if (y !== null && Math.abs(y) < 0.5) {
+      landedType = 'ground';
+    }
+    const actualDX = newX - x;
     const actualDZ = 0;
-    const altered = Math.abs(actualDX - deltaX) > 1e-6 || Math.abs(actualDZ - deltaZ) > 1e-6;
-    return { x: newX, z: currentZ, moved: true, altered };
+    const altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
+    return { x: newX, z: z, moved: true, altered, landedOn, landedType };
   }
 
   // Try sliding along Z axis only
-  if (!checkCollision(currentX, newZ, tankRadius, y)) {
+  if (!checkCollision(x, newZ, tankRadius, y)) {
+    let obstacle = null;
+    for (const obs of OBSTACLES) {
+      const halfW = obs.w / 2;
+      const halfD = obs.d / 2;
+      const rotation = obs.rotation || 0;
+      const obstacleBase = obs.baseY || 0;
+      const obstacleHeight = obs.h || 4;
+      const obstacleTop = obstacleBase + obstacleHeight;
+      if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
+        continue;
+      }
+      const dx = x - obs.x;
+      const dz = newZ - obs.z;
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      const localX = dx * cos - dz * sin;
+      const localZ = dx * sin + dz * cos;
+      const margin = tankRadius * 0.7;
+      if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
+        obstacle = obs;
+        break;
+      }
+    }
+    if (obstacle) {
+      landedOn = obstacle;
+      landedType = 'obstacle';
+    } else if (y !== null && Math.abs(y) < 0.5) {
+      landedType = 'ground';
+    }
     const actualDX = 0;
-    const actualDZ = newZ - currentZ;
-    const altered = Math.abs(actualDX - deltaX) > 1e-6 || Math.abs(actualDZ - deltaZ) > 1e-6;
-    return { x: currentX, z: newZ, moved: true, altered };
+    const actualDZ = newZ - z;
+    const altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
+    return { x: x, z: newZ, moved: true, altered, landedOn, landedType };
   }
 
   // No movement possible
-  return { x: currentX, z: currentZ, moved: false, altered: false };
+  return { x: x, z: z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
 function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
@@ -2786,6 +2993,12 @@ function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
 
   return null;
 }
+function toggleMouseMode() {
+  mouseControlEnabled = !mouseControlEnabled;
+  localStorage.setItem('mouseControlEnabled', mouseControlEnabled);
+  showMessage(`Controls: ${mouseControlEnabled ? 'Mouse' : 'Keyboard'}`);
+  if (typeof updateHudButtons === 'function') updateHudButtons();
+}
 
 function handleInput(deltaTime) {
   if (!myTank || !gameConfig) return;
@@ -2834,61 +3047,59 @@ function handleInput(deltaTime) {
     }
   }
 
-  let moved = false;
+  // --- Step 1: Gather intended speed and angular motion from all sources ---
+  let intendedForward = 0; // -1..1
+  let intendedRotation = 0; // -1..1
+
+    // WASD keys: pressing any disables mouse move mode
+    const wasdKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+    let wasdPressed = false;
+    for (const code of wasdKeys) {
+      if (keys[code]) {
+        intendedForward += (code === 'KeyW') ? 1 : (code === 'KeyS') ? -1 : 0;
+        intendedRotation += (code === 'KeyA') ? 1 : (code === 'KeyD') ? -1 : 0;
+        wasdPressed = true;
+      }
+    }
+    if (wasdPressed && mouseControlEnabled) {
+      toggleMouseMode();
+    }
+
+  // Mouse analog (if enabled)
+  if (mouseControlEnabled) {
+    if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
+    if (typeof mouseX !== 'undefined') intendedRotation += -mouseX;
+  }
+
+  // Jump/momentum (if in air)
+  if (isInAir) {
+    if (jumpMomentumForward !== 0) intendedForward += jumpMomentumForward;
+    if (jumpMomentumRotation !== 0) intendedRotation += jumpMomentumRotation;
+  }
+
+  // --- Step 2: Clamp intended values to -1..1 (if needed) ---
+  intendedForward = Math.max(-1, Math.min(1, intendedForward));
+  intendedRotation = Math.max(-1, Math.min(1, intendedRotation));
+
+  // --- Step 3: Convert intended speed/rotation to deltas ---
   const speed = gameConfig.TANK_SPEED * deltaTime;
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED * deltaTime;
+  let intendedDeltaX = Math.sin(playerRotation) * intendedForward * speed;
+  let intendedDeltaZ = Math.cos(playerRotation) * intendedForward * speed;
+  let intendedDeltaRot = intendedRotation * rotSpeed;
 
   // Track old position to calculate actual movement
+  let moved = false;
   const oldX = playerX;
   const oldZ = playerZ;
   const oldRotation = playerRotation;
 
-  // --- Accumulate all intended movement ---
-  let intendedDeltaX = 0;
-  let intendedDeltaZ = 0;
-  let intendedRotation = 0;
+  // --- Step 4: Apply rotation ---
+  playerRotation += intendedDeltaRot;
 
-  // Apply jump/momentum if in air
-  if (isInAir) {
-    if (jumpMomentumForward !== 0) {
-      const moveAmount = jumpMomentumForward * gameConfig.TANK_SPEED * deltaTime;
-      intendedDeltaX += Math.sin(playerRotation) * moveAmount;
-      intendedDeltaZ += Math.cos(playerRotation) * moveAmount;
-    }
-    if (jumpMomentumRotation !== 0) {
-      intendedRotation += jumpMomentumRotation * gameConfig.TANK_ROTATION_SPEED * deltaTime;
-    }
-  } else {
-    // Mouse analog control (only if enabled)
-    if (mouseControlEnabled) {
-      if (mouseX !== 0) {
-        intendedRotation -= mouseX * rotSpeed;
-      }
-      if (mouseY !== 0) {
-        const moveAmount = -mouseY * speed;
-        intendedDeltaX += Math.sin(playerRotation) * moveAmount;
-        intendedDeltaZ += Math.cos(playerRotation) * moveAmount;
-      }
-    }
-    // Keyboard controls
-    if (keys['KeyA']) intendedRotation += rotSpeed;
-    if (keys['KeyD']) intendedRotation -= rotSpeed;
-    if (keys['KeyW']) {
-      intendedDeltaX += Math.sin(playerRotation) * speed;
-      intendedDeltaZ += Math.cos(playerRotation) * speed;
-    }
-    if (keys['KeyS']) {
-      intendedDeltaX -= Math.sin(playerRotation) * speed;
-      intendedDeltaZ -= Math.cos(playerRotation) * speed;
-    }
-  }
-
-  // Apply total intended rotation
-  playerRotation += intendedRotation;
-
-  // --- Now apply collision/slide logic to the total intended move ---
+  // --- Step 5: Apply collision/slide logic to the intended move ---
   const tankY = myTank ? myTank.position.y : 0;
-  const result = slideMove(playerX, playerZ, intendedDeltaX, intendedDeltaZ, 2, tankY);
+  const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, 0, intendedDeltaZ, 2);
   if (result.altered) {
     //showMessage(`slideMove: from (${playerX.toFixed(2)}, ${playerZ.toFixed(2)}) by (Δx=${intendedDeltaX.toFixed(2)}, Δz=${intendedDeltaZ.toFixed(2)}) → (${result.x.toFixed(2)}, ${result.z.toFixed(2)}) moved=${result.moved} altered=${result.altered}`);
   }
@@ -2898,41 +3109,25 @@ function handleInput(deltaTime) {
     moved = true;
     // Only log if altered
   } else {
-    // If blocked, zero out input that would push into the wall
-    if (mouseControlEnabled && mouseY !== 0) mouseY = 0;
-    if (keys['KeyW']) keys['KeyW'] = false;
-    if (keys['KeyS']) keys['KeyS'] = false;
+    // If blocked, the caller should handle input state cleanup if needed
   }
 
   // When on ground and not jumping, maintain proper height (ground or obstacle)
   let currentlyOnObstacle = false;
   if (myTank && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
-    const obstacle = checkIfOnObstacle(playerX, playerZ, 2, myTank.position.y);
-
-    if (obstacle) {
+    // Use validateMove to determine landing and falling
+    const moveResult = validateMove(playerX, myTank.position.y, playerZ, 0, 0, 0, 2);
+    if (moveResult.landedType === 'obstacle' && moveResult.landedOn) {
       // On top of obstacle - maintain height
-      const obstacleBase = obstacle.baseY || 0;
-      const obstacleHeight = obstacle.h || 4;
+      const obstacleBase = moveResult.landedOn.baseY || 0;
+      const obstacleHeight = moveResult.landedOn.h || 4;
       const obstacleTop = obstacleBase + obstacleHeight;
       myTank.position.y = obstacleTop;
       currentlyOnObstacle = true;
-    } else if (myTank.position.y > 0.5) {
-      // Not on obstacle but elevated - start falling (drove off edge)
+    } else if (moveResult.startedFalling) {
+      // Not on obstacle or ground and elevated - start falling (drove off edge)
       if (!myTank.userData.verticalVelocity || myTank.userData.verticalVelocity === 0) {
         myTank.userData.verticalVelocity = -1; // Start falling
-
-        // Capture momentum when falling off edge (like jumping)
-        if (jumpMomentumForward === 0 && jumpMomentumRotation === 0) {
-          if (mouseControlEnabled) {
-            jumpMomentumForward = -mouseY;
-            jumpMomentumRotation = -mouseX;
-          } else {
-            if (keys['KeyW']) jumpMomentumForward = 1.0;
-            else if (keys['KeyS']) jumpMomentumForward = -1.0;
-            if (keys['KeyA']) jumpMomentumRotation = 1.0;
-            else if (keys['KeyD']) jumpMomentumRotation = -1.0;
-          }
-        }
       }
     } else {
       // On ground
