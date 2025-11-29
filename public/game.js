@@ -784,36 +784,6 @@ function init() {
       return;
     }
 
-    // Toggle camera view with C key
-    if (e.code === 'KeyC') {
-      toggleCameraMode();
-    }
-
-    // Toggle debug HUD with backtick key
-    if (e.code === 'Backquote') {
-      debugEnabled = !debugEnabled;
-      const debugHud = document.getElementById('debugHud');
-      debugHud.style.display = debugEnabled ? 'block' : 'none';
-
-      // Save state to localStorage
-      localStorage.setItem('debugEnabled', debugEnabled.toString());
-
-      if (debugEnabled) {
-        // Start updating debug display
-        if (!debugUpdateInterval) {
-          debugUpdateInterval = setInterval(updateDebugDisplay, 500);
-        }
-        updateDebugDisplay();
-      } else {
-        // Stop updating
-        if (debugUpdateInterval) {
-          clearInterval(debugUpdateInterval);
-          debugUpdateInterval = null;
-        }
-      }
-      showMessage(`Debug Mode: ${debugEnabled ? 'ON' : 'OFF'}`);
-    }
-
     // Pause with P key
     if (e.code === 'KeyP') {
       sendToServer({ type: 'pause' });
