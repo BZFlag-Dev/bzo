@@ -1851,9 +1851,14 @@ function removeProjectile(id) {
 }
 
 function handlePlayerHit(message) {
+  const shooterTank = tanks.get(message.shooterId);
+  const victimTank = tanks.get(message.victimId);
+  const shooterName = shooterTank && shooterTank.userData && shooterTank.userData.playerState && shooterTank.userData.playerState.name ? shooterTank.userData.playerState.name : 'Someone';
+  const victimName = victimTank && victimTank.userData && victimTank.userData.playerState && victimTank.userData.playerState.name ? victimTank.userData.playerState.name : 'Someone';
+
   if (message.victimId === myPlayerId) {
     // Local player was killed
-    showMessage('You were killed!', 'death');
+    showMessage(`${shooterName} killed you!`, 'death');
     // Switch to overview mode and hide crosshair
     lastCameraMode = cameraMode;
     cameraMode = 'overview';
@@ -1865,14 +1870,12 @@ function handlePlayerHit(message) {
     if (crosshair) crosshair.style.display = 'none';
   } else if (message.shooterId === myPlayerId) {
     // Local player got a kill
-    //if (myTank && myTank.userData.playerState) {
-    //  myTank.userData.playerState.kills = (myTank.userData.playerState.kills || 0) + 1;
-    //}
-    showMessage('You got a kill!', 'kill');
+    showMessage(`You killed ${victimName}!`, 'kill');
+  } else {
+    // Show to all other players
+    showMessage(`${shooterName} killed ${victimName}!`, 'info');
   }
   // Update other players' stats
-  const shooterTank = tanks.get(message.shooterId);
-  const victimTank = tanks.get(message.victimId);
 
   if (shooterTank && shooterTank.userData.playerState) {
     shooterTank.userData.playerState.kills = (shooterTank.userData.playerState.kills || 0) + 1;
