@@ -1806,39 +1806,13 @@ function updateDebugDisplay() {
     }
     html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
-    // Calculate current speed from input
-    let forwardSpeed = 0;
-    let rotationSpeed = 0;
-
-    if (mouseControlEnabled) {
-      // Mouse control - proportional to distance from center, no dead zone
-      forwardSpeed = -mouseY; // Negative because screen Y is inverted
-      rotationSpeed = -mouseX; // Negative because positive mouseX means turn right
-    } else {
-      // Keyboard control - digital on/off
-      if (keys['KeyW']) {
-        forwardSpeed = 1.0;
-      } else if (keys['KeyS']) {
-        forwardSpeed = -1.0;
-      }
-
-      if (keys['KeyA']) {
-        rotationSpeed = 1.0;
-      } else if (keys['KeyD']) {
-        rotationSpeed = -1.0;
-      }
-    }
-
-    const tankSpeed = gameConfig ? gameConfig.TANK_SPEED : 5;
-    const tankRotSpeed = gameConfig ? gameConfig.TANK_ROTATION_SPEED : 2;
-    const linearSpeed = forwardSpeed * tankSpeed;
-    const angularSpeed = rotationSpeed * tankRotSpeed;
-    const verticalSpeed = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
-
+    const linearSpeed = myTank && myTank.userData && typeof myTank.userData.linearSpeed === 'number' ? myTank.userData.linearSpeed : 0;
     html += `<div><span class="label">Linear Speed:</span><span class="value">${linearSpeed.toFixed(2)} u/s</span></div>`;
-    html += `<div><span class="label">Angular Speed:</span><span class="value">${angularSpeed.toFixed(2)} rad/s</span></div>`;
+    const rotationSpeed = myTank && myTank.userData && typeof myTank.userData.rotationSpeed === 'number' ? myTank.userData.rotationSpeed : 0;
+    html += `<div><span class="label">Angular Speed:</span><span class="value">${rotationSpeed.toFixed(2)} rad/s</span></div>`;
+    const verticalSpeed = myTank && myTank.userData && typeof myTank.userData.verticalSpeed === 'number' ? myTank.userData.verticalSpeed : 0;
     html += `<div><span class="label">Vertical Speed:</span><span class="value">${verticalSpeed.toFixed(2)} u/s</span></div>`;
-    html += `<div><span class="label">Position:</span><span class="value">(${playerX.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${playerZ.toFixed(1)})</span></div>`;
+    html += `<div><span class="label">Position:</span><span class="value">(${myTank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
     html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
 
     html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
@@ -3029,7 +3003,7 @@ function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
   if (toX + tankRadius > halfMap) return { x: -1, z: 0 };
   if (toZ - tankRadius < -halfMap) return { x: 0, z: 1 };
   if (toZ + tankRadius > halfMap) return { x: 0, z: -1 };
-
+  
   // Check obstacles
   for (const obs of OBSTACLES) {
     const obstacleHeight = obs.h || 4;
@@ -3361,7 +3335,7 @@ function handleInput(deltaTime) {
       if (myTank && gameConfig) {
         const currentVelocity = myTank.userData.verticalVelocity || 0;
         // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
-        if (Math.abs(currentVelocity) <= 1) {
+        if (Math.abs(currentVelocity) < 1) {
           // Use validateMove to check if on ground or obstacle
           const moveResult = validateMove(myTank.position.x, myTank.position.y, myTank.position.z, 0, 0, 0, 2);
           if (moveResult.landedType === 'ground' || moveResult.landedType === 'obstacle') {
