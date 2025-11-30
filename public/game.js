@@ -1114,40 +1114,40 @@ function createMapBoundaries(mapSize = 100) {
   ewWallMaterials[4].map.repeat.set(wallThickness / 2, wallHeight / 2); // front: 1×5
   ewWallMaterials[5].map.repeat.set(wallThickness / 2, wallHeight / 2); // back: 1×5
 
-  // North wall
+  // North wall (red, now at Z = +mapSize/2)
   const northWall = new THREE.Mesh(
     new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
-    nsWallMaterials
+    new THREE.MeshLambertMaterial({ color: 0xB20000 })
   );
-  northWall.position.set(0, wallHeight / 2, -mapSize / 2);
+  northWall.position.set(0, wallHeight / 2, mapSize / 2);
   northWall.castShadow = true;
   northWall.receiveShadow = true;
   scene.add(northWall);
 
-  // South wall
+  // South wall (blue, now at Z = -mapSize/2)
   const southWall = new THREE.Mesh(
     new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
-    nsWallMaterials.map(m => m.clone())
+    new THREE.MeshLambertMaterial({ color: 0x1976D2 })
   );
-  southWall.position.set(0, wallHeight / 2, mapSize / 2);
+  southWall.position.set(0, wallHeight / 2, -mapSize / 2);
   southWall.castShadow = true;
   southWall.receiveShadow = true;
   scene.add(southWall);
 
-  // East wall
+  // East wall (+X, green)
   const eastWall = new THREE.Mesh(
     new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-    ewWallMaterials
+    new THREE.MeshLambertMaterial({ color: 0x388E3C })
   );
   eastWall.position.set(mapSize / 2, wallHeight / 2, 0);
   eastWall.castShadow = true;
   eastWall.receiveShadow = true;
   scene.add(eastWall);
 
-  // West wall
+  // West wall (-X, yellow)
   const westWall = new THREE.Mesh(
     new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-    ewWallMaterials.map(m => m.clone())
+    new THREE.MeshLambertMaterial({ color: 0xFBC02D })
   );
   westWall.position.set(-mapSize / 2, wallHeight / 2, 0);
   westWall.castShadow = true;
@@ -3427,93 +3427,240 @@ function updateCompass() {
 }
 
 function updateRadar() {
-  if (!radarCtx) return;
-
+  if (!radarCtx || !myTank || !gameConfig) return;
+  // Declare radar variables only once
   const size = radarCanvas.width;
-  const mapSize = gameConfig ? gameConfig.MAP_SIZE : 100; // Game map is 100x100
-  const scale = size / mapSize;
-
+  const center = size / 2;
+  const radius = center * 0.95;
+  const SHOT_DISTANCE = gameConfig.SHOT_DISTANCE || 50;
+  const mapSize = gameConfig.MAP_SIZE || 100;
+  // Player world position and heading
+  const px = myTank.position.x;
+  const pz = myTank.position.z;
+  const playerHeading = myTank.rotation ? myTank.rotation.y : 0;
+  // No radarRotation; use playerHeading directly
   // Clear radar
-  radarCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-  radarCtx.fillRect(0, 0, size, size);
+  radarCtx.clearRect(0, 0, size, size);
 
-  // Draw border
-  radarCtx.strokeStyle = 'rgba(76, 175, 80, 0.8)';
-  radarCtx.lineWidth = 2;
-  radarCtx.strokeRect(0, 0, size, size);
-
-  // Draw boundary walls (brown)
-  radarCtx.fillStyle = 'rgba(139, 69, 19, 0.6)';
-  const wallThickness = 1 * scale;
-  // North wall
-  radarCtx.fillRect(0, 0, size, wallThickness);
-  // South wall
-  radarCtx.fillRect(0, size - wallThickness, size, wallThickness);
-  // West wall
-  radarCtx.fillRect(0, 0, wallThickness, size);
-  // East wall
-  radarCtx.fillRect(size - wallThickness, 0, wallThickness, size);
-
-  // Draw obstacles (gray boxes)
-  radarCtx.fillStyle = 'rgba(102, 102, 102, 0.8)';
-
-  OBSTACLES.forEach(obs => {
-    const centerX = (obs.x + mapSize / 2) * scale;
-    const centerZ = (obs.z + mapSize / 2) * scale;
-
+  // Draw world border (clip to SHOT_DISTANCE area, rotated to player forward)
+  if (gameConfig && gameConfig.MAP_SIZE) {
     radarCtx.save();
-    radarCtx.translate(centerX, centerZ);
-    radarCtx.rotate(obs.rotation || 0);
+    radarCtx.globalAlpha = 0.7;
+    radarCtx.translate(center, center);
+    radarCtx.rotate(playerHeading + Math.PI);
+    radarCtx.beginPath();
+    // Calculate visible world border segment within SHOT_DISTANCE
+    const border = mapSize / 2;
+    const left = Math.max(px - SHOT_DISTANCE, -border);
+    const right = Math.min(px + SHOT_DISTANCE, border);
+    const top = Math.max(pz - SHOT_DISTANCE, -border);
+    const bottom = Math.min(pz + SHOT_DISTANCE, border);
+    // Draw each edge if visible in radar
+    const toRadar = (wx, wz) => [
+      ((wx - px) / SHOT_DISTANCE) * (radius - 16),
+      ((wz - pz) / SHOT_DISTANCE) * (radius - 16)
+    ];
+    // Top edge (North, Z = +border)
+    if (top === -border) {
+      const [x1, y1] = toRadar(left, -border);
+      const [x2, y2] = toRadar(right, -border);
+      radarCtx.save();
+      radarCtx.strokeStyle = '#1976D2'; // South - blue
+      radarCtx.lineWidth = 2.5;
+      radarCtx.setLineDash([6, 6]);
+      radarCtx.beginPath();
+      radarCtx.moveTo(x1, y1);
+      radarCtx.lineTo(x2, y2);
+      radarCtx.stroke();
+      radarCtx.restore();
+    }
+    // Bottom edge (South, Z = -border)
+    if (bottom === border) {
+      const [x1, y1] = toRadar(left, border);
+      const [x2, y2] = toRadar(right, border);
+      radarCtx.save();
+      radarCtx.strokeStyle = '#B20000'; // North - red
+      radarCtx.lineWidth = 2.5;
+      radarCtx.setLineDash([6, 6]);
+      radarCtx.beginPath();
+      radarCtx.moveTo(x1, y1);
+      radarCtx.lineTo(x2, y2);
+      radarCtx.stroke();
+      radarCtx.restore();
+    }
+    // Left edge (West, X = -border)
+    if (left === -border) {
+      const [x1, y1] = toRadar(-border, top);
+      const [x2, y2] = toRadar(-border, bottom);
+      radarCtx.save();
+      radarCtx.strokeStyle = '#FBC02D'; // East - yellow
+      radarCtx.lineWidth = 2.5;
+      radarCtx.setLineDash([6, 6]);
+      radarCtx.beginPath();
+      radarCtx.moveTo(x1, y1);
+      radarCtx.lineTo(x2, y2);
+      radarCtx.stroke();
+      radarCtx.restore();
+    }
+    // Right edge (East, X = +border)
+    if (right === border) {
+      const [x1, y1] = toRadar(border, top);
+      const [x2, y2] = toRadar(border, bottom);
+      radarCtx.save();
+      radarCtx.strokeStyle = '#388E3C'; // West - green
+      radarCtx.lineWidth = 2.5;
+      radarCtx.setLineDash([6, 6]);
+      radarCtx.beginPath();
+      radarCtx.moveTo(x1, y1);
+      radarCtx.lineTo(x2, y2);
+      radarCtx.stroke();
+      radarCtx.restore();
+    }
+    radarCtx.restore();
+  }
 
-    const rw = obs.w * scale;
-    const rd = obs.d * scale;
-    radarCtx.fillRect(-rw / 2, -rd / 2, rw, rd);
+  // Draw projectiles (shots) within SHOT_DISTANCE, using same transform as map/obstacles
+  if (typeof projectiles !== 'undefined' && projectiles.forEach) {
+    const theta = playerHeading;
+    radarCtx.save();
+    // Rotate the shot layer by 180 degrees around the radar center
+    radarCtx.translate(center, center);
+    radarCtx.rotate(Math.PI);
+    radarCtx.translate(-center, -center);
+    projectiles.forEach((proj, id) => {
+      const dx = proj.position.x - px;
+      const dz = proj.position.z - pz;
+      if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
+      // Use same transform as map/obstacles
+      const rotX = dx * Math.cos(theta) - dz * Math.sin(theta);
+      const rotY = dx * Math.sin(theta) + dz * Math.cos(theta);
+      const x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
+      const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+      radarCtx.save();
+      radarCtx.beginPath();
+      radarCtx.arc(x, y, 4, 0, Math.PI * 2);
+      radarCtx.fillStyle = '#FFD700';
+      radarCtx.globalAlpha = 0.85;
+      radarCtx.shadowColor = '#FFD700';
+      radarCtx.shadowBlur = 6;
+      radarCtx.fill();
+      radarCtx.restore();
+    });
+    radarCtx.restore();
+  }
+  // (Removed duplicate variable declarations and clearRect)
 
+  // Draw radar background (keep as is)
+  radarCtx.save();
+  radarCtx.globalAlpha = 0.95;
+  radarCtx.beginPath();
+  radarCtx.arc(center, center, radius, 0, Math.PI * 2);
+  radarCtx.fillStyle = 'rgba(0,0,0,0.5)';
+  radarCtx.fill();
+  radarCtx.restore();
+
+  // Draw cardinal direction letters (N/E/S/W) at border, facing outward, rotating with the map
+  const borderWidth = 3;
+  const cardinalLabels = [
+    { angle: Math.PI / 2, label: 'N', color: '#B20000' },
+    { angle: Math.PI, label: 'E', color: '#FBC02D' },
+    { angle: -Math.PI / 2, label: 'S', color: '#1976D2' },
+    { angle: 0, label: 'W', color: '#388E3C' },
+  ];
+  cardinalLabels.forEach(dir => {
+    radarCtx.save();
+    radarCtx.translate(center, center);
+    // Rotate with the map/radar, so compass turns as player turns
+    radarCtx.rotate(playerHeading - Math.PI / 2 + dir.angle);
+    radarCtx.textAlign = 'center';
+    radarCtx.textBaseline = 'middle';
+    radarCtx.font = `bold ${Math.round(radius * 0.22)}px sans-serif`;
+    radarCtx.fillStyle = dir.color;
+    radarCtx.strokeStyle = '#222';
+    radarCtx.lineWidth = 3;
+    // Place letter just inside the border
+    const labelRadius = radius - borderWidth - 8;
+    radarCtx.save();
+    radarCtx.translate(0, -labelRadius);
+    // Keep letters upright (vertical) at top
+    radarCtx.rotate(-playerHeading + Math.PI / 2 - dir.angle);
+    radarCtx.strokeText(dir.label, 0, 0);
+    radarCtx.fillText(dir.label, 0, 0);
+    radarCtx.restore();
     radarCtx.restore();
   });
 
-  // Draw projectiles
-  projectiles.forEach((projectile) => {
-    const x = (projectile.position.x + mapSize / 2) * scale;
-    const z = (projectile.position.z + mapSize / 2) * scale;
+  // Draw obstacles within SHOT_DISTANCE, rotated to match map orientation
+  if (typeof OBSTACLES !== 'undefined' && Array.isArray(OBSTACLES)) {
+    OBSTACLES.forEach(obs => {
+      const dx = obs.x - px;
+      const dz = obs.z - pz;
+      if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
+      // Rotate to match map orientation
+      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+      const x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
+      const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+      // Obstacle size scaling
+      const scale = (radius - 16) / SHOT_DISTANCE;
+      const w = (obs.w || 8) * scale;
+      const d = (obs.d || 8) * scale;
+      const rot = (obs.rotation || 0) - playerHeading;
+      radarCtx.save();
+      radarCtx.translate(x, y);
+      radarCtx.rotate(rot);
+      radarCtx.globalAlpha = 0.5;
+      radarCtx.fillStyle = 'rgba(180,180,180,0.5)';
+      radarCtx.fillRect(-w/2, -d/2, w, d);
+      radarCtx.restore();
+    });
+  }
 
-    radarCtx.fillStyle = 'rgba(255, 255, 0, 0.8)';
-    radarCtx.beginPath();
-    radarCtx.arc(x, z, 2, 0, Math.PI * 2);
-    radarCtx.fill();
-  });
-
-  // Draw tanks as triangles
+  // Draw tanks within SHOT_DISTANCE, using same transform as map/obstacles/shots
   tanks.forEach((tank, playerId) => {
-    const x = (tank.position.x + mapSize / 2) * scale;
-    const z = (tank.position.z + mapSize / 2) * scale;
-
-    // Get tank rotation and adjust for radar coordinate system
-    // Negate rotation for canvas Y-down coordinate system
-    // Add PI to flip triangle 180° so it points forward
-    const rotation = -tank.rotation.y + Math.PI;
-    const triangleHeight = playerId === myPlayerId ? 12 : 10;
-    const triangleBase = playerId === myPlayerId ? 8 : 6;
-
-    // Set color based on player
+    if (!tank.position) return;
+    const dx = tank.position.x - px;
+    const dz = tank.position.z - pz;
+    if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
+    // Use radarRotation for all world-to-radar transforms
+    let rotX, rotY, x, y;
     if (playerId === myPlayerId) {
-      radarCtx.fillStyle = 'rgba(33, 150, 243, 1)'; // Blue
+      rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+      rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+      x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
+      y = center - (rotY / SHOT_DISTANCE) * (radius - 16);
     } else {
-      radarCtx.fillStyle = 'rgba(255, 87, 34, 1)'; // Orange
+      // Invert both axes to match radar orientation (so N/S/E/W render correctly)
+      const theta = playerHeading;
+      rotX = dx * Math.cos(theta) - dz * Math.sin(theta);
+      rotY = dx * Math.sin(theta) + dz * Math.cos(theta);
+      x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
+      y = center - (rotY / SHOT_DISTANCE) * (radius - 16);
     }
-
     radarCtx.save();
-    radarCtx.translate(x, z);
-    radarCtx.rotate(rotation);
-
-    // Draw triangle pointing forward (narrow end at front, wide end at back)
-    radarCtx.beginPath();
-    radarCtx.moveTo(0, -triangleHeight / 2); // Front tip (narrow)
-    radarCtx.lineTo(-triangleBase / 2, triangleHeight / 2); // Back left (wide)
-    radarCtx.lineTo(triangleBase / 2, triangleHeight / 2); // Back right (wide)
-    radarCtx.closePath();
-    radarCtx.fill();
-
+    radarCtx.translate(x, y);
+    if (playerId === myPlayerId) {
+      // Player tank: always point up (no rotation needed)
+      radarCtx.beginPath();
+      radarCtx.moveTo(0, -10);
+      radarCtx.lineTo(-6, 8);
+      radarCtx.lineTo(6, 8);
+      radarCtx.closePath();
+      radarCtx.fillStyle = 'rgba(33, 150, 243, 1)';
+      radarCtx.globalAlpha = 1;
+      radarCtx.fill();
+    } else {
+      // Other tanks: mirror rotation so heading 0 (north) points up, π/2 (west) points left
+      radarCtx.rotate(-((tank.rotation ? tank.rotation.y : 0) - playerHeading));
+      radarCtx.beginPath();
+      radarCtx.moveTo(0, -10);
+      radarCtx.lineTo(-6, 8);
+      radarCtx.lineTo(6, 8);
+      radarCtx.closePath();
+      radarCtx.fillStyle = 'rgba(255, 87, 34, 1)';
+      radarCtx.globalAlpha = 0.95;
+      radarCtx.fill();
+    }
     radarCtx.restore();
   });
 }

@@ -37,7 +37,7 @@ const wss = new WebSocketServer({ server });
 
 // Game constants
 const GAME_CONFIG = {
-  MAP_SIZE: 100,
+  MAP_SIZE: 25,
   TANK_SPEED: 5, // units per second
   TANK_ROTATION_SPEED: 2, // radians per second
   SHOT_SPEED: 20,
@@ -966,7 +966,7 @@ wss.on('connection', (ws, req) => {
 
             broadcastAll({
               type: 'playerUnpaused',
-              playerId: player.id,
+              playerId: player.idp,
             });
           }
           break;

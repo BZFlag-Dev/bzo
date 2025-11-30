@@ -654,21 +654,22 @@ canvas {
 #radar {
   position: fixed;
   top: 10px;
-  right: 2vw;
-  z-index: 100;
-  border: 2px solid rgba(76, 175, 80, 0.6);
-  border-radius: 5px;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-  background: rgba(0, 0, 0, 0.8);
-  opacity: 0.5;
-  width: 18vw;
-  max-width: 120px;
+  right: 10px;
+  z-index: 120;
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 0 16px #222b, 0 0 0 4px rgba(0,0,0,0.5);
+  background: none;
+  opacity: 1;
+  width: min(35vw, 35vh);
+  height: min(35vw, 35vh);
   min-width: 60px;
-  height: 18vw;
-  max-height: 120px;
   min-height: 60px;
+  max-width: 240px;
+  max-height: 240px;
   aspect-ratio: 1 / 1;
   box-sizing: border-box;
+  pointer-events: none;
 }
 
 @media (max-width: 600px) {
