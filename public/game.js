@@ -2778,7 +2778,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
-
+    const margin = tankRadius * 0.7;
     // Check if tank circle intersects with axis-aligned obstacle rectangle
     const closestX = Math.max(-halfW, Math.min(localX, halfW));
     const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
@@ -3115,35 +3115,21 @@ function handleInput(deltaTime) {
   // Tank is in air if not on ground AND not on obstacle (velocity doesn't matter)
   const isInAir = myTank && !onGround && !onObstacle;
 
-  // Always update jump momentum from virtual controls on mobile if jumping
-  if (isInAir && verticalVel > 5) {
-    if (isMobile && virtualInput.jump) {
-      jumpMomentumForward = virtualInput.forward;
-      jumpMomentumRotation = -virtualInput.turn;
-    } else if (mouseControlEnabled) {
-      jumpMomentumForward = -mouseY;
-      jumpMomentumRotation = -mouseX;
-    } else {
-      if (keys['KeyW']) jumpMomentumForward = 1.0;
-      else if (keys['KeyS']) jumpMomentumForward = -1.0;
-      if (keys['KeyA']) jumpMomentumRotation = 1.0;
-      else if (keys['KeyD']) jumpMomentumRotation = -1.0;
-    }
-  }
-
-
-  // --- Step 1: Gather intended speed and angular motion from all sources ---
+  // --- Step 1: Gather intended speed, angular, and vertical motion from all sources ---
   let intendedForward = 0; // -1..1
   let intendedRotation = 0; // -1..1
+  let intendedY = 0; // -1..1 (for jump/momentum)
 
   if (isMobile) {
     // Use virtual joystick input on mobile
     if (!isInAir) {
       intendedForward = virtualInput.forward;
       intendedRotation = -virtualInput.turn; // Invert so right/left match tank controls
+      intendedY = virtualInput.jump ? 1 : 0;
     } else {
       intendedForward = 0;
       intendedRotation = 0;
+      intendedY = 0;
     }
   } else {
     // WASD keys: pressing any disables mouse move mode
@@ -3159,7 +3145,8 @@ function handleInput(deltaTime) {
     if (wasdPressed && mouseControlEnabled) {
       toggleMouseMode();
     }
-
+    // Space for jump (or Tab, or other key as needed)
+    if (keys['Space'] || keys['Tab']) intendedY = 1;
     // Mouse analog (if enabled)
     if (mouseControlEnabled) {
       if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
@@ -3171,11 +3158,13 @@ function handleInput(deltaTime) {
   if (isInAir) {
     if (jumpMomentumForward !== 0) intendedForward += jumpMomentumForward;
     if (jumpMomentumRotation !== 0) intendedRotation += jumpMomentumRotation;
+    if (jumpMomentumForward !== 0 || jumpMomentumRotation !== 0) intendedY = 0; // Don't allow new jump while in air
   }
 
   // --- Step 2: Clamp intended values to -1..1 (if needed) ---
   intendedForward = Math.max(-1, Math.min(1, intendedForward));
   intendedRotation = Math.max(-1, Math.min(1, intendedRotation));
+  intendedY = Math.max(-1, Math.min(1, intendedY));
 
   // --- Step 3: Convert intended speed/rotation to deltas ---
   const speed = gameConfig.TANK_SPEED * deltaTime;
@@ -3183,6 +3172,7 @@ function handleInput(deltaTime) {
   let intendedDeltaX = Math.sin(playerRotation) * intendedForward * speed;
   let intendedDeltaZ = Math.cos(playerRotation) * intendedForward * speed;
   let intendedDeltaRot = intendedRotation * rotSpeed;
+  let intendedDeltaY = intendedY * (gameConfig.JUMP_VELOCITY || 30); // Only applies if jump is triggered
 
   // Track old position to calculate actual movement
   let moved = false;
