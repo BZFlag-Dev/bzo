@@ -3596,16 +3596,17 @@ function updateRadar() {
       const dx = obs.x - px;
       const dz = obs.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      // Rotate to match map orientation
+      // Use playerHeading (not -playerHeading) and invert X axis for correct rotation direction
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
-      const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+      const y = center - (rotY / SHOT_DISTANCE) * (radius - 16);
       // Obstacle size scaling
       const scale = (radius - 16) / SHOT_DISTANCE;
       const w = (obs.w || 8) * scale;
       const d = (obs.d || 8) * scale;
-      const rot = (obs.rotation || 0) - playerHeading;
+      // Adjust rotation so that non-square buildings align with world axes
+      const rot = (obs.rotation || 0) + playerHeading - Math.PI / 2;
       radarCtx.save();
       radarCtx.translate(x, y);
       radarCtx.rotate(rot);

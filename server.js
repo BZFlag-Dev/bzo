@@ -37,7 +37,7 @@ const wss = new WebSocketServer({ server });
 
 // Game constants
 const GAME_CONFIG = {
-  MAP_SIZE: 25,
+  MAP_SIZE: 100,
   TANK_SPEED: 5, // units per second
   TANK_ROTATION_SPEED: 2, // radians per second
   SHOT_SPEED: 20,
