@@ -1065,7 +1065,6 @@ function createMapBoundaries(mapSize = 100) {
   // Create materials for each wall with proper texture scaling
   // Scale texture to show 1 brick repeat per 2 units for consistent brick size
 
-
   // North/South walls: mapSize × wallHeight × wallThickness (100 × 5 × 1)
   const nsWallTexture = createCobblestoneTexture();
   nsWallTexture.wrapS = THREE.RepeatWrapping;
@@ -1117,42 +1116,134 @@ function createMapBoundaries(mapSize = 100) {
   // North wall (red, now at Z = +mapSize/2)
   const northWall = new THREE.Mesh(
     new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
-    new THREE.MeshLambertMaterial({ color: 0xB20000 })
+    nsWallMaterials
   );
   northWall.position.set(0, wallHeight / 2, mapSize / 2);
   northWall.castShadow = true;
   northWall.receiveShadow = true;
   scene.add(northWall);
 
+  // Add giant 'N' above north wall
+  (function() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.font = 'bold 200px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#B20000';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 10;
+    ctx.strokeText('N', 128, 128);
+    ctx.fillText('N', 128, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(0, wallHeight + 8, mapSize / 2);
+    sprite.scale.set(20, 20, 1);
+    scene.add(sprite);
+  })();
+
   // South wall (blue, now at Z = -mapSize/2)
   const southWall = new THREE.Mesh(
     new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
-    new THREE.MeshLambertMaterial({ color: 0x1976D2 })
+    nsWallMaterials
   );
   southWall.position.set(0, wallHeight / 2, -mapSize / 2);
   southWall.castShadow = true;
   southWall.receiveShadow = true;
   scene.add(southWall);
 
+  // Add giant 'S' above south wall
+  (function() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.font = 'bold 200px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#1976D2';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 10;
+    ctx.strokeText('S', 128, 128);
+    ctx.fillText('S', 128, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(0, wallHeight + 8, -mapSize / 2);
+    sprite.scale.set(20, 20, 1);
+    scene.add(sprite);
+  })();
+
   // East wall (+X, green)
   const eastWall = new THREE.Mesh(
     new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-    new THREE.MeshLambertMaterial({ color: 0x388E3C })
+    ewWallMaterials
   );
   eastWall.position.set(mapSize / 2, wallHeight / 2, 0);
   eastWall.castShadow = true;
   eastWall.receiveShadow = true;
   scene.add(eastWall);
 
+  // Add giant 'W' above eest wall
+  (function() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.font = 'bold 200px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#388E3C';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 10;
+    ctx.strokeText('W', 128, 128);
+    ctx.fillText('W', 128, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(mapSize / 2, wallHeight + 8, 0);
+    sprite.scale.set(20, 20, 1);
+    scene.add(sprite);
+  })();
+
   // West wall (-X, yellow)
   const westWall = new THREE.Mesh(
     new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-    new THREE.MeshLambertMaterial({ color: 0xFBC02D })
+    ewWallMaterials
   );
   westWall.position.set(-mapSize / 2, wallHeight / 2, 0);
   westWall.castShadow = true;
   westWall.receiveShadow = true;
   scene.add(westWall);
+
+  // Add giant 'E' above east wall
+  (function() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 256, 256);
+    ctx.font = 'bold 200px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#FBC02D';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 10;
+    ctx.strokeText('E', 128, 128);
+    ctx.fillText('E', 128, 128);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(-mapSize / 2, wallHeight + 8, 0);
+    sprite.scale.set(20, 20, 1);
+    scene.add(sprite);
+  })();
 
   // Add some obstacles
   addObstacles();
