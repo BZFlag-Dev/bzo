@@ -2852,17 +2852,17 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
         const obstacleBase = obs.baseY || 0;
         const obstacleHeight = obs.h || 4;
         const obstacleTop = obstacleBase + obstacleHeight;
-        if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
-          continue;
-        }
+        const tankHeight = 2;
+        const margin = 0.1;
         const dx = slideNewX - obs.x;
         const dz = slideNewZ - obs.z;
         const cos = Math.cos(rotation);
         const sin = Math.sin(rotation);
         const localX = dx * cos - dz * sin;
         const localZ = dx * sin + dz * cos;
-        const margin = tankRadius * 0.7;
-        if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
+        const xyInBounds = Math.abs(localX) <= halfW + tankRadius * 0.7 && Math.abs(localZ) <= halfD + tankRadius * 0.7;
+        // Only consider landing if tank is above obstacle base and below obstacle top
+        if (xyInBounds && y !== null && y + tankHeight > obstacleBase + margin && y < obstacleTop - margin) {
           obstacle = obs;
           break;
         }
@@ -3175,6 +3175,7 @@ function handleInput(deltaTime) {
     //showMessage(`slideMove: from (${playerX.toFixed(2)}, ${playerZ.toFixed(2)}) by (Δx=${intendedDeltaX.toFixed(2)}, Δz=${intendedDeltaZ.toFixed(2)}) → (${result.x.toFixed(2)}, ${result.z.toFixed(2)}) moved=${result.moved} altered=${result.altered}`);
   }
   if (result.moved) {
+    moved = true;
     playerX = result.x;
     playerY = result.y;
     playerZ = result.z;
@@ -3250,7 +3251,7 @@ function handleInput(deltaTime) {
   myTank.userData.rotationSpeed = rotationSpeed;
 
   // Update local position
-  if (1 || moved) {
+  if (moved) {
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
@@ -3684,18 +3685,9 @@ function updateTreads(deltaTime) {
       tank.userData.rightTreadOffset = 0;
     }
 
-    // Get velocity (either from network for other players, or from local input for my tank)
-    let forwardSpeed = 0;
-    let rotationSpeed = 0;
-
-    if (playerId === myPlayerId) {
-      forwardSpeed = myTank.userData.forwardSpeed || 0;
-      rotationSpeed = myTank.userData.rotationSpeed || 0;
-    } else {
-      // For other players, use velocity from network
-      forwardSpeed = tank.userData.forwardSpeed || 0;
-      rotationSpeed = tank.userData.rotationSpeed || 0;
-    }
+    // Always use tank.userData.forwardSpeed and rotationSpeed for all tanks
+    const forwardSpeed = tank.userData.forwardSpeed || 0;
+    const rotationSpeed = tank.userData.rotationSpeed || 0;
 
     // Tank tread width (distance between tread centers)
     const treadWidth = 3.5;
