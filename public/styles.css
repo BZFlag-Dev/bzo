@@ -5,8 +5,6 @@
   bottom: 0;
   transform: translateX(-50%);
   width: 95vw;
-  max-width: 600px;
-  min-width: 120px;
   max-height: 33vh;
   background: rgba(0,0,0,0.5);
   color: #fff;
