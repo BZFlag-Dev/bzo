@@ -414,10 +414,6 @@ let playerY = 0; // Y is vertical position
 let playerZ = 0;
 let playerRotation = 0;
 
-// Jump momentum - preserve velocity when jumping
-let jumpMomentumForward = 0;
-let jumpMomentumRotation = 0;
-
 // Dead reckoning state - track last sent position
 let lastSentX = 0;
 let lastSentZ = 0;
@@ -3074,6 +3070,7 @@ function handleInput(deltaTime) {
         const margin = 2 * 0.7;
         if (Math.abs(localX) <= obs.w / 2 + margin && Math.abs(localZ) <= obs.d / 2 + margin) {
           onObstacle = true;
+          myTank.userData.verticalVelocity = 0;
           break;
         }
       }
@@ -3088,44 +3085,44 @@ function handleInput(deltaTime) {
   let intendedY = 0; // -1..1 (for jump/momentum)
   let jumpTriggered = false;
 
-  if (isMobile) {
-    // Use virtual joystick input on mobile
-    intendedForward = virtualInput.forward;
-    intendedRotation = -virtualInput.turn; // Invert so right/left match tank controls
-    if (virtualInput.jump) {
-      intendedY = 1;
-      jumpTriggered = true;
-    }
-  } else {
-    // WASD keys: pressing any disables mouse move mode
-    const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
-    let wasdPressed = false;
-    for (const code of wasdKeys) {
-      if (keys[code]) {
-        intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
-        intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
-        wasdPressed = true;
-      }
-    }
-    if (wasdPressed && mouseControlEnabled) {
-      toggleMouseMode();
-    }
-    // Space for jump (or Tab, or other key as needed)
-    if ((keys['Tab']) && !isInAir) {
-      intendedY = 1;
-      jumpTriggered = true;
-    }
-    // Mouse analog (if enabled)
-    if (mouseControlEnabled) {
-      if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
-      if (typeof mouseX !== 'undefined') intendedRotation += -mouseX;
-    }
-  }
-
   // Jump/momentum (if in air)
   if (isInAir) {
-    if (jumpMomentumForward !== 0) intendedForward += jumpMomentumForward;
-    if (jumpMomentumRotation !== 0) intendedRotation += jumpMomentumRotation;
+    intendedForward = myTank.userData.lastForwardSpeed;
+    intendedRotation = myTank.userData.lastRotationSpeed;
+  } else {
+    if (isMobile) {
+      // Use virtual joystick input on mobile
+      intendedForward = virtualInput.forward;
+      intendedRotation = -virtualInput.turn; // Invert so right/left match tank controls
+      if (virtualInput.jump) {
+        intendedY = 1;
+        jumpTriggered = true;
+      }
+    } else {
+      // WASD keys: pressing any disables mouse move mode
+      const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+      let wasdPressed = false;
+      for (const code of wasdKeys) {
+        if (keys[code]) {
+          intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
+          intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
+          wasdPressed = true;
+        }
+      }
+      if (wasdPressed && mouseControlEnabled) {
+        toggleMouseMode();
+      }
+      // Space for jump (or Tab, or other key as needed)
+      if ((keys['Tab']) && !isInAir) {
+        intendedY = 1;
+        jumpTriggered = true;
+      }
+      // Mouse analog (if enabled)
+      if (mouseControlEnabled) {
+        if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
+        if (typeof mouseX !== 'undefined') intendedRotation += -mouseX;
+      }
+    }
   }
 
   // --- Step 2: Clamp intended values to -1..1 (if needed) ---
@@ -3144,19 +3141,19 @@ function handleInput(deltaTime) {
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
   }
 
-
-  // Apply gravity if not on ground or obstacle
-  if (!onGround && !onObstacle && intendedDeltaY !== 0) {
-    myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
-  } else if (!jumpTriggered && myTank.position.y <= 0) {
+  if (!jumpTriggered && myTank.position.y <= 0) {
     myTank.userData.verticalVelocity = 0;
     myTank.position.y = 0;
+  } else {
+    // Apply gravity if not on ground or obstacle
+    myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
   }
 
   // --- Step 4: Apply jump logic here ---
   if (jumpTriggered && !isInAir) {
-    // Only jump if not already jumping (vertical velocity near zero) AND on ground or obstacle
+    // Only jump if not already jumping
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
+    intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     // Play jump sound
     if (jumpSound && jumpSound.isPlaying) {
       jumpSound.stop();
@@ -3164,9 +3161,6 @@ function handleInput(deltaTime) {
     if (jumpSound) {
       jumpSound.play();
     }
-    // Capture current momentum for the jump from input state
-    jumpMomentumForward = intendedForward;
-    jumpMomentumRotation = intendedRotation;
   }
 
   // --- Step 5: Apply collision/slide logic to the intended move ---
@@ -3183,11 +3177,11 @@ function handleInput(deltaTime) {
     // If blocked, the caller should handle input state cleanup if needed
   }
 
-  // When on ground and not jumping, maintain proper height (ground or obstacle)
+  // When not jumping, maintain proper height (ground or obstacle)
   let currentlyOnObstacle = false;
-  if (myTank && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
+  if (myTank && !jumpTriggered &&Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
     // Use validateMove to determine landing and falling
-    const moveResult = validateMove(playerX, myTank.position.y, playerZ, 0, 0, 0, 2);
+    const moveResult = validateMove(playerX, playerY, playerZ, 0, 0, 0, 2);
     if (moveResult.landedType === 'obstacle' && moveResult.landedOn) {
       // On top of obstacle - maintain height
       const obstacleBase = moveResult.landedOn.baseY || 0;
@@ -3204,13 +3198,6 @@ function handleInput(deltaTime) {
       // On ground
       myTank.position.y = 0;
     }
-  }
-
-  // Reset jump momentum only when actually on stable ground or obstacle (after movement)
-  const currentlyOnGround = myTank && Math.abs(myTank.position.y) < 0.5;
-  if (currentlyOnGround || currentlyOnObstacle) {
-    jumpMomentumForward = 0;
-    jumpMomentumRotation = 0;
   }
 
   // Calculate velocity based on actual movement that occurred
