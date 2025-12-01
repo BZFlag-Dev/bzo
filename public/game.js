@@ -3098,12 +3098,12 @@ function handleInput(deltaTime) {
     }
   } else {
     // WASD keys: pressing any disables mouse move mode
-    const wasdKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+    const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
     let wasdPressed = false;
     for (const code of wasdKeys) {
       if (keys[code]) {
-        intendedForward += (code === 'KeyW') ? 1 : (code === 'KeyS') ? -1 : 0;
-        intendedRotation += (code === 'KeyA') ? 1 : (code === 'KeyD') ? -1 : 0;
+        intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
+        intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
         wasdPressed = true;
       }
     }
