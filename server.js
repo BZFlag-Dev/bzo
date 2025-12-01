@@ -49,7 +49,6 @@ const GAME_CONFIG = {
   JUMP_VELOCITY: 30, // Initial upward velocity
   GRAVITY: 30, // Gravity acceleration (units per second squared)
   JUMP_COOLDOWN: 500, // ms between jumps
-  TANK_HEIGHT: 0, // Height of tank base (treads on ground)
 };
 
 // Generate random obstacles on server start
@@ -215,7 +214,7 @@ class Player {
     // Always assign a default name if none provided
     this.name = name && name.trim() ? name : `Player ${this.playerNumber}`;
     this.x = 0;
-    this.y = GAME_CONFIG.TANK_HEIGHT;
+    this.y = 0;
     this.z = 0;
     this.rotation = 0;
     this.health = 0;
@@ -360,7 +359,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
 function findValidSpawnPosition(tankRadius = 2) {
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
   const maxAttempts = 100;
-  const y = GAME_CONFIG.TANK_HEIGHT;
+  const y = 0;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const x = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
@@ -377,7 +376,7 @@ function findValidSpawnPosition(tankRadius = 2) {
 }
 
 // Validate player movement
-function validateMovement(player, newX, newZ, newRotation, deltaTime) {
+function validateMovement(player, newX, newY, newZ, newRotation, deltaTime) {
   // Can't move while paused
   if (player.paused) {
     return false;
@@ -447,7 +446,7 @@ function validateMovement(player, newX, newZ, newRotation, deltaTime) {
 }
 
 // Validate shot
-function validateShot(player, shotX, shotZ) {
+function validateShot(player, shotX, shotY, shotZ) {
   // Shot originates from barrel end, which is ~3 units from tank center
   const barrelLength = 3.0;
   const dist = distance(player.x, player.z, shotX, shotZ);
@@ -524,7 +523,7 @@ function gameLoop() {
 
   // Update player jump physics
   players.forEach((player) => {
-    if (player.verticalVelocity !== 0 || player.y > GAME_CONFIG.TANK_HEIGHT) {
+    if (player.verticalVelocity !== 0 || player.y > 0) {
       // Apply gravity
       player.verticalVelocity -= GAME_CONFIG.GRAVITY * deltaTime;
 
@@ -540,9 +539,9 @@ function gameLoop() {
         player.verticalVelocity = 0;
         player.isJumping = false;
         player.onObstacle = true;
-      } else if (player.y <= GAME_CONFIG.TANK_HEIGHT && player.verticalVelocity <= 0) {
+      } else if (player.y <= 0 && player.verticalVelocity <= 0) {
         // Land on ground - only end jump when actually landing
-        player.y = GAME_CONFIG.TANK_HEIGHT;
+        player.y = 0;
         player.verticalVelocity = 0;
         player.isJumping = false;
         player.onObstacle = false;
@@ -754,13 +753,7 @@ wss.on('connection', (ws, req) => {
           // Clamp deltaTime to reasonable values (prevent abuse and handle reconnects)
           const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 0.5);
 
-          // Accept client's vertical position first so collision detection uses correct Y
-          const oldY = player.y;
-          if (message.y !== undefined) {
-            player.y = message.y;
-          }
-
-          if (validateMovement(player, message.x, message.z, message.rotation, clampedDeltaTime)) {
+          if (validateMovement(player, message.x, message.y,message.z, message.rotation, clampedDeltaTime)) {
             player.x = message.x;
             player.z = message.z;
             player.rotation = message.rotation;
@@ -778,7 +771,7 @@ wss.on('connection', (ws, req) => {
 
                 // Check if on ground or on top of an obstacle
                 const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
-                const onValidSurface = player.y <= GAME_CONFIG.TANK_HEIGHT + 0.5 ||
+                const onValidSurface = player.y <= 0.5 ||
                                       (obstacleCheck.onObstacle && Math.abs(player.y - obstacleCheck.obstacleHeight) < 0.5);
 
                 if (!player.isJumping && timeSinceLastJump >= GAME_CONFIG.JUMP_COOLDOWN && onValidSurface) {
@@ -806,9 +799,6 @@ wss.on('connection', (ws, req) => {
               verticalVelocity: player.verticalVelocity,
             }, ws);
           } else {
-            // Validation failed - restore old Y position
-            player.y = oldY;
-
             // Send correction back to client
             ws.send(JSON.stringify({
               type: 'positionCorrection',
@@ -824,7 +814,7 @@ wss.on('connection', (ws, req) => {
         case 'shoot': {
           // message: { type: 'shot', x, y, z, dirX, dirZ }
           if (player.health <= 0) break; // Dead players can't shoot
-          if (!validateShot(player, message.x, message.z)) break;
+          if (!validateShot(player, message.x, message.y, message.z)) break;
           const now = Date.now();
           player.lastShot = now;
           const id = (++projectileIdCounter).toString();
@@ -832,7 +822,7 @@ wss.on('connection', (ws, req) => {
             id,
             player.id,
             message.x,
-            message.y !== undefined ? message.y : (player.y + 2.2),
+            message.y,
             message.z,
             message.dirX,
             message.dirZ
