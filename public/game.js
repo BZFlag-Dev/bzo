@@ -1762,8 +1762,8 @@ function updateDebugDisplay() {
     }
     html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
-    html += `<div><span class="label">Speed:</span><span class="value">${myTank.userData.lastForwardSpeed.toFixed(2)} u/s</span></div>`;
-    html += `<div><span class="label">Angular:</span><span class="value">${myTank.userData.lastRotationSpeed.toFixed(2)} rad/s</span></div>`;
+    html += `<div><span class="label">Speed:</span><span class="value">${myTank.userData.forwardSpeed.toFixed(2)} u/s</span></div>`;
+    html += `<div><span class="label">Angular:</span><span class="value">${myTank.userData.rotationSpeed.toFixed(2)} rad/s</span></div>`;
     const verticalSpeed = myTank && myTank.userData && typeof myTank.userData.verticalSpeed === 'number' ? myTank.userData.verticalSpeed : 0;
     html += `<div><span class="label">Vertical:</span><span class="value">${verticalSpeed.toFixed(2)} u/s</span></div>`;
     html += `<div><span class="label">Position:</span><span class="value">(${myTank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
@@ -3087,8 +3087,8 @@ function handleInput(deltaTime) {
 
   // Jump/momentum (if in air)
   if (isInAir) {
-    intendedForward = myTank.userData.lastForwardSpeed;
-    intendedRotation = myTank.userData.lastRotationSpeed;
+    intendedForward = myTank.userData.forwardSpeed || 0; // -1..1
+    intendedRotation = myTank.userData.rotationSpeed || 0; // -1..1
   } else {
     if (isMobile) {
       // Use virtual joystick input on mobile
@@ -3179,7 +3179,7 @@ function handleInput(deltaTime) {
 
   // When not jumping, maintain proper height (ground or obstacle)
   let currentlyOnObstacle = false;
-  if (myTank && !jumpTriggered &&Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
+  if (myTank && !jumpTriggered && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
     // Use validateMove to determine landing and falling
     const moveResult = validateMove(playerX, playerY, playerZ, 0, 0, 0, 2);
     if (moveResult.landedType === 'obstacle' && moveResult.landedOn) {
@@ -3202,7 +3202,14 @@ function handleInput(deltaTime) {
 
   // Calculate velocity based on actual movement that occurred
   let forwardSpeed = 0;
-  let rotationSpeed = 0;
+  let rotationSpeed = myTank.userData.rotationSpeed || 0; // Preserve previous value by default
+
+  // Update local position
+  if (moved) {
+    playerRotation = intendedRotation * rotSpeed + oldRotation;
+    myTank.position.set(playerX, playerY, playerZ);
+    myTank.rotation.y = playerRotation;
+  }
 
   if (deltaTime > 0) {
     // Calculate actual position change
@@ -3225,24 +3232,19 @@ function handleInput(deltaTime) {
       forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
     }
 
-    // Calculate actual rotation change
-    const actualRotationDelta = playerRotation - oldRotation;
-    const tankRotSpeed = gameConfig.TANK_ROTATION_SPEED;
-    rotationSpeed = actualRotationDelta / deltaTime / tankRotSpeed;
-    rotationSpeed = Math.max(-1, Math.min(1, rotationSpeed));
+    // Only update rotationSpeed if not in air
+    if (!isInAir) {
+      // Calculate actual rotation change
+      const actualDeltaRot = playerRotation - oldRotation;
+      const actualRotSpeed = actualDeltaRot / deltaTime;
+      const tankRotSpeed = gameConfig.TANK_ROTATION_SPEED;
+      rotationSpeed = actualRotSpeed / tankRotSpeed;
+      rotationSpeed = Math.max(-1, Math.min(1, rotationSpeed));
+    }
   }
 
-  // Store last speeds for jump momentum
-  myTank.userData.lastForwardSpeed = forwardSpeed;
-  myTank.userData.lastRotationSpeed = rotationSpeed;
+  myTank.userData.forwardSpeed = forwardSpeed;
   myTank.userData.rotationSpeed = rotationSpeed;
-
-  // Update local position
-  if (moved) {
-    playerRotation = intendedRotation * rotSpeed + oldRotation;
-    myTank.position.set(playerX, playerY, playerZ);
-    myTank.rotation.y = playerRotation;
-  }
 
   // Dead reckoning: only send updates if significantly different from last sent state
   const now = performance.now();
@@ -3274,6 +3276,7 @@ function handleInput(deltaTime) {
       rotationSpeed: rotationSpeed,
       verticalVelocity: verticalVelocity,
     });
+    //console.log(`Sent move: x=${playerX.toFixed(2)} y=${playerY.toFixed(2)} z=${playerZ.toFixed(2)} rot=${playerRotation.toFixed(2)} fwd=${forwardSpeed.toFixed(2)} rotSpd=${rotationSpeed.toFixed(2)} vertVel=${verticalVelocity.toFixed(2)}`);
 
     // Update last sent state
     lastSentX = playerX;
