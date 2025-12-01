@@ -753,12 +753,13 @@ wss.on('connection', (ws, req) => {
           // Clamp deltaTime to reasonable values (prevent abuse and handle reconnects)
           const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 0.5);
 
-          if (validateMovement(player, message.x, message.y,message.z, message.rotation, clampedDeltaTime)) {
+          if (validateMovement(player, message.x, message.y, message.z, message.rotation, clampedDeltaTime)) {
             player.x = message.x;
+            player.y = message.y;
             player.z = message.z;
             player.rotation = message.rotation;
-            player.forwardSpeed = message.forwardSpeed || 0;
-            player.rotationSpeed = message.rotationSpeed || 0;
+            player.forwardSpeed = message.forwardSpeed;
+            player.rotationSpeed = message.rotationSpeed;
             if (message.verticalVelocity !== undefined) {
               // Check if client is attempting to jump (sudden positive velocity)
               const isJumpAttempt = message.verticalVelocity >= GAME_CONFIG.JUMP_VELOCITY * 0.9 &&

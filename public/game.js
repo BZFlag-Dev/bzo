@@ -780,6 +780,10 @@ function init() {
       e.preventDefault();
       return;
     }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      return;
+    }
 
     // Pause with P key
     if (e.code === 'KeyP') {
@@ -1748,6 +1752,8 @@ function updateDebugDisplay() {
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
 
+  const tank = tanks.get(myPlayerId);
+
   let html = '<div style="margin-bottom: 10px; font-weight: bold;">PLAYER STATUS:</div>';
 
   // Mobile orientation status
@@ -1760,10 +1766,8 @@ function updateDebugDisplay() {
     }
     html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
-    const linearSpeed = myTank && myTank.userData && typeof myTank.userData.linearSpeed === 'number' ? myTank.userData.linearSpeed : 0;
-    html += `<div><span class="label">Speed:</span><span class="value">${linearSpeed.toFixed(2)} u/s</span></div>`;
-    const rotationSpeed = myTank && myTank.userData && typeof myTank.userData.rotationSpeed === 'number' ? myTank.userData.rotationSpeed : 0;
-    html += `<div><span class="label">Angular:</span><span class="value">${rotationSpeed.toFixed(2)} rad/s</span></div>`;
+    html += `<div><span class="label">Speed:</span><span class="value">${myTank.userData.lastForwardSpeed.toFixed(2)} u/s</span></div>`;
+    html += `<div><span class="label">Angular:</span><span class="value">${myTank.userData.lastRotationSpeed.toFixed(2)} rad/s</span></div>`;
     const verticalSpeed = myTank && myTank.userData && typeof myTank.userData.verticalSpeed === 'number' ? myTank.userData.verticalSpeed : 0;
     html += `<div><span class="label">Vertical:</span><span class="value">${verticalSpeed.toFixed(2)} u/s</span></div>`;
     html += `<div><span class="label">Position:</span><span class="value">(${myTank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
@@ -2755,8 +2759,8 @@ function checkCollision(x, y, z, tankRadius = 2) {
         }
         // Block if any part of tank is inside the vertical range of the obstacle
         if (y > 0 && y < obstacleTop - margin && y + tankHeight > obstacleBase + margin) {
-          const msg = `[COLLISION] Tank at (${x.toFixed(2)}, ${z.toFixed(2)}, y=${y !== null ? y.toFixed(2) : 'null'}) collided with obstacle at (${obs.x}, ${obs.z}), obstacleTop=${obstacleTop}, obstacleBase=${obstacleBase}`;
-          sendToServer({ type: 'chat', text: msg });
+          //const msg = `[COLLISION] Tank at (${x.toFixed(2)}, ${z.toFixed(2)}, y=${y !== null ? y.toFixed(2) : 'null'}) collided with obstacle at (${obs.x}, ${obs.z}), obstacleTop=${obstacleTop}, obstacleBase=${obstacleBase}`;
+          //    sendToServer({ type: 'chat', text: msg });
           return true;
         }
       } else {
@@ -3278,7 +3282,6 @@ function handleInput(deltaTime) {
       rotationSpeed: rotationSpeed,
       verticalVelocity: verticalVelocity,
     });
-    console.log(`Sent move: x=${playerX.toFixed(2)} y=${playerY.toFixed(2)} z=${playerZ.toFixed(2)} rot=${playerRotation.toFixed(2)} forwardSpeed=${forwardSpeed.toFixed(2)} rotationSpeed=${rotationSpeed.toFixed(2)} verticalVelocity=${verticalVelocity.toFixed(2)}`);
 
     // Update last sent state
     lastSentX = playerX;
