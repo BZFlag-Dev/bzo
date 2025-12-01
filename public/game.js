@@ -3545,7 +3545,7 @@ function updateRadar() {
       // Use same transform as map/obstacles
       const rotX = dx * Math.cos(theta) - dz * Math.sin(theta);
       const rotY = dx * Math.sin(theta) + dz * Math.cos(theta);
-      const x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
+      const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
       const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
       radarCtx.save();
       radarCtx.beginPath();
@@ -3559,7 +3559,6 @@ function updateRadar() {
     });
     radarCtx.restore();
   }
-  // (Removed duplicate variable declarations and clearRect)
 
   // Draw radar background (keep as is)
   radarCtx.save();
@@ -3607,7 +3606,7 @@ function updateRadar() {
       const dx = obs.x - px;
       const dz = obs.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      // Use playerHeading (not -playerHeading) and invert X axis for correct rotation direction
+      // Uninvert X axis for correct rotation direction
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
