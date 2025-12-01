@@ -426,18 +426,18 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime) {
       }
     }
     if (collision && collision.type === 'boundary') {
-      log(`Player "${player.name}" collided with map boundary at x:${player.x}, y:${player.y}, z:${player.z}`);
+      log(`Player "${player.name}" collided with map boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
       return false;
     }
   }
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback
-      log(`Player "${player.name}" collided with unknown object at x:${player.x}, y:${player.y}, z:${player.z}`);
+      log(`Player "${player.name}" collided with unknown object x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
     } else {
       // Log obstacle details
       const { x, z, w, d, h, baseY, rotation } = collision;
-      log(`Player "${player.name}" collided with obstacle at x:${x}, z:${z}, w:${w}, d:${d}, h:${h}, baseY:${baseY}, rotation:${rotation} (player at x:${player.x}, y:${player.y}, z:${player.z})`);
+      log(`Player "${player.name}" collided with obstacle x:${x.toFixed(2)}, z:${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, baseY:${baseY.toFixed(2)}, rotation:${rotation.toFixed(2)} (player x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2) })`);
     }
     return false;
   }
