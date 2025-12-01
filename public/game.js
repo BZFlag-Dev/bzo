@@ -2033,41 +2033,45 @@ function handleServerMessage(message) {
     case 'playerMoved':
       const tank = tanks.get(message.id);
       if (tank && message.id !== myPlayerId) {
-        const y = message.y !== undefined ? message.y : 0;
         const oldY = tank.position.y;
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
-        const newVerticalVel = message.verticalVelocity || 0;
 
-        tank.position.set(message.x, y, message.z);
+        tank.position.set(message.x, message.y, message.z);
         tank.rotation.y = message.rotation;
         // Store velocity for tread animation
-        tank.userData.forwardSpeed = message.forwardSpeed || 0;
-        tank.userData.rotationSpeed = message.rotationSpeed || 0;
-        tank.userData.verticalVelocity = newVerticalVel;
+        tank.userData.forwardSpeed = message.forwardSpeed;
+        tank.userData.rotationSpeed = message.rotationSpeed;
+        tank.userData.verticalVelocity = message.verticalVelocity;
 
         // Detect jump (vertical velocity suddenly became positive and large)
-        if (oldVerticalVel < 10 && newVerticalVel >= 20) {
+        if (oldVerticalVel < 10 && message.verticalVelocity >= 20) {
           // Play jump sound at tank's position
           if (jumpSound && jumpSound.context) {
-            const jumpSoundClone = jumpSound.clone();
-            tank.add(jumpSoundClone);
-            jumpSoundClone.setVolume(0.4);
-            jumpSoundClone.play();
-            // Remove sound after playing
-            setTimeout(() => tank.remove(jumpSoundClone), 200);
+            try {
+              const jumpSoundClone = jumpSound.clone();
+              tank.add(jumpSoundClone);
+              jumpSoundClone.setVolume(0.4);
+              jumpSoundClone.play();
+              // Remove sound after playing
+              setTimeout(() => tank.remove(jumpSoundClone), 200);
+            } catch (error) {
+            }
           }
         }
 
-        // Detect landing (was in air, now at ground/obstacle with zero velocity)
-        if (oldY > 0.5 && y <= oldY - 0.5 && Math.abs(newVerticalVel) < 1) {
+        // Detect landing
+        if (oldVerticalVel < 0 && message.verticalVelocity === 0 && oldY > message.y) {
           // Play land sound at tank's position
           if (landSound && landSound.context) {
-            const landSoundClone = landSound.clone();
-            tank.add(landSoundClone);
-            landSoundClone.setVolume(0.5);
-            landSoundClone.play();
-            // Remove sound after playing
-            setTimeout(() => tank.remove(landSoundClone), 150);
+            try {
+              const landSoundClone = landSound.clone();
+              tank.add(landSoundClone);
+              landSoundClone.setVolume(0.5);
+              landSoundClone.play();
+              // Remove sound after playing
+              setTimeout(() => tank.remove(landSoundClone), 150);
+            } catch (error) {
+            }
           }
         }
       }
@@ -2962,7 +2966,7 @@ function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
   if (toX + tankRadius > halfMap) return { x: -1, z: 0 };
   if (toZ - tankRadius < -halfMap) return { x: 0, z: 1 };
   if (toZ + tankRadius > halfMap) return { x: 0, z: -1 };
-  
+
   // Check obstacles
   for (const obs of OBSTACLES) {
     const obstacleHeight = obs.h || 4;
