@@ -3055,7 +3055,10 @@ function handleInput(deltaTime) {
   const onGround = myTank && myTank.position.y < 0.5;
   // Check if on any obstacle by looking for obstacles at current position
   let onObstacle = false;
-  if (myTank && !onGround) {
+  if (onGround) {
+    myTank.userData.verticalVelocity = 0;
+    playerY = 0;
+  } else {
     for (const obs of OBSTACLES) {
       const obstacleHeight = obs.h || 4;
       const obstacleBase = obs.baseY || 0;
