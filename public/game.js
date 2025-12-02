@@ -1072,12 +1072,12 @@ function createMapBoundaries(mapSize = 100) {
   ewWallMaterials[4].map.repeat.set(wallThickness / 2, wallHeight / 2); // front: 1×5
   ewWallMaterials[5].map.repeat.set(wallThickness / 2, wallHeight / 2); // back: 1×5
 
-  // North wall (red, now at Z = +mapSize/2)
+  // North wall (red, now at Z = -mapSize/2)
   const northWall = new THREE.Mesh(
     new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
     nsWallMaterials
   );
-  northWall.position.set(0, wallHeight / 2, mapSize / 2);
+  northWall.position.set(0, wallHeight / 2, -mapSize / 2);
   northWall.castShadow = true;
   northWall.receiveShadow = true;
   scene.add(northWall);
@@ -1100,17 +1100,17 @@ function createMapBoundaries(mapSize = 100) {
     const texture = new THREE.CanvasTexture(canvas);
     const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
     const sprite = new THREE.Sprite(material);
-    sprite.position.set(0, wallHeight + 8, mapSize / 2);
+    sprite.position.set(0, wallHeight + 8, -mapSize / 2);
     sprite.scale.set(20, 20, 1);
     scene.add(sprite);
   })();
 
-  // South wall (blue, now at Z = -mapSize/2)
+  // South wall (blue, now at Z = +mapSize/2)
   const southWall = new THREE.Mesh(
     new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
     nsWallMaterials
   );
-  southWall.position.set(0, wallHeight / 2, -mapSize / 2);
+  southWall.position.set(0, wallHeight / 2, mapSize / 2);
   southWall.castShadow = true;
   southWall.receiveShadow = true;
   scene.add(southWall);
@@ -1133,7 +1133,7 @@ function createMapBoundaries(mapSize = 100) {
     const texture = new THREE.CanvasTexture(canvas);
     const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
     const sprite = new THREE.Sprite(material);
-    sprite.position.set(0, wallHeight + 8, -mapSize / 2);
+    sprite.position.set(0, wallHeight + 8, mapSize / 2);
     sprite.scale.set(20, 20, 1);
     scene.add(sprite);
   })();
@@ -1148,7 +1148,7 @@ function createMapBoundaries(mapSize = 100) {
   eastWall.receiveShadow = true;
   scene.add(eastWall);
 
-  // Add giant 'W' above eest wall
+  // Add giant 'E' above east wall
   (function() {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -1161,8 +1161,8 @@ function createMapBoundaries(mapSize = 100) {
     ctx.fillStyle = '#388E3C';
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 10;
-    ctx.strokeText('W', 128, 128);
-    ctx.fillText('W', 128, 128);
+    ctx.strokeText('E', 128, 128);
+    ctx.fillText('E', 128, 128);
     const texture = new THREE.CanvasTexture(canvas);
     const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
     const sprite = new THREE.Sprite(material);
@@ -1181,7 +1181,7 @@ function createMapBoundaries(mapSize = 100) {
   westWall.receiveShadow = true;
   scene.add(westWall);
 
-  // Add giant 'E' above east wall
+  // Add giant 'W' above west wall
   (function() {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -1194,8 +1194,8 @@ function createMapBoundaries(mapSize = 100) {
     ctx.fillStyle = '#FBC02D';
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 10;
-    ctx.strokeText('E', 128, 128);
-    ctx.fillText('E', 128, 128);
+    ctx.strokeText('W', 128, 128);
+    ctx.fillText('W', 128, 128);
     const texture = new THREE.CanvasTexture(canvas);
     const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
     const sprite = new THREE.Sprite(material);
@@ -1605,6 +1605,7 @@ function createTank(color = 0x4CAF50, name = '') {
   body.position.y = 0.8;
   body.castShadow = true;
   body.receiveShadow = true;
+  // body.rotation.y = Math.PI; // No rotation: face +Z at rad=0
   tankGroup.add(body);
   tankGroup.userData.body = body; // Store reference for hiding in first-person
 
@@ -1721,6 +1722,7 @@ function createTank(color = 0x4CAF50, name = '') {
   const turret = new THREE.Mesh(turretGeometry, turretMaterial);
   turret.position.y = 1.7;
   turret.castShadow = true;
+  // turret.rotation.y = Math.PI; // No rotation: face +Z at rad=0
   tankGroup.add(turret);
   tankGroup.userData.turret = turret; // Store reference for hiding in first-person
 
@@ -1729,8 +1731,9 @@ function createTank(color = 0x4CAF50, name = '') {
   const barrelMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
   const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
   barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 1.7, 1.5);
+  barrel.position.set(0, 1.7, -1.5); // Point barrel toward -Z
   barrel.castShadow = true;
+  // barrel.rotation.y = Math.PI; // No rotation: face +Z at rad=0
   tankGroup.add(barrel);
   tankGroup.userData.barrel = barrel; // Store reference
 
@@ -1807,7 +1810,7 @@ function connectToServer() {
 
   ws.onopen = () => {
     showMessage('Connected to server!');
-    showMessage('Collision is broken. I\'m working on it.');
+    showMessage('Updating coordinates, things are broken');
 
     // Only send join if there is a saved name that is not 'Player' or 'Player n'
     const savedName = localStorage.getItem('playerName');
@@ -3105,7 +3108,7 @@ function handleInput(deltaTime) {
     if (isMobile) {
       // Use virtual joystick input on mobile
       intendedForward = virtualInput.forward;
-      intendedRotation = -virtualInput.turn; // Invert so right/left match tank controls
+      intendedRotation = -virtualInput.turn;
       if (virtualInput.jump) {
         intendedY = 1;
         jumpTriggered = true;
@@ -3117,7 +3120,7 @@ function handleInput(deltaTime) {
       for (const code of wasdKeys) {
         if (keys[code]) {
           intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
-          intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
+          intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? -1 : (code === 'KeyD' || code === 'ArrowRight') ? 1 : 0;
           wasdPressed = true;
         }
       }
@@ -3132,7 +3135,7 @@ function handleInput(deltaTime) {
       // Mouse analog (if enabled)
       if (mouseControlEnabled) {
         if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
-        if (typeof mouseX !== 'undefined') intendedRotation += -mouseX;
+        if (typeof mouseX !== 'undefined') intendedRotation += mouseX;
       }
     }
   }
@@ -3147,7 +3150,7 @@ function handleInput(deltaTime) {
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED * deltaTime;
   let intendedDeltaX = Math.sin(playerRotation) * intendedForward * speed;
   let intendedDeltaY = 0;
-  let intendedDeltaZ = Math.cos(playerRotation) * intendedForward * speed;
+  let intendedDeltaZ = -Math.cos(playerRotation) * intendedForward * speed;
   let intendedDeltaRot = intendedRotation * rotSpeed;
   if (myTank.userData.verticalVelocity !== 0) {
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
@@ -3220,7 +3223,7 @@ function handleInput(deltaTime) {
   if (moved) {
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
-    myTank.rotation.y = playerRotation;
+    myTank.rotation.y = -playerRotation;
   }
 
   if (deltaTime > 0) {
@@ -3311,7 +3314,7 @@ function shoot() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   const dirX = Math.sin(playerRotation);
-  const dirZ = Math.cos(playerRotation);
+  const dirZ = -Math.cos(playerRotation);
 
   // Calculate shot origin at end of barrel (3 units forward from tank center)
   const barrelLength = 3.0;
@@ -3371,20 +3374,20 @@ function updateCamera() {
     }
 
     // First-person view - inside the tank turret
-    const fpOffset = new THREE.Vector3(
-      Math.sin(playerRotation) * 0.5,
-      2.2, // Eye level inside turret
-      Math.cos(playerRotation) * 0.5
-    );
-    camera.position.copy(myTank.position).add(fpOffset);
+      const fpOffset = new THREE.Vector3(
+        Math.sin(playerRotation) * 0.5,
+        2.2, // Eye level inside turret
+        -Math.cos(playerRotation) * 0.5
+      );
+      camera.position.copy(myTank.position).add(fpOffset);
 
-    // Look forward in the direction the tank is facing
-    const lookTarget = new THREE.Vector3(
-      myTank.position.x + Math.sin(playerRotation) * 10,
-      myTank.position.y + 2,
-      myTank.position.z + Math.cos(playerRotation) * 10
-    );
-    camera.lookAt(lookTarget);
+      // Look forward in the direction the tank is facing
+      const lookTarget = new THREE.Vector3(
+        myTank.position.x + Math.sin(playerRotation) * 10,
+        myTank.position.y + 2,
+        myTank.position.z - Math.cos(playerRotation) * 10
+      );
+      camera.lookAt(lookTarget);
   } else {
     // Show tank body and turret in third-person view
     if (myTank.userData.body) {
@@ -3398,7 +3401,7 @@ function updateCamera() {
     const cameraOffset = new THREE.Vector3(
       -Math.sin(playerRotation) * 12,
       4,
-      -Math.cos(playerRotation) * 12
+      Math.cos(playerRotation) * 12
     );
     camera.position.copy(myTank.position).add(cameraOffset);
     camera.lookAt(myTank.position);
@@ -3423,20 +3426,6 @@ function resizeRadar() {
   radarCanvas.style.height = size + 'px';
 }
 
-function updateCompass() {
-  if (!myTank) return;
-
-  const needle = document.querySelector('.compass-needle');
-  if (!needle) return;
-
-  // Convert tank rotation to degrees (Three.js uses radians, Y-axis rotation)
-  // Negate because Three.js Y rotation is counterclockwise when viewed from above
-  const degrees = -(myTank.rotation.y * 180 / Math.PI);
-
-  // Rotate the needle
-  needle.style.transform = `translate(-50%, -50%) rotate(${degrees}deg)`;
-}
-
 function updateRadar() {
   if (!radarCtx || !myTank || !gameConfig) return;
   // Declare radar variables only once
@@ -3458,7 +3447,6 @@ function updateRadar() {
     radarCtx.save();
     radarCtx.globalAlpha = 0.7;
     radarCtx.translate(center, center);
-    radarCtx.rotate(playerHeading + Math.PI);
     radarCtx.beginPath();
     // Calculate visible world border segment within SHOT_DISTANCE
     const border = mapSize / 2;
@@ -3467,28 +3455,20 @@ function updateRadar() {
     const top = Math.max(pz - SHOT_DISTANCE, -border);
     const bottom = Math.min(pz + SHOT_DISTANCE, border);
     // Draw each edge if visible in radar
-    const toRadar = (wx, wz) => [
-      ((wx - px) / SHOT_DISTANCE) * (radius - 16),
-      ((wz - pz) / SHOT_DISTANCE) * (radius - 16)
-    ];
-    // Top edge (North, Z = +border)
+    const toRadar = (wx, wz) => {
+      const dx = wx - px;
+      const dz = wz - pz;
+      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+      return [
+        (rotX / SHOT_DISTANCE) * (radius - 16),
+        (rotY / SHOT_DISTANCE) * (radius - 16)
+      ];
+    };
+    // Top edge (North, Z = -border)
     if (top === -border) {
       const [x1, y1] = toRadar(left, -border);
       const [x2, y2] = toRadar(right, -border);
-      radarCtx.save();
-      radarCtx.strokeStyle = '#1976D2'; // South - blue
-      radarCtx.lineWidth = 2.5;
-      radarCtx.setLineDash([6, 6]);
-      radarCtx.beginPath();
-      radarCtx.moveTo(x1, y1);
-      radarCtx.lineTo(x2, y2);
-      radarCtx.stroke();
-      radarCtx.restore();
-    }
-    // Bottom edge (South, Z = -border)
-    if (bottom === border) {
-      const [x1, y1] = toRadar(left, border);
-      const [x2, y2] = toRadar(right, border);
       radarCtx.save();
       radarCtx.strokeStyle = '#B20000'; // North - red
       radarCtx.lineWidth = 2.5;
@@ -3499,13 +3479,26 @@ function updateRadar() {
       radarCtx.stroke();
       radarCtx.restore();
     }
+    // Bottom edge (South, Z = +border)
+    if (bottom === border) {
+      const [x1, y1] = toRadar(left, border);
+      const [x2, y2] = toRadar(right, border);
+      radarCtx.save();
+      radarCtx.strokeStyle = '#1976D2'; // South - blue
+      radarCtx.lineWidth = 2.5;
+      radarCtx.setLineDash([6, 6]);
+      radarCtx.beginPath();
+      radarCtx.moveTo(x1, y1);
+      radarCtx.lineTo(x2, y2);
+      radarCtx.stroke();
+      radarCtx.restore();
+    }
     // Left edge (West, X = -border)
-
     if (left === -border) {
       const [x1, y1] = toRadar(-border, top);
       const [x2, y2] = toRadar(-border, bottom);
       radarCtx.save();
-      radarCtx.strokeStyle = '#FBC02D'; // East - yellow
+      radarCtx.strokeStyle = '#FBC02D'; // West - yellow
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.beginPath();
@@ -3519,7 +3512,7 @@ function updateRadar() {
       const [x1, y1] = toRadar(border, top);
       const [x2, y2] = toRadar(border, bottom);
       radarCtx.save();
-      radarCtx.strokeStyle = '#388E3C'; // West - green
+      radarCtx.strokeStyle = '#388E3C'; // East - green
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.beginPath();
@@ -3533,20 +3526,13 @@ function updateRadar() {
 
   // Draw projectiles (shots) within SHOT_DISTANCE, using same transform as map/obstacles
   if (typeof projectiles !== 'undefined' && projectiles.forEach) {
-    const theta = playerHeading;
-    radarCtx.save();
-    // Rotate the shot layer by 180 degrees around the radar center
-    radarCtx.translate(center, center);
-    radarCtx.rotate(Math.PI);
-    radarCtx.translate(-center, -center);
     projectiles.forEach((proj, id) => {
-
       const dx = proj.position.x - px;
       const dz = proj.position.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
       // Use same transform as map/obstacles
-      const rotX = dx * Math.cos(theta) - dz * Math.sin(theta);
-      const rotY = dx * Math.sin(theta) + dz * Math.cos(theta);
+      const rotX = dx * Math.cos(-playerHeading) + dz * Math.sin(-playerHeading);
+      const rotY = -dx * Math.sin(-playerHeading) + dz * Math.cos(-playerHeading);
       const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
       const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
       radarCtx.save();
@@ -3559,7 +3545,6 @@ function updateRadar() {
       radarCtx.fill();
       radarCtx.restore();
     });
-    radarCtx.restore();
   }
 
   // Draw radar background (keep as is)
@@ -3575,9 +3560,9 @@ function updateRadar() {
   const borderWidth = 3;
   const cardinalLabels = [
     { angle: Math.PI / 2, label: 'N', color: '#B20000' },
-    { angle: Math.PI, label: 'E', color: '#FBC02D' },
+    { angle: Math.PI, label: 'E', color: '#388E3C' },
     { angle: -Math.PI / 2, label: 'S', color: '#1976D2' },
-    { angle: 0, label: 'W', color: '#388E3C' },
+    { angle: 0, label: 'W', color: '#FBC02D' },
   ];
   cardinalLabels.forEach(dir => {
     radarCtx.save();
@@ -3608,17 +3593,17 @@ function updateRadar() {
       const dx = obs.x - px;
       const dz = obs.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      // Uninvert X axis for correct rotation direction
+      // Rotate obstacle positions to match tanks and shots
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      const x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
-      const y = center - (rotY / SHOT_DISTANCE) * (radius - 16);
+      const x = center + (-rotX / SHOT_DISTANCE) * (radius - 16);
+      const y = center + (-rotY / SHOT_DISTANCE) * (radius - 16);
       // Obstacle size scaling
       const scale = (radius - 16) / SHOT_DISTANCE;
       const w = (obs.w || 8) * scale;
       const d = (obs.d || 8) * scale;
       // Adjust rotation so that non-square buildings align with world axes
-      const rot = (obs.rotation || 0) + playerHeading - Math.PI / 2;
+      const rot = (obs.rotation || 0) - playerHeading;
       radarCtx.save();
       radarCtx.translate(x, y);
       radarCtx.rotate(rot);
@@ -3632,24 +3617,18 @@ function updateRadar() {
   // Draw tanks within SHOT_DISTANCE, using same transform as map/obstacles/shots
   tanks.forEach((tank, playerId) => {
     if (!tank.position) return;
+    // Only show on radar if alive and visible
+    const state = tank.userData && tank.userData.playerState;
+    if ((state && state.health <= 0) || tank.visible === false) return;
     const dx = tank.position.x - px;
     const dz = tank.position.z - pz;
     if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
     // Use radarRotation for all world-to-radar transforms
-    let rotX, rotY, x, y;
-    if (playerId === myPlayerId) {
-      rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-      rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
-      y = center - (rotY / SHOT_DISTANCE) * (radius - 16);
-    } else {
-      // Invert both axes to match radar orientation (so N/S/E/W render correctly)
-      const theta = playerHeading;
-      rotX = dx * Math.cos(theta) - dz * Math.sin(theta);
-      rotY = dx * Math.sin(theta) + dz * Math.cos(theta);
-      x = center - (rotX / SHOT_DISTANCE) * (radius - 16);
-      y = center - (rotY / SHOT_DISTANCE) * (radius - 16);
-    }
+    const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+    const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+    const x = center + (-rotX / SHOT_DISTANCE) * (radius - 16);
+    const y = center + (-rotY / SHOT_DISTANCE) * (radius - 16);
+
     radarCtx.save();
     radarCtx.translate(x, y);
     if (playerId === myPlayerId) {
@@ -3664,7 +3643,7 @@ function updateRadar() {
       radarCtx.fill();
     } else {
       // Other tanks: mirror rotation so heading 0 (north) points up, π/2 (west) points left
-      radarCtx.rotate(-((tank.rotation ? tank.rotation.y : 0) - playerHeading));
+      radarCtx.rotate((tank.rotation ? tank.rotation.y : 0) - playerHeading);
       radarCtx.beginPath();
       radarCtx.moveTo(0, -10);
       radarCtx.lineTo(-6, 8);
@@ -3787,7 +3766,6 @@ function animate() {
   updateTreads(deltaTime);
   updateClouds(deltaTime);
   updateCamera();
-  updateCompass();
   updateRadar();
 
   renderer.render(scene, camera);

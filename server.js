@@ -361,6 +361,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
 }
 
 function findValidSpawnPosition(tankRadius = 2) {
+  return { x: 0, y: 0, z: 0, rotation: 0 };
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
   const maxAttempts = 100;
   const y = 0;
