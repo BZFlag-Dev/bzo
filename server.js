@@ -198,15 +198,14 @@ function getCelestialPositions() {
 const players = new Map();
 const projectiles = new Map();
 let projectileIdCounter = 0;
-const usedPlayerNumbers = new Set(); // Track which player numbers are in use
 
 // Get next available player number
 function getNextPlayerNumber() {
   let num = 1;
-  while (usedPlayerNumbers.has(num)) {
+  const takenNumbers = new Set(Array.from(players.values()).map(p => p.playerNumber));
+  while (takenNumbers.has(num)) {
     num++;
   }
-  usedPlayerNumbers.add(num);
   return num;
 }
 
@@ -976,9 +975,10 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     const playerName = player.name;
     const playerNum = player.playerNumber;
+    const playerKills = player.kills
+    const playerDeaths = player.deaths;
     players.delete(player.id);
-    usedPlayerNumbers.delete(playerNum); // Free up the player number for reuse
-    log(`Player "${playerName}" (#${playerNum}) disconnected. Total players: ${players.size}`);
+    log(`Player "${playerName}" (#${playerNum}) disconnected. ${playerKills} kills, ${playerDeaths} deaths. Players: ${players.size}`);
 
     broadcast({
       type: 'playerLeft',
