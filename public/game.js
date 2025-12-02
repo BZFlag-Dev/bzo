@@ -2045,7 +2045,7 @@ function handleServerMessage(message) {
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
 
         tank.position.set(message.x, message.y, message.z);
-        tank.rotation.y = message.rotation;
+        tank.rotation.y = -message.rotation;
         // Store velocity for tread animation
         tank.userData.forwardSpeed = message.forwardSpeed;
         tank.userData.rotationSpeed = message.rotationSpeed;
@@ -3643,7 +3643,7 @@ function updateRadar() {
       radarCtx.fill();
     } else {
       // Other tanks: mirror rotation so heading 0 (north) points up, π/2 (west) points left
-      radarCtx.rotate((tank.rotation ? tank.rotation.y : 0) - playerHeading);
+      radarCtx.rotate(-(tank.rotation ? tank.rotation.y : 0) + playerHeading);
       radarCtx.beginPath();
       radarCtx.moveTo(0, -10);
       radarCtx.lineTo(-6, 8);
