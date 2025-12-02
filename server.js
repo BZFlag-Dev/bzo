@@ -1,3 +1,8 @@
+/*
+ * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
 const express = require('express');
 const logPath = require('path').join(__dirname, 'server.log');
 // Clear server.log on restart

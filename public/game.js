@@ -1,3 +1,8 @@
+/*
+ * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
 // Detect mobile browser
 function isMobileBrowser() {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -1802,7 +1807,7 @@ function connectToServer() {
 
   ws.onopen = () => {
     showMessage('Connected to server!');
-    showMessage('Input is broken, come back later!', 'death');
+    showMessage('Collision is broken. I\'m working on it.');
 
     // Only send join if there is a saved name that is not 'Player' or 'Player n'
     const savedName = localStorage.getItem('playerName');
