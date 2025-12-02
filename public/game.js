@@ -1846,16 +1846,20 @@ function connectToServer() {
   };
 
   ws.onclose = (event) => {
-    console.log('Disconnected from server', event.code, event.reason);
-
+    let kills = 0;
+    let deaths = 0;
+    if (myTank && myTank.userData && myTank.userData.playerState) {
+      kills = myTank.userData.playerState.kills || 0;
+      deaths = myTank.userData.playerState.deaths || 0;
+    }
+    console.log(`Disconnected from server (code: ${event.code}, reason: ${event.reason}) | Kills: ${kills} | Deaths: ${deaths}`);
     // Ignore 503 (Service Unavailable) and silently retry
     if (event.code === 1008 || event.reason === '503') {
       console.log('Server temporarily unavailable (503), retrying...');
       setTimeout(connectToServer, 2000);
       return;
     }
-
-    showMessage('Disconnected from server', 'death');
+    showMessage(`Disconnected from server | Kills: ${kills} | Deaths: ${deaths}`, 'death');
     setTimeout(connectToServer, 3000);
   };
 
