@@ -3530,9 +3530,9 @@ function updateRadar() {
       const dx = proj.position.x - px;
       const dz = proj.position.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      // Use same transform as map/obstacles
-      const rotX = dx * Math.cos(-playerHeading) + dz * Math.sin(-playerHeading);
-      const rotY = -dx * Math.sin(-playerHeading) + dz * Math.cos(-playerHeading);
+      // Use same transform as tanks/obstacles
+      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
       const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
       radarCtx.save();
@@ -3596,8 +3596,8 @@ function updateRadar() {
       // Rotate obstacle positions to match tanks and shots
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      const x = center + (-rotX / SHOT_DISTANCE) * (radius - 16);
-      const y = center + (-rotY / SHOT_DISTANCE) * (radius - 16);
+      const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
+      const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
       // Obstacle size scaling
       const scale = (radius - 16) / SHOT_DISTANCE;
       const w = (obs.w || 8) * scale;
@@ -3626,8 +3626,8 @@ function updateRadar() {
     // Use radarRotation for all world-to-radar transforms
     const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
     const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-    const x = center + (-rotX / SHOT_DISTANCE) * (radius - 16);
-    const y = center + (-rotY / SHOT_DISTANCE) * (radius - 16);
+    const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
+    const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
 
     radarCtx.save();
     radarCtx.translate(x, y);
