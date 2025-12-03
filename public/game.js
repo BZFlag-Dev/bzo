@@ -5,7 +5,16 @@
 
 // Detect mobile browser
 function isMobileBrowser() {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const ua = navigator.userAgent || navigator.vendor || window.opera;
+  // Standard mobile detection
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return true;
+  // iPadOS 13+ sends Mac OS user agent, but has touch support and screen size like iPad
+  const isIpad = (
+    (navigator.platform === 'MacIntel' && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1) ||
+    // Some browsers use iPad in user agent but not in platform
+    (/iPad/.test(ua))
+  );
+  return isIpad;
 }
 const isMobile = isMobileBrowser();
 
@@ -796,6 +805,14 @@ function init() {
     const nameDialog = document.getElementById('nameDialog');
     const isNameDialogOpen = nameDialog && nameDialog.style.display === 'block';
 
+    // Allow pause/unpause with P key even when paused
+    if (e.code === 'KeyP') {
+      sendToServer({ type: 'pause' });
+      // Don't block other UI, but don't process further game input
+      e.preventDefault();
+      return;
+    }
+
     // Activate chat with / or t, but NOT if name dialog is open
     if (!chatActive && !isNameDialogOpen && (e.key === '/' || e.key === 't' || e.key === 'T')) {
       chatInput.value = '';
@@ -833,11 +850,6 @@ function init() {
     if (e.key === 'Tab') {
       e.preventDefault();
       return;
-    }
-
-    // Pause with P key
-    if (e.code === 'KeyP') {
-      sendToServer({ type: 'pause' });
     }
 
     // Switch to keyboard controls with Escape key (also closes dialogs)
@@ -2175,15 +2187,17 @@ function handleServerMessage(message) {
       break;
 
     case 'playerPaused':
+      console.log('Player paused:', message.playerId, message.x, message.y, message.z);
       if (message.playerId === myPlayerId) {
         isPaused = true;
         pauseCountdownStart = 0;
         showMessage('PAUSED - Press P to unpause', 'death');
       }
-      createShield(message.playerId, message.x, message.z);
+      createShield(message.playerId, message.x, message.y, message.z);
       break;
 
     case 'playerUnpaused':
+      console.log('Player unpaused:', message.playerId);
       if (message.playerId === myPlayerId) {
         isPaused = false;
         pauseCountdownStart = 0;
@@ -2255,7 +2269,7 @@ function removePlayer(playerId) {
   removeShield(playerId);
 }
 
-function createShield(playerId, x, z) {
+function createShield(playerId, x, y, z) {
   // Remove existing shield if any
   removeShield(playerId);
 
@@ -2267,7 +2281,7 @@ function createShield(playerId, x, z) {
     wireframe: true,
   });
   const shield = new THREE.Mesh(shieldGeometry, shieldMaterial);
-  shield.position.set(x, 2, z);
+  shield.position.set(x, y + 2, z);
   scene.add(shield);
   playerShields.set(playerId, shield);
 
@@ -3414,7 +3428,7 @@ function updateShields() {
     const tank = tanks.get(playerId);
     if (tank) {
       shield.position.copy(tank.position);
-      shield.position.y = 2;
+      shield.position.y = tank.position.y + 2;
     }
   });
 }
@@ -3671,7 +3685,7 @@ function updateRadar() {
       const w = (obs.w || 8) * scale;
       const d = (obs.d || 8) * scale;
       // Adjust rotation so that non-square buildings align with world axes
-      const rot = (obs.rotation || 0) - playerHeading;
+      const rot = (obs.rotation || 0) + playerHeading;
       radarCtx.save();
       radarCtx.translate(x, y);
       radarCtx.rotate(rot);

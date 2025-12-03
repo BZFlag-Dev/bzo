@@ -403,7 +403,7 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
 }
 
 function findValidSpawnPosition(tankRadius = 2) {
-  return { x: 0, y: 0, z: 0, rotation: 0 };
+  //return { x: 0, y: 0, z: 0, rotation: 0 };
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
   const maxAttempts = 100;
   const y = 0;
@@ -746,6 +746,7 @@ wss.on('connection', (ws, req) => {
   const clientIP = forwardedFor ? forwardedFor.split(',')[0].trim() : req.socket.remoteAddress;
   const clientPort = forwardedPort ? forwardedPort : req.socket.remotePort;
   const ipDisplay = forwardedFor ? `${clientIP} (via ${req.socket.remoteAddress})` : clientIP;
+  const userAgent = req.headers['user-agent'] || 'unknown';
   if (forwardedFor && forwardedPort) {
     log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for + x-forwarded-port)`);
   } else if (forwardedFor) {
@@ -753,6 +754,7 @@ wss.on('connection', (ws, req) => {
   } else {
     log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort}`);
   }
+  log(`Player ${player.playerNumber} user agent: ${userAgent}`);
 
   // Send initial server state in init message
   // Send initial state to new player (do not add to players map or broadcast yet)
@@ -952,6 +954,7 @@ wss.on('connection', (ws, req) => {
                   type: 'playerPaused',
                   playerId: player.id,
                   x: player.x,
+                  y: player.y,
                   z: player.z,
                 });
               }
@@ -963,7 +966,7 @@ wss.on('connection', (ws, req) => {
 
             broadcastAll({
               type: 'playerUnpaused',
-              playerId: player.idp,
+              playerId: player.id,
             });
           }
           break;
