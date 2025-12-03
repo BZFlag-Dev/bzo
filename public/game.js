@@ -3082,13 +3082,14 @@ function handleInput(deltaTime) {
         if (Math.abs(localX) <= obs.w / 2 + margin && Math.abs(localZ) <= obs.d / 2 + margin) {
           onObstacle = true;
           myTank.userData.verticalVelocity = 0;
+          playerY = obstacleTop;
           break;
         }
       }
     }
   }
   // Tank is in air if not on ground AND not on obstacle (velocity doesn't matter)
-  const isInAir = myTank && !onGround && !onObstacle;
+  const isInAir = !onGround && !onObstacle;
 
   // --- Step 1: Gather intended speed, angular, and vertical motion from all sources ---
   let intendedForward = 0; // -1..1
@@ -3116,7 +3117,7 @@ function handleInput(deltaTime) {
       for (const code of wasdKeys) {
         if (keys[code]) {
           intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
-          intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? -1 : (code === 'KeyD' || code === 'ArrowRight') ? 1 : 0;
+          intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
           wasdPressed = true;
         }
       }
@@ -3130,8 +3131,8 @@ function handleInput(deltaTime) {
       }
       // Mouse analog (if enabled)
       if (mouseControlEnabled) {
-        if (typeof mouseY !== 'undefined') intendedForward += -mouseY;
-        if (typeof mouseX !== 'undefined') intendedRotation += mouseX;
+        if (typeof mouseY !== 'undefined') intendedForward = -mouseY;
+        if (typeof mouseX !== 'undefined') intendedRotation = -dmouseX;
       }
     }
   }
@@ -3144,7 +3145,7 @@ function handleInput(deltaTime) {
   // --- Step 3: Convert intended speed/rotation to deltas ---
   const speed = gameConfig.TANK_SPEED * deltaTime;
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED * deltaTime;
-  let intendedDeltaX = Math.sin(playerRotation) * intendedForward * speed;
+  let intendedDeltaX = -Math.sin(playerRotation) * intendedForward * speed;
   let intendedDeltaY = 0;
   let intendedDeltaZ = -Math.cos(playerRotation) * intendedForward * speed;
   let intendedDeltaRot = intendedRotation * rotSpeed;
@@ -3219,7 +3220,7 @@ function handleInput(deltaTime) {
   if (moved) {
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
-    myTank.rotation.y = -playerRotation;
+    myTank.rotation.y = playerRotation;
   }
 
   if (deltaTime > 0) {
@@ -3309,7 +3310,7 @@ function handleInput(deltaTime) {
 function shoot() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-  const dirX = Math.sin(playerRotation);
+  const dirX = -Math.sin(playerRotation);
   const dirZ = -Math.cos(playerRotation);
 
   // Calculate shot origin at end of barrel (3 units forward from tank center)
@@ -3371,7 +3372,7 @@ function updateCamera() {
 
     // First-person view - inside the tank turret
       const fpOffset = new THREE.Vector3(
-        Math.sin(playerRotation) * 0.5,
+        -Math.sin(playerRotation) * 0.5,
         2.2, // Eye level inside turret
         -Math.cos(playerRotation) * 0.5
       );
@@ -3379,7 +3380,7 @@ function updateCamera() {
 
       // Look forward in the direction the tank is facing
       const lookTarget = new THREE.Vector3(
-        myTank.position.x + Math.sin(playerRotation) * 10,
+        myTank.position.x - Math.sin(playerRotation) * 10,
         myTank.position.y + 2,
         myTank.position.z - Math.cos(playerRotation) * 10
       );
@@ -3395,12 +3396,16 @@ function updateCamera() {
 
     // Third-person view - lower and flatter for better forward visibility
     const cameraOffset = new THREE.Vector3(
-      -Math.sin(playerRotation) * 12,
+      Math.sin(playerRotation) * 12,
       4,
       Math.cos(playerRotation) * 12
     );
     camera.position.copy(myTank.position).add(cameraOffset);
-    camera.lookAt(myTank.position);
+    camera.lookAt(new THREE.Vector3(
+      myTank.position.x - Math.sin(playerRotation) * 10,
+      myTank.position.y + 3,
+      myTank.position.z - Math.cos(playerRotation) * 10
+    ));
   }
 }
 
@@ -3639,7 +3644,7 @@ function updateRadar() {
       radarCtx.fill();
     } else {
       // Other tanks: mirror rotation so heading 0 (north) points up, π/2 (west) points left
-      radarCtx.rotate((tank.rotation ? tank.rotation.y : 0) - playerHeading);
+      radarCtx.rotate(-(tank.rotation ? tank.rotation.y : 0) + playerHeading);
       radarCtx.beginPath();
       radarCtx.moveTo(0, -10);
       radarCtx.lineTo(-6, 8);
