@@ -365,11 +365,9 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     const distSquared = distX * distX + distZ * distZ;
 
     if (distSquared < tankRadius * tankRadius) {
-      // Tank is horizontally colliding with this obstacle
       const obstacleBase = obs.baseY || 0;
       const obstacleTop = obstacleBase + obstacleHeight;
       const tankHeight = 2;
-
       if (y !== null) {
         // Allow passing under if tank top is below obstacle base
         if (y + tankHeight <= obstacleBase) {
@@ -377,15 +375,25 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
         }
         // Block jumping up into obstacle: if tank bottom is below base and top is above base
         if (y < obstacleBase && y + tankHeight > obstacleBase) {
+          log(`[SERVER COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(5) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${y !== null ? (y-obstacleTop).toFixed(5) : 'null'}`);
           return obs;
         }
         // Allow passing over if above 75% of top
         if (y >= obstacleTop * 0.75) {
           continue;
         }
-        // Block if inside the vertical range
-        if (y >= obstacleBase && y < obstacleTop * 0.75) return obs;
+        // Allow being on or just below the obstacle top (within epsilon)
+        const epsilon = 0.15;
+        if (y >= obstacleTop - epsilon && y <= obstacleTop + epsilon) {
+          continue;
+        }
+        // Block if inside the vertical range (strictly below top - epsilon)
+        if (y >= obstacleBase && y < obstacleTop - epsilon) {
+          log(`[SERVER COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(5) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${y !== null ? (y-obstacleTop).toFixed(5) : 'null'}`);
+          return obs;
+        }
       } else {
+        log(`[SERVER COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(5) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${y !== null ? (y-obstacleTop).toFixed(5) : 'null'}`);
         return obs;
       }
     }

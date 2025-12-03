@@ -2805,22 +2805,37 @@ function checkCollision(x, y, z, tankRadius = 2) {
     if (distSquared < tankRadius * tankRadius) {
       if (y !== null) {
         const tankHeight = 2; // Default tank height
-        const margin = 0.1;
+        const epsilon = 0.15; // Allow small tolerance for being on top
         // Allow passing under if tank top is below obstacle base
-        if (y + tankHeight <= obstacleBase + margin) {
+        if (y + tankHeight <= obstacleBase) {
           continue;
         }
-        // Allow passing over if tank bottom is at or above obstacle top (with margin)
-        if (y >= obstacleTop - margin) {
+        // Block jumping up into obstacle: if tank bottom is below base and top is above base
+        if (y < obstacleBase && y + tankHeight > obstacleBase) {
+          if (typeof sendToServer === 'function') {
+            sendToServer({ type: 'chat', text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          }
+          return true;
+        }
+        // Allow passing over if above 75% of top
+        if (y >= obstacleTop * 0.75) {
           continue;
         }
-        // Block if any part of tank is inside the vertical range of the obstacle
-        if (y > 0 && y < obstacleTop - margin && y + tankHeight > obstacleBase + margin) {
-          //const msg = `[COLLISION] Tank at (${x.toFixed(2)}, ${z.toFixed(2)}, y=${y !== null ? y.toFixed(2) : 'null'}) collided with obstacle at (${obs.x}, ${obs.z}), obstacleTop=${obstacleTop}, obstacleBase=${obstacleBase}`;
-          //    sendToServer({ type: 'chat', text: msg });
+        // Allow being on or just below the obstacle top (within epsilon)
+        if (y >= obstacleTop - epsilon && y <= obstacleTop + epsilon) {
+          continue;
+        }
+        // Block if inside the vertical range (strictly below top - epsilon)
+        if (y >= obstacleBase && y < obstacleTop - epsilon) {
+          if (typeof sendToServer === 'function') {
+            sendToServer({ type: 'chat', text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          }
           return true;
         }
       } else {
+        if (typeof sendToServer === 'function') {
+          sendToServer({ type: 'chat', text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+        }
         return true;
       }
     }
@@ -3250,6 +3265,7 @@ function handleInput(deltaTime) {
       const obstacleHeight = moveResult.landedOn.h || 4;
       const obstacleTop = obstacleBase + obstacleHeight;
       myTank.position.y = obstacleTop;
+      playerY = obstacleTop;
       currentlyOnObstacle = true;
     } else if (moveResult.startedFalling) {
       // Not on obstacle or ground and elevated - start falling (drove off edge)
@@ -3259,6 +3275,7 @@ function handleInput(deltaTime) {
     } else {
       // On ground
       myTank.position.y = 0;
+      playerY = 0;
     }
   }
 
