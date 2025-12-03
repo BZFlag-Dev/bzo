@@ -620,6 +620,34 @@ function init() {
   // Chat UI
   const chatWindow = document.getElementById('chatWindow');
   chatInput = document.getElementById('chatInput');
+  const chatTarget = document.getElementById('chatTarget');
+
+  // Helper to update chatTarget dropdown with player names
+  function updateChatTargetOptions() {
+    if (!chatTarget) return;
+    // Save current selection
+    const prevValue = chatTarget.value;
+    // Remove all except ALL and SERVER
+    for (let i = chatTarget.options.length - 1; i >= 0; i--) {
+      if (chatTarget.options[i].value !== '0' && chatTarget.options[i].value !== '-1') {
+        chatTarget.remove(i);
+      }
+    }
+    // Add each player by name
+    tanks.forEach((tank, id) => {
+      if (id === myPlayerId) return; // Don't add self
+      const name = tank.userData && tank.userData.playerState && tank.userData.playerState.name ? tank.userData.playerState.name : `Player ${id}`;
+      let opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = name;
+      chatTarget.appendChild(opt);
+    });
+    // Restore previous selection if possible
+    chatTarget.value = prevValue;
+  }
+
+  // Update dropdown whenever tanks change
+  setInterval(updateChatTargetOptions, 1000);
 
   chatInput.addEventListener('keydown', (e) => {
     // Prevent all game events while typing
@@ -627,7 +655,8 @@ function init() {
     if (e.key === 'Enter') {
       const text = chatInput.value.trim();
       if (text.length > 0) {
-        sendToServer({ type: 'chat', text });
+        const to = parseInt(chatTarget.value, 10);
+        sendToServer({ type: 'chat', to, text });
         chatInput.value = '';
       }
       chatInput.blur();
@@ -1934,8 +1963,17 @@ function connectToServer() {
 
 function handleServerMessage(message) {
   if (message.type === 'chat') {
-    // Format: { type: 'chat', from, text, id }
-    let prefix = message.from ? `<${message.from}> ` : '';
+     // Format: { type: 'chat', from, to, text, id }
+     // Lookup names for from/to
+    function getPlayerName(id) {
+      if (id === 0) return 'ALL';
+      if (id === -1) return 'SERVER';
+      const tank = tanks.get(id);
+      return tank && tank.userData && tank.userData.playerState && tank.userData.playerState.name ? tank.userData.playerState.name : `Player ${id}`;
+    }
+    const fromName = getPlayerName(message.from);
+    const toName = getPlayerName(message.to);
+    let prefix = `${fromName} -> ${toName} `;
     chatMessages.push(prefix + message.text);
     if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
     updateChatWindow();
@@ -2827,7 +2865,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
         // Block jumping up into obstacle: if tank bottom is below base and top is above base
         if (y < obstacleBase && y + tankHeight > obstacleBase) {
           if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+            sendToServer({ type: 'chat', to: -1, text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
           }
           return true;
         }
@@ -2842,13 +2880,13 @@ function checkCollision(x, y, z, tankRadius = 2) {
         // Block if inside the vertical range (strictly below top - epsilon)
         if (y >= obstacleBase && y < obstacleTop - epsilon) {
           if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+            sendToServer({ type: 'chat', to: -1,text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
           }
           return true;
         }
       } else {
         if (typeof sendToServer === 'function') {
-          sendToServer({ type: 'chat', text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          sendToServer({ type: 'chat', to: -1, text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
         }
         return true;
       }

@@ -779,18 +779,49 @@ wss.on('connection', (ws, req) => {
       switch (message.type) {
 
         case 'chat': {
-          // Broadcast chat message to all players
-          if (typeof message.text === 'string' && message.text.trim().length > 0) {
-            const chatMsg = {
-              type: 'chat',
-              from: player.name || `Player ${player.playerNumber}`,
-              text: message.text.trim(),
-              id: player.id
-            };
-            // Log chat message to server console
-            log(`[CHAT] ${chatMsg.from}: ${chatMsg.text}`);
-            broadcastAll(chatMsg);
+          // Ensure 'to' field exists
+          const targetId = typeof message.to === 'number' ? message.to : 0;
+          const fromId = player.id;
+          const fromName = player.name;
+          function getPlayerName(id) {
+            if (id === 0) return 'ALL';
+            if (id === -1) return 'SERVER';
+            return players.has(id) ? players.get(id).name : `Player ${id}`;
           }
+          const toName = getPlayerName(targetId);
+          // Log locally only if to == -1
+          if (targetId === -1) {
+            log(`[CHAT] ${fromName}->${toName}: ${message.text}`);
+            break;
+          }
+          // Broadcast to all if to == 0
+          if (targetId === 0) {
+            log(`[CHAT] ${fromName}->ALL: ${message.text}`);
+            broadcastAll({
+              type: 'chat',
+              from: fromId,
+              to: 0,
+              text: message.text.trim(),
+              id: fromId
+            });
+            break;
+          }
+          // Send to specific player if id exists
+          if (targetId > 0 && players.has(targetId)) {
+            log(`[CHAT] ${fromName}->${toName}: ${message.text}`);
+            const targetPlayer = players.get(targetId);
+            if (targetPlayer && targetPlayer.ws && targetPlayer.ws.readyState === 1) {
+              targetPlayer.ws.send(JSON.stringify({
+                type: 'chat',
+                from: fromId,
+                to: targetId,
+                text: message.text.trim(),
+                id: fromId
+              }));
+            }
+            break;
+          }
+          // If targetId is invalid, ignore
           break;
         }
         case 'move':
