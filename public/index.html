@@ -31,7 +31,14 @@
   </div>
 
   <div id="chatWindow">
-    <input id="chatInput" type="text" />
+    <div id="chatMessages"></div>
+    <div class="chat-input-row">
+      <select id="chatTarget">
+        <option value="0">ALL</option>
+        <option value="-1">SERVER</option>
+      </select>
+      <input id="chatInput" type="text" />
+    </div>
   </div>
 
   <div id="debugHud" style="display: none;">

@@ -3849,26 +3849,16 @@ function updateClouds(deltaTime) {
 let lastTime = performance.now();
 
 function updateChatWindow() {
-  const chatWindow = document.getElementById('chatWindow');
-  if (!chatWindow) return;
-  // Only update the message area, not the input
-  const chatInput = document.getElementById('chatInput');
-  // Remove all children except the input
-  while (chatWindow.firstChild) {
-    if (chatWindow.firstChild !== chatInput) {
-      chatWindow.removeChild(chatWindow.firstChild);
-    } else {
-      break;
-    }
-  }
-  let shown = 0;
-  // Add messages above the input
+  const chatMessagesDiv = document.getElementById('chatMessages');
+  if (!chatMessagesDiv) return;
+  // Remove all previous messages
+  chatMessagesDiv.innerHTML = '';
+  // Add messages
   for (let i = Math.max(0, chatMessages.length - CHAT_MAX_MESSAGES); i < chatMessages.length; i++) {
     const msg = chatMessages[i];
     const div = document.createElement('div');
     div.textContent = msg;
-    chatWindow.insertBefore(div, chatInput);
-    shown++;
+    chatMessagesDiv.appendChild(div);
   }
 }
 
