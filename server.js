@@ -282,6 +282,40 @@ class Projectile {
 }
 
 // Helper functions
+// Returns a unique player name. If the given name is empty or taken, returns 'Player n' with the lowest available n.
+function nameCheck(requestedName, excludeId = null) {
+  let name = requestedName && requestedName.trim() ? requestedName.trim() : '';
+  // Get the player number for excludeId
+  let playerNumber = null;
+  if (excludeId) {
+    const playerObj = Array.from(players.values()).find(p => p.id === excludeId);
+    if (playerObj) playerNumber = playerObj.playerNumber;
+  }
+  // If name is empty, assign 'Player n' for their own player number
+  if (name.length === 0) {
+    if (playerNumber !== null) {
+      return `Player ${playerNumber}`;
+    }
+  }
+  // Prevent picking a 'Player n' name unless n matches their player number
+  const playerNameMatch = name.match(/^Player\s*(\d+)$/i);
+  if (playerNameMatch) {
+    const n = parseInt(playerNameMatch[1], 10);
+    if (playerNumber === null || n !== playerNumber) {
+      // Not allowed to pick a Player n name unless n matches their player number
+      return `Player ${playerNumber !== null ? playerNumber : 1}`;
+    }
+  }
+  // Check if name is already taken
+  const nameTaken = Array.from(players.values()).some(p => p.id !== excludeId && p.name && p.name.toLowerCase() === name.toLowerCase());
+  if (nameTaken) {
+    // Assign 'Player n' for their own player number
+    if (playerNumber !== null) {
+      return `Player ${playerNumber}`;
+    }
+  }
+  return name;
+}
 function distance(x1, z1, x2, z2) {
   return Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
 }
@@ -849,11 +883,7 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'joinGame':
-          let joinName = '';
-          if (message.name && message.name.trim().length > 0 && message.name.length <= 20)
-            joinName = message.name.trim();
-          else
-            joinName = `Player ${player.playerNumber}`; // Default name based on player number
+          let joinName = nameCheck(message.name, player.id);
           player.name = joinName;
           player.health = 100;
           // spawn at valid position
@@ -881,53 +911,16 @@ wss.on('connection', (ws, req) => {
           break;
 
         case 'changeName':
-          let newName = '';
-
-          if (message.name && message.name.trim().length > 0 && message.name.length <= 20) {
-            newName = message.name.trim();
-          }
-
-          // Empty name means assign lowest available Player N
-          if (newName.length === 0) {
-            let num = 1;
-            let foundAvailable = false;
-            while (!foundAvailable) {
-              const testName = `Player ${num}`;
-              const nameTaken = Array.from(players.values()).some(p =>
-                p.id !== player.id && p.name && p.name.toLowerCase() === testName.toLowerCase()
-              );
-              if (!nameTaken) {
-                newName = testName;
-                foundAvailable = true;
-              } else {
-                num++;
-              }
-            }
-          }
-
-          if (newName) {
-            // Check if name is already taken by another player
-            const nameTaken = Array.from(players.values()).some(p =>
-              p.id !== player.id && p.name && p.name.toLowerCase() === newName.toLowerCase()
-            );
-
-            if (nameTaken) {
-              log(`Player "${player.name}" tried to change to "${newName}" (already taken)`);
-              // Send error back to client
-              ws.send(JSON.stringify({
-                type: 'nameError',
-                message: 'Name already taken',
-              }));
-            } else {
-              const oldName = player.name;
-              player.name = newName;
-              log(`Player name changed: "${oldName}" -> "${newName}"`);
-              broadcastAll({
-                type: 'nameChanged',
-                playerId: player.id,
-                name: player.name,
-              });
-            }
+          let newName = nameCheck(message.name, player.id);
+          if (newName !== player.name) {
+            const oldName = player.name;
+            player.name = newName;
+            log(`Player name changed: "${oldName}" -> "${newName}"`);
+            broadcastAll({
+              type: 'nameChanged',
+              playerId: player.id,
+              name: player.name,
+            });
           }
           break;
 
