@@ -351,8 +351,8 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     const dz = z - obs.z;
 
     // Rotate point to align with obstacle's axes
-    const cos = Math.cos(-rotation);
-    const sin = Math.sin(-rotation);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
 

@@ -23,28 +23,61 @@ if (isMobile) {
     const fireBtn = document.getElementById('fireBtn');
     const jumpBtn = document.getElementById('jumpBtn');
     let joystickActive = false;
+    let joystickTouchId = null;
     let joystickCenter = { x: 0, y: 0 };
     function setJoystick(x, y) {
       // Clamp to circle
       const mag = Math.sqrt(x * x + y * y);
       if (mag > 1) { x /= mag; y /= mag; }
       virtualInput.forward = -y; // Up is forward
-      virtualInput.turn = x;
+      virtualInput.turn = -x;
       if (knob) knob.style.transform = `translate(${x * 35}px, ${y * 35}px)`;
     }
     function handleJoystickStart(e) {
-      joystickActive = true;
-      const rect = joystick.getBoundingClientRect();
-      joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      handleJoystickMove(e);
-      e.preventDefault();
+      // Only start joystick if touch is within joystick element
+      if (e.touches && e.touches.length > 0) {
+        // Find the touch that started within the joystick
+        for (let i = 0; i < e.touches.length; i++) {
+          const touch = e.touches[i];
+          const rect = joystick.getBoundingClientRect();
+          if (
+            touch.clientX >= rect.left && touch.clientX <= rect.right &&
+            touch.clientY >= rect.top && touch.clientY <= rect.bottom
+          ) {
+            joystickActive = true;
+            joystickTouchId = touch.identifier;
+            joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            handleJoystickMove(e);
+            e.preventDefault();
+            break;
+          }
+        }
+      } else {
+        // Mouse event
+        joystickActive = true;
+        joystickTouchId = null;
+        const rect = joystick.getBoundingClientRect();
+        joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        handleJoystickMove(e);
+        e.preventDefault();
+      }
     }
     function handleJoystickMove(e) {
       if (!joystickActive) return;
       let clientX, clientY;
       if (e.touches && e.touches.length > 0) {
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
+        // Find the touch matching joystickTouchId
+        let found = false;
+        for (let i = 0; i < e.touches.length; i++) {
+          const touch = e.touches[i];
+          if (touch.identifier === joystickTouchId) {
+            clientX = touch.clientX;
+            clientY = touch.clientY;
+            found = true;
+            break;
+          }
+        }
+        if (!found) return;
       } else {
         clientX = e.clientX;
         clientY = e.clientY;
@@ -55,9 +88,25 @@ if (isMobile) {
       e.preventDefault();
     }
     function handleJoystickEnd(e) {
-      joystickActive = false;
-      setJoystick(0, 0);
-      e.preventDefault();
+      if (e.changedTouches && e.changedTouches.length > 0) {
+        // Only end joystick if the touch ending matches joystickTouchId
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const touch = e.changedTouches[i];
+          if (touch.identifier === joystickTouchId) {
+            joystickActive = false;
+            joystickTouchId = null;
+            setJoystick(0, 0);
+            e.preventDefault();
+            break;
+          }
+        }
+      } else {
+        // Mouse event
+        joystickActive = false;
+        joystickTouchId = null;
+        setJoystick(0, 0);
+        e.preventDefault();
+      }
     }
     if (joystick) {
       joystick.addEventListener('touchstart', handleJoystickStart);
@@ -3060,7 +3109,7 @@ function handleInput(deltaTime) {
   const oldRotation = playerRotation;
 
   // Check if tank is in the air (not on ground or obstacle)
-  const onGround = myTank && myTank.position.y < 0.5;
+  const onGround = myTank.position.y < 0.1;
   // Check if on any obstacle by looking for obstacles at current position
   let onObstacle = false;
   if (onGround) {
@@ -3106,7 +3155,7 @@ function handleInput(deltaTime) {
       // Use virtual joystick input on mobile
       intendedForward = virtualInput.forward;
       intendedRotation = virtualInput.turn;
-      if (virtualInput.jump) {
+      if (!isInAir && virtualInput.jump) {
         intendedY = 1;
         jumpTriggered = true;
       }
@@ -3132,7 +3181,7 @@ function handleInput(deltaTime) {
       // Mouse analog (if enabled)
       if (mouseControlEnabled) {
         if (typeof mouseY !== 'undefined') intendedForward = -mouseY;
-        if (typeof mouseX !== 'undefined') intendedRotation = -dmouseX;
+        if (typeof mouseX !== 'undefined') intendedRotation = - mouseX;
       }
     }
   }
@@ -3141,6 +3190,7 @@ function handleInput(deltaTime) {
   intendedForward = Math.max(-1, Math.min(1, intendedForward));
   intendedRotation = Math.max(-1, Math.min(1, intendedRotation));
   intendedY = Math.max(-1, Math.min(1, intendedY));
+  //showMessage(`Intended Input: isinair=${isInAir} forward=${intendedForward.toFixed(2)} rotation=${intendedRotation.toFixed(2)} jump=${intendedY.toFixed(2)}`);
 
   // --- Step 3: Convert intended speed/rotation to deltas ---
   const speed = gameConfig.TANK_SPEED * deltaTime;
@@ -3229,8 +3279,8 @@ function handleInput(deltaTime) {
     const actualDeltaZ = playerZ - oldZ;
 
     // Project actual movement onto tank's forward direction
-    const forwardX = Math.sin(playerRotation);
-    const forwardZ = Math.cos(playerRotation);
+    const forwardX = -Math.sin(playerRotation);
+    const forwardZ = -Math.cos(playerRotation);
     const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
 
     if (actualDistance > 0.001) {
