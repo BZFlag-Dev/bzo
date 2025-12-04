@@ -1164,10 +1164,10 @@ function createMapBoundaries(mapSize = 100) {
 
   // North wall (red, now at Z = -mapSize/2)
   const northWall = new THREE.Mesh(
-    new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
+    new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
     nsWallMaterials
   );
-  northWall.position.set(0, wallHeight / 2, -mapSize / 2);
+  northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
   northWall.castShadow = true;
   northWall.receiveShadow = true;
   scene.add(northWall);
@@ -1197,10 +1197,10 @@ function createMapBoundaries(mapSize = 100) {
 
   // South wall (blue, now at Z = +mapSize/2)
   const southWall = new THREE.Mesh(
-    new THREE.BoxGeometry(mapSize, wallHeight, wallThickness),
+    new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
     nsWallMaterials
   );
-  southWall.position.set(0, wallHeight / 2, mapSize / 2);
+  southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
   southWall.castShadow = true;
   southWall.receiveShadow = true;
   scene.add(southWall);
@@ -1233,7 +1233,7 @@ function createMapBoundaries(mapSize = 100) {
     new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
     ewWallMaterials
   );
-  eastWall.position.set(mapSize / 2, wallHeight / 2, 0);
+  eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
   eastWall.castShadow = true;
   eastWall.receiveShadow = true;
   scene.add(eastWall);
@@ -1266,7 +1266,7 @@ function createMapBoundaries(mapSize = 100) {
     new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
     ewWallMaterials
   );
-  westWall.position.set(-mapSize / 2, wallHeight / 2, 0);
+  westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
   westWall.castShadow = true;
   westWall.receiveShadow = true;
   scene.add(westWall);
