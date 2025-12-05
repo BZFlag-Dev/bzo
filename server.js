@@ -42,7 +42,7 @@ const wss = new WebSocketServer({ server });
 
 // Game constants
 const GAME_CONFIG = {
-  MAP_SIZE: 100,
+  MAP_SIZE: 400,
   TANK_SPEED: 5, // units per second
   TANK_ROTATION_SPEED: 2, // radians per second
   SHOT_SPEED: 20,
@@ -56,76 +56,160 @@ const GAME_CONFIG = {
   JUMP_COOLDOWN: 500, // ms between jumps
 };
 
+// --- Map selection: set to 'random' or 'bzw' ---
+const MAP_SOURCE = 'bzw'; // 'random' for random map, 'bzw' for hix.bzw
+
+// Parse a BZW file and convert to obstacle format
+function parseBZWMap(filename) {
+  const text = fs.readFileSync(filename, 'utf8');
+  const lines = text.split(/\r?\n/);
+  const obstacles = [];
+  let current = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('box')) {
+      current = { type: 'box' };
+    } else if (line.startsWith('pyramid')) {
+      current = { type: 'pyramid' };
+    } else if (line.startsWith('base')) {
+      current = { type: 'box' };
+    } else if (line.startsWith('teleporter')) {
+      current = { type: 'box' };
+    } else if (current && line.startsWith('position')) {
+      // position x y z (scale x and y by 0.5)
+      const [, x, y, z] = line.split(/\s+/);
+      current.x = parseFloat(x) * 0.5;
+      current.z = parseFloat(y) * 0.5; // BZFlag Y -> our Z
+      current.baseY = (parseFloat(z) || 0) * 0.5;
+    } else if (current && line.startsWith('size')) {
+      // size w d h (scale w and d by 0.5)
+      const [, w, d, h] = line.split(/\s+/);
+      const rawW = parseFloat(w);
+      const rawD = parseFloat(d);
+      const rawH = parseFloat(h);
+      current.w = Math.abs(rawW);
+      current.d = Math.abs(rawD);
+      current.h = Math.abs(rawH) * 0.5;
+      if (current.type === 'pyramid') {
+        current.inverted = rawH < 0;
+      }
+    } else if (current && line.startsWith('rotation')) {
+      // rotation deg (invert sign to match Three.js)
+      const [, deg] = line.split(/\s+/);
+      current.rotation = -(parseFloat(deg) || 0) * Math.PI / 180;
+    } else if (current && line === 'end') {
+      // Assign a name for debugging
+      current.name = `${current.type[0].toUpperCase()}${obstacles.length}`;
+      obstacles.push(current);
+      current = null;
+    }
+  }
+  return obstacles;
+}
+
 // Generate random obstacles on server start
 function generateObstacles() {
   const obstacles = [];
   const mapSize = GAME_CONFIG.MAP_SIZE;
-  const numObstacles = Math.floor(mapSize / 20 + Math.random() * 3); // 5-7 obstacles
+  const numBoxes = Math.floor(mapSize * mapSize / 2000 + Math.random() * 3);
+  const numPyramids = Math.floor(numBoxes / 2);
   const minDistance = 15; // Minimum distance from center and other obstacles
 
-  for (let i = 0; i < numObstacles; i++) {
+  // Helper to check overlap for both types
+  function isTooClose(x, z, w, d, others) {
+    for (const other of others) {
+      const dist = Math.sqrt(Math.pow(x - other.x, 2) + Math.pow(z - other.z, 2));
+      if (dist < (w + other.w) / 2 + minDistance) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Generate boxes
+  for (let i = 0; i < numBoxes; i++) {
     let attempts = 0;
     let validPosition = false;
     let obstacle;
-
     while (!validPosition && attempts < 50) {
-      // Random position (avoid center spawn area)
       const x = (Math.random() - 0.5) * (mapSize * 0.8);
       const z = (Math.random() - 0.5) * (mapSize * 0.8);
-
-      // Random size
-      const w = 6 + Math.random() * 6; // Width 6-12
-      const d = 6 + Math.random() * 6; // Depth 6-12
-
-      // Random rotation (in radians)
+      const w = 6 + Math.random() * 6;
+      const d = 6 + Math.random() * 6;
       const rotation = Math.random() * Math.PI * 2;
-
-      // Random height and base elevation
-      // 60% chance of ground obstacle, 40% chance of floating obstacle
       let h, baseY;
       if (Math.random() < 0.6) {
-        // Ground obstacle: 4-8 units tall, sits on ground
         h = 4 + Math.random() * 4;
         baseY = 0;
       } else {
-        // Floating obstacle: 3-5 units tall, elevated 3-6 units above ground
         h = 3 + Math.random() * 2;
         baseY = 3 + Math.random() * 3;
       }
-
-      obstacle = { x, z, w, d, h, baseY, rotation, name: `O${i}` };
-
-      // Check distance from center
+      obstacle = { x: x * 0.5, z: z * 0.5, w: w * 0.5, d: d * 0.5, h: h * 0.5, baseY, rotation, name: `O${i}` , type: 'box'};
       const distFromCenter = Math.sqrt(x * x + z * z);
       if (distFromCenter < minDistance) {
         attempts++;
         continue;
       }
-
-      // Check distance from other obstacles
-      validPosition = true;
-      for (const other of obstacles) {
-        const dist = Math.sqrt(
-          Math.pow(x - other.x, 2) + Math.pow(z - other.z, 2)
-        );
-        if (dist < (w + other.w) / 2 + minDistance) {
-          validPosition = false;
-          break;
-        }
+      if (isTooClose(x, z, w, d, obstacles)) {
+        attempts++;
+        continue;
       }
-
-      attempts++;
+      validPosition = true;
     }
-
     if (validPosition && obstacle) {
       obstacles.push(obstacle);
+    }
+  }
+
+  // Generate pyramids
+  for (let i = 0; i < numPyramids; i++) {
+    let attempts = 0;
+    let validPosition = false;
+    let pyramid;
+    while (!validPosition && attempts < 50) {
+      const x = (Math.random() - 0.5) * (mapSize * 0.8);
+      const z = (Math.random() - 0.5) * (mapSize * 0.8);
+      const w = 6 + Math.random() * 6;
+      const d = 6 + Math.random() * 6;
+      const rotation = Math.random() * Math.PI * 2;
+      let h, baseY;
+      if (Math.random() < 0.6) {
+        h = 4 + Math.random() * 4;
+        baseY = 0;
+      } else {
+        h = 3 + Math.random() * 2;
+        baseY = 3 + Math.random() * 3;
+      }
+      const inverted = Math.random() < 0.2; // 20% chance for random inverted pyramid
+      pyramid = { x: x * 0.5, z: z * 0.5, w: w * 0.5, d: d * 0.5, h: h * 0.5, baseY, rotation, name: `P${i}` , type: 'pyramid', inverted };
+      const distFromCenter = Math.sqrt(x * x + z * z);
+      if (distFromCenter < minDistance) {
+        attempts++;
+        continue;
+      }
+      if (isTooClose(x, z, w, d, obstacles)) {
+        attempts++;
+        continue;
+      }
+      validPosition = true;
+    }
+    if (validPosition && pyramid) {
+      obstacles.push(pyramid);
     }
   }
 
   return obstacles;
 }
 
-const OBSTACLES = generateObstacles();
+let OBSTACLES;
+if (MAP_SOURCE === 'bzw') {
+  OBSTACLES = parseBZWMap(path.join(__dirname, 'hix.bzw'));
+  log(`Loaded ${OBSTACLES.length} obstacles from hix.bzw`);
+} else {
+  OBSTACLES = generateObstacles();
+  log(`Generated ${OBSTACLES.length} random obstacles`);
+}
 //const OBSTACLES = [
 //  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
 //  {"x":0,"z":-10,"w":5,"d":5,"h":4,"baseY":0,"rotation":0,"name":"O1"}
@@ -347,15 +431,11 @@ function checkCollision(x, y, z, tankRadius = 2) {
   // Check obstacles
   for (const obs of OBSTACLES) {
     const tankHeight = 2;
-    const epsilon = 0.01; // Allow small tolerance for being on top
+    const epsilon = 0.01;
     // Allow passing under if tank top is below obstacle base
-    if (y + tankHeight <= obs.baseY + epsilon) {
-      continue;
-    }
+    if (y + tankHeight <= obs.baseY + epsilon) continue;
     // Allow passing over
-    if (y >= obs.baseY + obs.h - epsilon) {
-      continue;
-    }
+    if (y >= obs.baseY + obs.h - epsilon) continue;
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const rotation = obs.rotation || 0;
@@ -364,32 +444,45 @@ function checkCollision(x, y, z, tankRadius = 2) {
     // Transform tank position to obstacle's local space
     const dx = x - obs.x;
     const dz = z - obs.z;
-
-    // Rotate point to align with obstacle's axes
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
 
-    // Check if tank circle intersects with axis-aligned obstacle rectangle
-    const closestX = Math.max(-halfW, Math.min(localX, halfW));
-    const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
-
-    const distX = localX - closestX;
-    const distZ = localZ - closestZ;
-    const distSquared = distX * distX + distZ * distZ;
-
-    if (distSquared < tankRadius * tankRadius) {
-      const obstacleBase = obs.baseY || 0;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      // Block if inside the vertical range (strictly below top - epsilon)
-      if (y >= obstacleBase + epsilon && y < obstacleTop - epsilon) {
-        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)}, rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${(y-obstacleTop).toFixed(5)}`);
+    if (obs.type === 'box' || !obs.type) {
+      // Box collision (AABB + circle)
+      const closestX = Math.max(-halfW, Math.min(localX, halfW));
+      const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
+      const distX = localX - closestX;
+      const distZ = localZ - closestZ;
+      const distSquared = distX * distX + distZ * distZ;
+      if (distSquared < tankRadius * tankRadius) {
+        const obstacleBase = obs.baseY || 0;
+        const obstacleTop = obstacleBase + obstacleHeight;
+        if (y >= obstacleBase + epsilon && y < obstacleTop - epsilon) {
+          log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)}, rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${(y-obstacleTop).toFixed(5)}`);
+        }
+        return obs;
       }
-      return obs;
+    } else if (obs.type === 'pyramid') {
+      // Pyramid collision: check if tank is inside the pyramid's base, then check height at that (x,z)
+      // Pyramid apex is at (0, h/2, 0) in local space, base is at y = 0
+      // For simplicity, use bounding box for base, then check if tank is below pyramid surface
+      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
+        // Compute normalized distance from center (0,0)
+        const nx = Math.abs(localX) / halfW;
+        const nz = Math.abs(localZ) / halfD;
+        const n = Math.max(nx, nz); // For square pyramid
+        // Height at this (x,z) under the pyramid
+        const localY = y - obs.baseY;
+        const maxPyramidY = obs.h * (1 - n); // Linear slope from center to edge
+        if (localY >= epsilon && localY < maxPyramidY - epsilon) {
+          // Collides with pyramid slope
+          return obs;
+        }
+      }
     }
   }
-
   return false;
 }
 

@@ -1415,54 +1415,104 @@ function recreateObstacles() {
 
   // Create new obstacles from server data
   OBSTACLES.forEach(obs => {
-    // Use obstacle height and base elevation from server
     const h = obs.h || 4;
     const baseY = obs.baseY || 0;
-
-    // Create textures
-    const concreteTexture = createObstacleTexture();
-    concreteTexture.wrapS = THREE.RepeatWrapping;
-    concreteTexture.wrapT = THREE.RepeatWrapping;
-    concreteTexture.repeat.set(obs.w / 2, h / 2);
-
-    const wallTexture = createWallTexture();
-    wallTexture.wrapS = THREE.RepeatWrapping;
-    wallTexture.wrapT = THREE.RepeatWrapping;
-    wallTexture.repeat.set(obs.d / 2, h / 2); // Default repeat, will adjust per face
-
-    // Materials: [right, left, top, bottom, front, back]
-    const materials = [
-      new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // right
-      new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // left
-      new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // top
-      new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // bottom
-      new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // front
-      new THREE.MeshLambertMaterial({ map: wallTexture.clone() })  // back
-    ];
-
-    // Set repeat for each face
-    // Sides (right/left/front/back): repeat by obstacle size
-    materials[0].map.repeat.set(obs.d / 2, h / 2); // right
-    materials[1].map.repeat.set(obs.d / 2, h / 2); // left
-    materials[4].map.repeat.set(obs.w / 2, h / 2); // front
-    materials[5].map.repeat.set(obs.w / 2, h / 2); // back
-    // Top/bottom: repeat by obstacle width/depth
-    materials[2].map.repeat.set(obs.w / 2, obs.d / 2); // top
-    materials[3].map.repeat.set(obs.w / 2, obs.d / 2); // bottom
-    materials.forEach(m => { m.map.needsUpdate = true; });
-
-    const obstacle = new THREE.Mesh(
-      new THREE.BoxGeometry(obs.w, h, obs.d),
-      materials
-    );
-    // Position at baseY + half height
-    obstacle.position.set(obs.x, baseY + h / 2, obs.z);
-    obstacle.rotation.y = obs.rotation || 0;
-    obstacle.castShadow = true;
-    obstacle.receiveShadow = true;
-    scene.add(obstacle);
-    obstacleMeshes.push(obstacle);
+    let mesh;
+    if (obs.type === 'pyramid') {
+      // Pyramid: use ConeGeometry with 4 sides (square base)
+      const base = Math.max(obs.w, obs.d);
+      const geometry = new THREE.ConeGeometry(base / 2, h, 4, 1);
+      geometry.rotateY(Math.PI / 4); // Align base with axes
+      if (obs.inverted) {
+        geometry.rotateX(Math.PI); // Invert pyramid
+      }
+      // Sand-like texture for pyramid
+      const pyramidTexture = createPyramidTexture();
+      pyramidTexture.wrapS = THREE.RepeatWrapping;
+      pyramidTexture.wrapT = THREE.RepeatWrapping;
+      pyramidTexture.repeat.set(2, 1);
+      mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshLambertMaterial({ map: pyramidTexture, flatShading: true })
+      );
+      // For inverted, base is on top, so adjust position
+      if (obs.inverted) {
+        mesh.position.set(obs.x, baseY + h, obs.z);
+      } else {
+        mesh.position.set(obs.x, baseY + h / 2, obs.z);
+      }
+      mesh.rotation.y = obs.rotation || 0;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      obstacleMeshes.push(mesh);
+    } else {
+      // Box (default)
+      const concreteTexture = createObstacleTexture();
+      concreteTexture.wrapS = THREE.RepeatWrapping;
+      concreteTexture.wrapT = THREE.RepeatWrapping;
+      concreteTexture.repeat.set(obs.w / 2, h / 2);
+      const wallTexture = createWallTexture();
+      wallTexture.wrapS = THREE.RepeatWrapping;
+      wallTexture.wrapT = THREE.RepeatWrapping;
+      wallTexture.repeat.set(obs.d / 2, h / 2);
+      const materials = [
+        new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // right
+        new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // left
+        new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // top
+        new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // bottom
+        new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // front
+        new THREE.MeshLambertMaterial({ map: wallTexture.clone() })  // back
+      ];
+      materials[0].map.repeat.set(obs.d / 2, h / 2); // right
+      materials[1].map.repeat.set(obs.d / 2, h / 2); // left
+      materials[4].map.repeat.set(obs.w / 2, h / 2); // front
+      materials[5].map.repeat.set(obs.w / 2, h / 2); // back
+      materials[2].map.repeat.set(obs.w / 2, obs.d / 2); // top
+      materials[3].map.repeat.set(obs.w / 2, obs.d / 2); // bottom
+      materials.forEach(m => { m.map.needsUpdate = true; });
+      mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(obs.w, h, obs.d),
+        materials
+      );
+      mesh.position.set(obs.x, baseY + h / 2, obs.z);
+      mesh.rotation.y = obs.rotation || 0;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      obstacleMeshes.push(mesh);
+    }
   });
+}
+
+// Sand-like texture for BZFlag-style pyramids
+function createPyramidTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  // Base BZFlag blue color
+  ctx.fillStyle = '#3a5fa9'; // BZFlag default blue
+  ctx.fillRect(0, 0, 128, 128);
+  // Add some noise for grain (blue shades)
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.random() * 128;
+    const y = Math.random() * 128;
+    const alpha = Math.random() * 0.15 + 0.05;
+    ctx.fillStyle = `rgba(58, 95, 169, ${alpha.toFixed(2)})`;
+    ctx.fillRect(x, y, 1, 1);
+  }
+  // Subtle horizontal lines for wind effect (lighter blue)
+  ctx.globalAlpha = 0.08;
+  ctx.strokeStyle = '#7faaff';
+  for (let y = 0; y < 128; y += 8) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + Math.random() * 2);
+    ctx.lineTo(128, y + Math.random() * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1.0;
+  return new THREE.CanvasTexture(canvas);
 }
 
 function addObstacles() {
@@ -2811,7 +2861,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
   const mapSize = gameConfig.MAP_SIZE || gameConfig.mapSize || 100;
   const halfMap = mapSize / 2;
 
-  // Check map boundaries (always apply regardless of height)
+  // Check map boundari es (always apply regardless of height)
   if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
       z - tankRadius < -halfMap || z + tankRadius > halfMap) {
     return true;
@@ -2822,53 +2872,54 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
-    const epsilon = 0.15; // Allow small tolerance
-    if (y >= obstacleTop - epsilon) {
-      continue;
-    }
-    const tankHeight = 2; // Default tank height
-    // Allow passing under if tank top is below obstacle base
-    if (y + tankHeight <= obstacleBase + epsilon) {
-      continue;
-    }
-
+    const epsilon = 0.15;
+    if (y >= obstacleTop - epsilon) continue;
+    const tankHeight = 2;
+    if (y + tankHeight <= obstacleBase + epsilon) continue;
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const rotation = obs.rotation || 0;
-
-    // Transform tank position to obstacle's local space
     const dx = x - obs.x;
     const dz = z - obs.z;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
-    const margin = tankRadius * 0.7;
-    // Check if tank circle intersects with axis-aligned obstacle rectangle
-    const closestX = Math.max(-halfW, Math.min(localX, halfW));
-    const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
-    const distX = localX - closestX;
-    const distZ = localZ - closestZ;
-    const distSquared = distX * distX + distZ * distZ;
-
-    if (distSquared < tankRadius * tankRadius) {
-      // Block jumping up into obstacle: if tank bottom is below base and top is above base
-      if (y < obstacleBase && y + tankHeight > obstacleBase) {
-        if (typeof sendToServer === 'function') {
-          sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+    if (obs.type === 'box' || !obs.type) {
+      const margin = tankRadius * 0.7;
+      const closestX = Math.max(-halfW, Math.min(localX, halfW));
+      const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
+      const distX = localX - closestX;
+      const distZ = localZ - closestZ;
+      const distSquared = distX * distX + distZ * distZ;
+      if (distSquared < tankRadius * tankRadius) {
+        if (y < obstacleBase && y + tankHeight > obstacleBase) {
+          if (typeof sendToServer === 'function') {
+            sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          }
+          return true;
         }
-        return true;
+        if (y >= obstacleBase && y < obstacleTop) {
+          if (typeof sendToServer === 'function') {
+            sendToServer({ type: 'chat', to: -1,text: `[COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          }
+          return true;
+        }
       }
-      // Block if inside the vertical range (strictly below top - epsilon)
-      if (y >= obstacleBase && y < obstacleTop) {
-        if (typeof sendToServer === 'function') {
-          sendToServer({ type: 'chat', to: -1,text: `[COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+    } else if (obs.type === 'pyramid') {
+      // Pyramid collision: check if tank is inside the pyramid's base, then check height at that (x,z)
+      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
+        const nx = Math.abs(localX) / halfW;
+        const nz = Math.abs(localZ) / halfD;
+        const n = Math.max(nx, nz);
+        const localY = y - obstacleBase;
+        const maxPyramidY = obs.h * (1 - n);
+        if (localY >= epsilon && localY < maxPyramidY - epsilon) {
+          return true;
         }
-        return true;
       }
     }
   }
-
   return false;
 }
 
