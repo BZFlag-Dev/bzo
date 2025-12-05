@@ -1,49 +1,48 @@
 /*
-/*
  * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
  */
 
+:root {
+  --color-bg: #000;
+  --color-fg: #fff;
+  --color-accent: #4CAF50;
+  --color-accent-light: #66bb6a;
+  --color-btn-bg: rgba(76,175,80,0.15);
+  --color-btn-bg-active: #4CAF50;
+  --color-btn-bg-hover: rgba(76,175,80,0.35);
+  --color-btn-bg-focus: #81c784;
+  --color-btn-bg-shadow: #4CAF5088;
+  --color-panel-bg: rgba(0,0,0,0.5);
+  --color-panel-bg-solid: rgba(0,0,0,0.8);
+}
+
 /* Chat window responsive wrapping and scrolling */
-#chatWindow .chat-input-row {
-  display: flex;
-  align-items: center;
-  flex-grow: 0;
-  min-height: 40px;
-  width: 100%;
-  background: transparent;
-}
 
-#chatTarget {
-  height: 32px;
-  font-size: 1em;
-  margin-right: 6px;
-  border-radius: 8px;
-  border: none;
-  background: rgba(0,0,0,0.8);
-  color: #fff;
-  padding: 6px 8px;
-  outline: none;
-  z-index: 101;
-  display: inline-block;
-  box-sizing: border-box;
-  min-width: 80px;
-  max-width: 160px;
-}
 
+#chatTarget,
 #chatInput {
   height: 32px;
   font-size: 1em;
   border-radius: 8px;
   border: none;
-  background: rgba(0,0,0,0.8);
-  color: #fff;
+  background: var(--color-panel-bg-solid);
+  color: var(--color-fg);
   padding: 6px 8px;
   outline: none;
   z-index: 101;
   display: inline-block;
   box-sizing: border-box;
+}
+#chatTarget {
+  margin-right: 6px;
+  min-width: 80px;
+  max-width: 160px;
+}
+#chatInput {
   width: 100%;
+  margin-top: 2px;
+  display: block;
 }
 #chatWindow {
   position: fixed;
@@ -197,9 +196,9 @@
   #controlsOverlay { display: none; }
 }
 #hudButtons button {
-  background: rgba(76,175,80,0.15);
-  color: #4CAF50;
-  border: 2px solid #4CAF50;
+  background: var(--color-btn-bg);
+  color: var(--color-accent);
+  border: 2px solid var(--color-accent);
   border-radius: 5px;
   font-weight: bold;
   padding: 6px 6px;
@@ -207,62 +206,39 @@
   outline: none;
   cursor: pointer;
 }
-
 #hudButtons button.active {
-  background: #4CAF50;
-  color: #fff;
-  border-color: #66bb6a;
-  box-shadow: 0 0 6px #4CAF5088;
+  background: var(--color-btn-bg-active);
+  color: var(--color-fg);
+  border-color: var(--color-accent-light);
+  box-shadow: 0 0 6px var(--color-btn-bg-shadow);
 }
-
 #hudButtons button:focus {
-  border-color: #81c784;
+  border-color: var(--color-btn-bg-focus);
 }
-
 #hudButtons button:hover {
-  background: rgba(76,175,80,0.35);
-  color: #fff;
+  background: var(--color-btn-bg-hover);
+  color: var(--color-fg);
 }
 
-#chatInput {
-  width: 100%;
-  font: 16px monospace;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: none;
-  outline: none;
-  background: rgba(0,0,0,0.8);
-  color: #fff;
-  margin-top: 2px;
-  z-index: 101;
-  display: block;
-  box-sizing: border-box;
-}
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
 
 body {
   font-family: 'Arial', sans-serif;
   overflow: hidden;
-  background: #000;
-  color: #fff;
+  background: var(--color-bg);
+  color: var(--color-fg);
 }
 
 #mainhud {
   position: fixed;
   top: 10px;
   left: 10px;
-    max-height: 28vh;
-    padding: 4px 10px 2px 10px;
+  max-height: 28vh;
   padding: 20px;
   border-radius: 10px;
   width: 25vw;
   height: 33vh;
   box-sizing: border-box;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-panel-bg);
 }
 
 @media (max-width: 900px), (max-width: 600px) {
@@ -497,7 +473,7 @@ body {
   bottom: 10px;
   right: 10px;
   z-index: 100;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--color-panel-bg);
   padding: 15px;
   border-radius: 10px;
   width: 320px;
@@ -531,82 +507,6 @@ body {
   margin: 3px 0;
   display: flex;
   justify-content: space-between;
-}
-
-#compass {
-  position: fixed;
-  z-index: 100;
-  opacity: 0.5;
-  width: 80px;
-  height: 80px;
-  top: 10px;
-  right: calc(18vw + 3vw + 10px); /* 3vw gap from radar in landscape */
-}
-
-@media (orientation: portrait) {
-  #compass {
-    top: calc(10px + 18vw + 3vh);
-    right: 10px;
-    left: auto;
-  }
-}
-
-.compass-ring {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  border: 3px solid rgba(76, 175, 80, 0.8);
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.7);
-  box-shadow: 0 0 10px rgba(76, 175, 80, 0.5);
-}
-
-.compass-mark {
-  position: absolute;
-  font-size: 14px;
-  font-weight: bold;
-  color: #4CAF50;
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
-}
-
-.compass-mark.north {
-  top: 5px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: #ff4444;
-  font-size: 16px;
-}
-
-.compass-mark.east {
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.compass-mark.south {
-  bottom: 5px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-
-.compass-mark.west {
-  left: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-.compass-needle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  border-left: 6px solid transparent;
-  border-right: 6px solid transparent;
-  border-bottom: 30px solid #ff4444;
-  transform-origin: center 20px;
-  transform: translate(-50%, -50%);
-  filter: drop-shadow(0 0 3px rgba(255, 68, 68, 0.8));
 }
 
 #debugContent .label {
