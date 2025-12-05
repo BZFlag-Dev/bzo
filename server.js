@@ -794,6 +794,7 @@ wss.on('connection', (ws, req) => {
             log(`[CHAT] ${fromName}->${toName}: ${message.text}`);
             break;
           }
+          console.log('chat:', message, toName, targetId, players.get(targetId));
           // Broadcast to all if to == 0
           if (targetId === 0) {
             log(`[CHAT] ${fromName}->ALL: ${message.text}`);

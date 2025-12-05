@@ -1917,12 +1917,6 @@ function connectToServer() {
           isMobile,
         });
       }
-    } else {
-      // Always send isMobile on first join
-      sendToServer({
-        type: 'joinGame',
-        isMobile,
-      });
     }
   };
 
