@@ -57,7 +57,7 @@ const GAME_CONFIG = {
 };
 
 // --- Map selection: set to 'random' or 'bzw' ---
-const MAP_SOURCE = 'bzw'; // 'random' for random map, 'bzw' for hix.bzw
+const MAP_SOURCE = 'hix.bzw'; // 'random' for random map, or filename of BZW map
 
 // Parse a BZW file and convert to obstacle format
 function parseBZWMap(filename) {
@@ -203,12 +203,12 @@ function generateObstacles() {
 }
 
 let OBSTACLES;
-if (MAP_SOURCE === 'bzw') {
-  OBSTACLES = parseBZWMap(path.join(__dirname, 'hix.bzw'));
-  log(`Loaded ${OBSTACLES.length} obstacles from hix.bzw`);
-} else {
+if (MAP_SOURCE === 'random') {
   OBSTACLES = generateObstacles();
   log(`Generated ${OBSTACLES.length} random obstacles`);
+} else {
+  OBSTACLES = parseBZWMap(path.join(__dirname, MAP_SOURCE));
+  log(`Loaded ${OBSTACLES.length} obstacles from ${MAP_SOURCE}`);
 }
 //const OBSTACLES = [
 //  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
