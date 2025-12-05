@@ -130,7 +130,7 @@ const OBSTACLES = generateObstacles();
 //  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
 //  {"x":0,"z":-10,"w":5,"d":5,"h":4,"baseY":0,"rotation":0,"name":"O1"}
 //];
-log(OBSTACLES);
+//log(OBSTACLES);
 
 // Generate random clouds with fractal patter.
 function generateClouds() {
