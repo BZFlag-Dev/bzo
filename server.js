@@ -726,7 +726,7 @@ wss.on('connection', (ws, req) => {
   } else {
     log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort}`);
   }
-  log(`Player ${player.playerNumber} user agent: ${userAgent}`);
+  //log(`Player ${player.playerNumber} user agent: ${userAgent}`);
 
   // Send initial server state in init message
   // Send initial state to new player (do not add to players map or broadcast yet)
