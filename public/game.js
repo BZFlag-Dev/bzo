@@ -2110,11 +2110,10 @@ function handleServerMessage(message) {
         tanks.set(myPlayerId, myTank);
 
         updateStats(message.player);
-        updatePlayerCount();
         updateScoreboard();
       } else {
         addPlayer(message.player);
-        updatePlayerCount();
+        updateScoreboard();
         showMessage(`${message.player.name} joined the game`);
       }
       break;
@@ -2128,7 +2127,6 @@ function handleServerMessage(message) {
       }
       showMessage(`${leftName} left the game`);
       removePlayer(message.id);
-      updatePlayerCount();
       break;
 
     case 'playerMoved':
@@ -2702,10 +2700,6 @@ function createExplosion(position, tank) {
 
 function updateStats(player) {
   updateScoreboard();
-}
-
-function updatePlayerCount() {
-  // Player count tracking removed
 }
 
 function updateScoreboard() {
