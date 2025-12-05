@@ -1,3 +1,10 @@
+/*
+/*
+ * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
+/* Chat window responsive wrapping and scrolling */
 #chatWindow .chat-input-row {
   display: flex;
   align-items: center;
@@ -38,13 +45,6 @@
   box-sizing: border-box;
   width: 100%;
 }
-/*
-/*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
- */
-
-/* Chat window responsive wrapping and scrolling */
 #chatWindow {
   position: fixed;
   left: 50%;
@@ -262,7 +262,7 @@ body {
   width: 25vw;
   height: 33vh;
   box-sizing: border-box;
-  /* overflow-x: auto; removed to prevent scrollbars */
+  background: rgba(0, 0, 0, 0.5);
 }
 
 @media (max-width: 900px), (max-width: 600px) {
