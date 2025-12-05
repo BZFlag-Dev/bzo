@@ -3157,21 +3157,23 @@ function toggleMouseMode() {
   if (typeof updateHudButtons === 'function') updateHudButtons();
 }
 
-function handleInput(deltaTime) {
+// Intended input state
+let intendedForward = 0; // -1..1
+let intendedRotation = 0; // -1..1
+let intendedY = 0; // -1..1 (for jump/momentum)
+let jumpTriggered = false;
+
+function handleInputEvents() {
+  // Reset intended input each frame
+  intendedForward = 0;
+  intendedRotation = 0;
+  intendedY = 0;
+  jumpTriggered = false;
+
   if (!myTank || !gameConfig) return;
-
-  // Block all movement when paused or during countdown
-  if (isPaused || pauseCountdownStart > 0) return;
-
-  // Track old position to calculate actual movement
-  let moved = false;
-  const oldX = playerX;
-  const oldZ = playerZ;
-  const oldRotation = playerRotation;
 
   // Check if tank is in the air (not on ground or obstacle)
   const onGround = myTank.position.y < 0.1;
-  // Check if on any obstacle by looking for obstacles at current position
   let onObstacle = false;
   if (onGround) {
     myTank.userData.verticalVelocity = 0;
@@ -3198,22 +3200,16 @@ function handleInput(deltaTime) {
       }
     }
   }
-  // Tank is in air if not on ground AND not on obstacle (velocity doesn't matter)
   const isInAir = !onGround && !onObstacle;
 
-  // --- Step 1: Gather intended speed, angular, and vertical motion from all sources ---
-  let intendedForward = 0; // -1..1
-  let intendedRotation = 0; // -1..1
-  let intendedY = 0; // -1..1 (for jump/momentum)
-  let jumpTriggered = false;
+  if (isPaused || pauseCountdownStart > 0) return;
 
-  // Jump/momentum (if in air)
+  // Gather intended input from controls
   if (isInAir) {
-    intendedForward = myTank.userData.forwardSpeed || 0; // -1..1
-    intendedRotation = myTank.userData.rotationSpeed || 0; // -1..1
+    intendedForward = myTank.userData.forwardSpeed || 0;
+    intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
     if (isMobile) {
-      // Use virtual joystick input on mobile
       intendedForward = virtualInput.forward;
       intendedRotation = virtualInput.turn;
       if (!isInAir && virtualInput.jump) {
@@ -3221,7 +3217,6 @@ function handleInput(deltaTime) {
         jumpTriggered = true;
       }
     } else {
-      // WASD keys: pressing any disables mouse move mode
       const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
       let wasdPressed = false;
       for (const code of wasdKeys) {
@@ -3234,26 +3229,31 @@ function handleInput(deltaTime) {
       if (wasdPressed && mouseControlEnabled) {
         toggleMouseMode();
       }
-      // Space for jump (or Tab, or other key as needed)
       if ((keys['Tab']) && !isInAir) {
         intendedY = 1;
         jumpTriggered = true;
       }
-      // Mouse analog (if enabled)
       if (mouseControlEnabled) {
         if (typeof mouseY !== 'undefined') intendedForward = -mouseY;
-        if (typeof mouseX !== 'undefined') intendedRotation = - mouseX;
+        if (typeof mouseX !== 'undefined') intendedRotation = -mouseX;
       }
     }
   }
-
-  // --- Step 2: Clamp intended values to -1..1 (if needed) ---
   intendedForward = Math.max(-1, Math.min(1, intendedForward));
   intendedRotation = Math.max(-1, Math.min(1, intendedRotation));
   intendedY = Math.max(-1, Math.min(1, intendedY));
-  //showMessage(`Intended Input: isinair=${isInAir} forward=${intendedForward.toFixed(2)} rotation=${intendedRotation.toFixed(2)} jump=${intendedY.toFixed(2)}`);
+}
 
-  // --- Step 3: Convert intended speed/rotation to deltas ---
+function handleMotion(deltaTime) {
+  if (!myTank || !gameConfig) return;
+  if (isPaused || pauseCountdownStart > 0) return;
+
+  let moved = false;
+  const oldX = playerX;
+  const oldZ = playerZ;
+  const oldRotation = playerRotation;
+
+  // Step 3: Convert intended speed/rotation to deltas
   const speed = gameConfig.TANK_SPEED * deltaTime;
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED * deltaTime;
   let intendedDeltaX = -Math.sin(playerRotation) * intendedForward * speed;
@@ -3268,45 +3268,28 @@ function handleInput(deltaTime) {
     myTank.userData.verticalVelocity = 0;
     myTank.position.y = 0;
   } else {
-    // Apply gravity if not on ground or obstacle
     myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
   }
 
-  // --- Step 4: Apply jump logic here ---
-  if (jumpTriggered && !isInAir) {
-    // Only jump if not already jumping
+  if (jumpTriggered && !(myTank.position.y > 0)) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
-    // Play jump sound
-    if (jumpSound && jumpSound.isPlaying) {
-      jumpSound.stop();
-    }
-    if (jumpSound) {
-      jumpSound.play();
-    }
+    if (jumpSound && jumpSound.isPlaying) jumpSound.stop();
+    if (jumpSound) jumpSound.play();
   }
 
-  // --- Step 5: Apply collision/slide logic to the intended move ---
   const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
-  if (result.altered) {
-    //showMessage(`slideMove: from (${playerX.toFixed(2)}, ${playerZ.toFixed(2)}) by (Δx=${intendedDeltaX.toFixed(2)}, Δz=${intendedDeltaZ.toFixed(2)}) → (${result.x.toFixed(2)}, ${result.z.toFixed(2)}) moved=${result.moved} altered=${result.altered}`);
-  }
   if (result.moved) {
     moved = true;
     playerX = result.x;
     playerY = result.y;
     playerZ = result.z;
-  } else {
-    // If blocked, the caller should handle input state cleanup if needed
   }
 
-  // When not jumping, maintain proper height (ground or obstacle)
   let currentlyOnObstacle = false;
   if (myTank && !jumpTriggered && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
-    // Use validateMove to determine landing and falling
     const moveResult = validateMove(playerX, playerY, playerZ, 0, 0, 0, 2);
     if (moveResult.landedType === 'obstacle' && moveResult.landedOn) {
-      // On top of obstacle - maintain height
       const obstacleBase = moveResult.landedOn.baseY || 0;
       const obstacleHeight = moveResult.landedOn.h || 4;
       const obstacleTop = obstacleBase + obstacleHeight;
@@ -3314,22 +3297,18 @@ function handleInput(deltaTime) {
       playerY = obstacleTop;
       currentlyOnObstacle = true;
     } else if (moveResult.startedFalling) {
-      // Not on obstacle or ground and elevated - start falling (drove off edge)
       if (!myTank.userData.verticalVelocity || myTank.userData.verticalVelocity === 0) {
-        myTank.userData.verticalVelocity = -1; // Start falling
+        myTank.userData.verticalVelocity = -1;
       }
     } else {
-      // On ground
       myTank.position.y = 0;
       playerY = 0;
     }
   }
 
-  // Calculate velocity based on actual movement that occurred
   let forwardSpeed = 0;
-  let rotationSpeed = myTank.userData.rotationSpeed || 0; // Preserve previous value by default
+  let rotationSpeed = myTank.userData.rotationSpeed || 0;
 
-  // Update local position
   if (moved) {
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
@@ -3337,29 +3316,19 @@ function handleInput(deltaTime) {
   }
 
   if (deltaTime > 0) {
-    // Calculate actual position change
     const actualDeltaX = playerX - oldX;
     const actualDeltaZ = playerZ - oldZ;
-
-    // Project actual movement onto tank's forward direction
     const forwardX = -Math.sin(playerRotation);
     const forwardZ = -Math.cos(playerRotation);
     const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
-
     if (actualDistance > 0.001) {
-      // Calculate dot product to determine forward/backward speed
       const dot = (actualDeltaX * forwardX + actualDeltaZ * forwardZ) / actualDistance;
       const actualSpeed = actualDistance / deltaTime;
       const tankSpeed = gameConfig.TANK_SPEED;
-
-      // Normalize to -1 to 1 range
       forwardSpeed = (dot * actualSpeed) / tankSpeed;
       forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
     }
-
-    // Only update rotationSpeed if not in air
-    if (!isInAir) {
-      // Calculate actual rotation change
+    if (!(myTank.position.y > 0)) {
       const actualDeltaRot = playerRotation - oldRotation;
       const actualRotSpeed = actualDeltaRot / deltaTime;
       const tankRotSpeed = gameConfig.TANK_ROTATION_SPEED;
@@ -3367,29 +3336,23 @@ function handleInput(deltaTime) {
       rotationSpeed = Math.max(-1, Math.min(1, rotationSpeed));
     }
   }
-
   myTank.userData.forwardSpeed = forwardSpeed;
   myTank.userData.rotationSpeed = rotationSpeed;
 
-  // Dead reckoning: only send updates if significantly different from last sent state
   const now = performance.now();
   const timeSinceLastSend = now - lastSentTime;
-
   const positionDelta = Math.sqrt(
     Math.pow(playerX - lastSentX, 2) +
     Math.pow(playerZ - lastSentZ, 2)
   );
   const rotationDelta = Math.abs(playerRotation - lastSentRotation);
-
   const shouldSendUpdate =
     positionDelta > POSITION_THRESHOLD ||
     rotationDelta > ROTATION_THRESHOLD ||
     timeSinceLastSend > MAX_UPDATE_INTERVAL;
-
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
     const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
     const y = myTank ? myTank.position.y : 1;
-
     sendToServer({
       type: 'move',
       x: playerX,
@@ -3401,16 +3364,11 @@ function handleInput(deltaTime) {
       rotationSpeed: rotationSpeed,
       verticalVelocity: verticalVelocity,
     });
-    //console.log(`Sent move: x=${playerX.toFixed(2)} y=${playerY.toFixed(2)} z=${playerZ.toFixed(2)} rot=${playerRotation.toFixed(2)} fwd=${forwardSpeed.toFixed(2)} rotSpd=${rotationSpeed.toFixed(2)} vertVel=${verticalVelocity.toFixed(2)}`);
-
-    // Update last sent state
     lastSentX = playerX;
     lastSentZ = playerZ;
     lastSentRotation = playerRotation;
     lastSentTime = now;
   }
-
-  // Shooting (Space or virtual fire button)
   if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space'])) {
     const now = Date.now();
     if (now - lastShotTime > gameConfig.SHOT_COOLDOWN) {
@@ -3861,10 +3819,10 @@ function animate() {
   const deltaTime = (now - lastTime) / 1000;
   lastTime = now;
 
-  // Update chat window every frame (for fade-out, etc.)
   updateChatWindow();
   requestAnimationFrame(animate);
-  handleInput(deltaTime);
+  handleInputEvents();
+  handleMotion(deltaTime);
   updateProjectiles();
   updateShields();
   updateTreads(deltaTime);
