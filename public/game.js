@@ -2828,6 +2828,15 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
+    const epsilon = 0.15; // Allow small tolerance
+    if (y >= obstacleTop - epsilon) {
+      continue;
+    }
+    const tankHeight = 2; // Default tank height
+    // Allow passing under if tank top is below obstacle base
+    if (y + tankHeight <= obstacleBase + epsilon) {
+      continue;
+    }
 
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
@@ -2849,38 +2858,17 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const distSquared = distX * distX + distZ * distZ;
 
     if (distSquared < tankRadius * tankRadius) {
-      if (y !== null) {
-        const tankHeight = 2; // Default tank height
-        const epsilon = 0.15; // Allow small tolerance for being on top
-        // Allow passing under if tank top is below obstacle base
-        if (y + tankHeight <= obstacleBase) {
-          continue;
-        }
-        // Block jumping up into obstacle: if tank bottom is below base and top is above base
-        if (y < obstacleBase && y + tankHeight > obstacleBase) {
-          if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', to: -1, text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
-          }
-          return true;
-        }
-        // Allow passing over if above 75% of top
-        if (y >= obstacleTop * 0.75) {
-          continue;
-        }
-        // Allow being on or just below the obstacle top (within epsilon)
-        if (y >= obstacleTop - epsilon && y <= obstacleTop + epsilon) {
-          continue;
-        }
-        // Block if inside the vertical range (strictly below top - epsilon)
-        if (y >= obstacleBase && y < obstacleTop - epsilon) {
-          if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', to: -1,text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
-          }
-          return true;
-        }
-      } else {
+      // Block jumping up into obstacle: if tank bottom is below base and top is above base
+      if (y < obstacleBase && y + tankHeight > obstacleBase) {
         if (typeof sendToServer === 'function') {
-          sendToServer({ type: 'chat', to: -1, text: `[CLIENT COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+        }
+        return true;
+      }
+      // Block if inside the vertical range (strictly below top - epsilon)
+      if (y >= obstacleBase && y < obstacleTop) {
+        if (typeof sendToServer === 'function') {
+          sendToServer({ type: 'chat', to: -1,text: `[COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
         }
         return true;
       }
@@ -2898,12 +2886,17 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   const newZ = z + intendedDeltaZ;
   let landedOn = null;
   let landedType = null; // 'ground' or 'obstacle'
-  // startedFalling is now just a flag for the caller to use if needed
   let startedFalling = false;
+  let altered = false;
+  if (newY < 0) {
+      landedType = 'ground';
+      altered = true
+      return { x: newX, y: 0, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
+  }
 
   // Try full movement first
   if (!checkCollision(newX, newY, newZ, tankRadius)) {
-    // Check for landing on obstacle
+    // Check for on obstacle
     let obstacle = null;
     for (const obs of OBSTACLES) {
       const halfW = obs.w / 2;
@@ -2920,31 +2913,36 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
       const sin = Math.sin(rotation);
       const localX = dx * cos - dz * sin;
       const localZ = dx * sin + dz * cos;
-      const xyInBounds = Math.abs(localX) <= halfW + tankRadius * 0.7 && Math.abs(localZ) <= halfD + tankRadius * 0.7;
-      // Only consider landing if tank is above obstacle base and below obstacle top
-      if (xyInBounds && y !== null && y + tankHeight > obstacleBase + margin && y < obstacleTop - margin) {
-        obstacle = obs;
-        break;
+      const xyInBounds = Math.abs(localX) <= halfW + tankRadius && Math.abs(localZ) <= halfD + tankRadius;
+      if (xyInBounds) {
+        if (intendedDeltaY <= 0 && newY >= obstacleTop && newY <= obstacleTop + margin) {
+          // on top
+          obstacle = obs;
+          landedOn = obstacle;
+          landedType = 'obstacle';
+          break;
+        } else if (intendedDeltaY > 0 && newY < obstacleBase && newY + tankHeight + margin > obstacleBase) {
+          // will hit bottom
+          obstacle = obs;
+          landedOn = obstacle;
+          landedType = 'obstacle';
+          break;
+        }
       }
     }
-    if (obstacle) {
-      landedOn = obstacle;
-      landedType = 'obstacle';
-    } else if (y !== null && Math.abs(y) < 0.5) {
-      landedType = 'ground';
-    }
-    // If not on obstacle or ground and y > 0.5, we are driving off an edge and should start falling
-    if (!obstacle && (y > 0.5)) {
+    if (!obstacle && intendedDeltaY == 0 && y > 0) {
+      // If not on obstacle or ground we are driving off an edge and should start falling
       startedFalling = true;
+      return { x: newX, y: newY - 0.1, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
     }
     const actualDX = newX - x;
     const actualDZ = newZ - z;
-    const altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
+    altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
     return { x: newX, y: newY, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
   }
 
   // Find the collision normal
-  const normal = getCollisionNormal(x, z, newX, newZ, tankRadius, y);
+  const normal = getCollisionNormal(x, y, z, newX, newY, newZ, tankRadius);
 
   if (normal) {
     // Project movement vector onto the surface (perpendicular to normal)
@@ -3071,7 +3069,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   return { x: x, y: y, z: z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
-function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
+function getCollisionNormal(fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) {
   const mapSize = gameConfig.mapSize;
   const halfMap = mapSize / 2;
 
@@ -3083,12 +3081,12 @@ function getCollisionNormal(fromX, fromZ, toX, toZ, tankRadius = 2, y = null) {
 
   // Check obstacles
   for (const obs of OBSTACLES) {
-    const obstacleHeight = obs.h || 4;
-    const obstacleBase = obs.baseY || 0;
+    const obstacleHeight = obs.h;
+    const obstacleBase = obs.baseY;
     const obstacleTop = obstacleBase + obstacleHeight;
 
     // If tank can pass under or over, skip its normal
-    if (y !== null && (y < obstacleBase || y >= obstacleTop * 0.75)) {
+    if (toY + tankRadius <= obstacleBase || toY >= obstacleTop) {
       continue;
     }
     const halfW = obs.w / 2;
@@ -3162,6 +3160,7 @@ let intendedForward = 0; // -1..1
 let intendedRotation = 0; // -1..1
 let intendedY = 0; // -1..1 (for jump/momentum)
 let jumpTriggered = false;
+let isInAir = false;
 
 function handleInputEvents() {
   // Reset intended input each frame
@@ -3200,7 +3199,7 @@ function handleInputEvents() {
       }
     }
   }
-  const isInAir = !onGround && !onObstacle;
+  isInAir = !onGround && !onObstacle;
 
   if (isPaused || pauseCountdownStart > 0) return;
 
@@ -3267,11 +3266,13 @@ function handleMotion(deltaTime) {
   if (!jumpTriggered && myTank.position.y <= 0) {
     myTank.userData.verticalVelocity = 0;
     myTank.position.y = 0;
-  } else {
+  }
+
+  if (isInAir) {
     myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
   }
 
-  if (jumpTriggered && !(myTank.position.y > 0)) {
+  if (jumpTriggered && !isInAir) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     if (jumpSound && jumpSound.isPlaying) jumpSound.stop();
@@ -3279,37 +3280,20 @@ function handleMotion(deltaTime) {
   }
 
   const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
-  if (result.moved) {
-    moved = true;
-    playerX = result.x;
-    playerY = result.y;
-    playerZ = result.z;
-  }
 
-  let currentlyOnObstacle = false;
-  if (myTank && !jumpTriggered && Math.abs(myTank.userData.verticalVelocity || 0) < 1) {
-    const moveResult = validateMove(playerX, playerY, playerZ, 0, 0, 0, 2);
-    if (moveResult.landedType === 'obstacle' && moveResult.landedOn) {
-      const obstacleBase = moveResult.landedOn.baseY || 0;
-      const obstacleHeight = moveResult.landedOn.h || 4;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      myTank.position.y = obstacleTop;
-      playerY = obstacleTop;
-      currentlyOnObstacle = true;
-    } else if (moveResult.startedFalling) {
-      if (!myTank.userData.verticalVelocity || myTank.userData.verticalVelocity === 0) {
-        myTank.userData.verticalVelocity = -1;
-      }
-    } else {
-      myTank.position.y = 0;
-      playerY = 0;
-    }
+  if (result.startedFalling) {
+    myTank.userData.verticalVelocity = -0.01;
+  } else if (result.landedOn) {
+    myTank.userData.verticalVelocity = 0;
   }
 
   let forwardSpeed = 0;
   let rotationSpeed = myTank.userData.rotationSpeed || 0;
 
-  if (moved) {
+  if (result.moved) {
+    playerX = result.x;
+    playerY = result.y;
+    playerZ = result.z;
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
@@ -3752,14 +3736,14 @@ function updateTreads(deltaTime) {
     const rotationDistance = rotationSpeed * tankRotSpeed * deltaTime * treadWidth / 2;
 
     // Left tread speed (positive rotation = turn right, left tread goes faster)
-    const leftDistance = forwardDistance + rotationDistance;
+    const leftDistance = forwardDistance - rotationDistance;
     // Right tread speed (positive rotation = turn right, right tread goes slower)
-    const rightDistance = forwardDistance - rotationDistance;
+    const rightDistance = forwardDistance + rotationDistance;
 
     // Adjust multiplier for more realistic tread speed
     const treadSpeed = 0.5;
-    tank.userData.leftTreadOffset += leftDistance * treadSpeed;
-    tank.userData.rightTreadOffset += rightDistance * treadSpeed;
+    tank.userData.leftTreadOffset -= leftDistance * treadSpeed;
+    tank.userData.rightTreadOffset -= rightDistance * treadSpeed;
 
     // Animate left tread textures
     if (tank.userData.leftTreadTextures) {

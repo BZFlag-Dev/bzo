@@ -93,7 +93,7 @@ function generateObstacles() {
         baseY = 3 + Math.random() * 3;
       }
 
-      obstacle = { x, z, w, d, h, baseY, rotation };
+      obstacle = { x, z, w, d, h, baseY, rotation, name: `O${i}` };
 
       // Check distance from center
       const distFromCenter = Math.sqrt(x * x + z * z);
@@ -126,8 +126,13 @@ function generateObstacles() {
 }
 
 const OBSTACLES = generateObstacles();
+//const OBSTACLES = [
+//  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
+//  {"x":0,"z":-10,"w":5,"d":5,"h":4,"baseY":0,"rotation":0,"name":"O1"}
+//];
+log(OBSTACLES);
 
-// Generate random clouds with fractal pattern
+// Generate random clouds with fractal patter.
 function generateClouds() {
   const clouds = [];
   const numClouds = 15;
@@ -330,7 +335,7 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function checkCollision(x, z, tankRadius = 2, y = null) {
+function checkCollision(x, y, z, tankRadius = 2) {
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
 
   // Check map boundaries (always check regardless of height)
@@ -341,6 +346,16 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
 
   // Check obstacles
   for (const obs of OBSTACLES) {
+    const tankHeight = 2;
+    const epsilon = 0.01; // Allow small tolerance for being on top
+    // Allow passing under if tank top is below obstacle base
+    if (y + tankHeight <= obs.baseY + epsilon) {
+      continue;
+    }
+    // Allow passing over
+    if (y >= obs.baseY + obs.h - epsilon) {
+      continue;
+    }
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const rotation = obs.rotation || 0;
@@ -367,35 +382,11 @@ function checkCollision(x, z, tankRadius = 2, y = null) {
     if (distSquared < tankRadius * tankRadius) {
       const obstacleBase = obs.baseY || 0;
       const obstacleTop = obstacleBase + obstacleHeight;
-      const tankHeight = 2;
-      if (y !== null) {
-        // Allow passing under if tank top is below obstacle base
-        if (y + tankHeight <= obstacleBase) {
-          continue;
-        }
-        // Block jumping up into obstacle: if tank bottom is below base and top is above base
-        if (y < obstacleBase && y + tankHeight > obstacleBase) {
-          log(`[SERVER COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(5) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${y !== null ? (y-obstacleTop).toFixed(5) : 'null'}`);
-          return obs;
-        }
-        // Allow passing over if above 75% of top
-        if (y >= obstacleTop * 0.75) {
-          continue;
-        }
-        // Allow being on or just below the obstacle top (within epsilon)
-        const epsilon = 0.15;
-        if (y >= obstacleTop - epsilon && y <= obstacleTop + epsilon) {
-          continue;
-        }
-        // Block if inside the vertical range (strictly below top - epsilon)
-        if (y >= obstacleBase && y < obstacleTop - epsilon) {
-          log(`[SERVER COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(5) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${y !== null ? (y-obstacleTop).toFixed(5) : 'null'}`);
-          return obs;
-        }
-      } else {
-        log(`[SERVER COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(5) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${y !== null ? (y-obstacleTop).toFixed(5) : 'null'}`);
-        return obs;
+      // Block if inside the vertical range (strictly below top - epsilon)
+      if (y >= obstacleBase + epsilon && y < obstacleTop - epsilon) {
+        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)}, rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${(y-obstacleTop).toFixed(5)}`);
       }
+      return obs;
     }
   }
 
@@ -413,7 +404,7 @@ function findValidSpawnPosition(tankRadius = 2) {
     const z = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
     const rotation = Math.random() * Math.PI * 2;
 
-    if (!checkCollision(x, z, tankRadius)) {
+    if (!checkCollision(x, y, z, tankRadius)) {
       return { x, y, z, rotation };
     }
   }
@@ -455,36 +446,17 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime) {
   }
 
   // Check collision with obstacles (pass Y position)
-  let collision = checkCollision(newX, newZ, 2, player.y);
-  if (collision && collision.type === 'boundary') {
-    // Try sliding along X axis only
-    let slideX = checkCollision(newX, player.z, 2, player.y);
-    if (!slideX) {
-      // Allow movement along X only
-      newZ = player.z;
-      collision = null;
-    } else {
-      // Try sliding along Z axis only
-      let slideZ = checkCollision(player.x, newZ, 2, player.y);
-      if (!slideZ) {
-        // Allow movement along Z only
-        newX = player.x;
-        collision = null;
-      }
-    }
-    if (collision && collision.type === 'boundary') {
-      log(`Player "${player.name}" collided with map boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
-      return false;
-    }
-  }
+  let collision = checkCollision(newX, newY, newZ, 2);
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback
       log(`Player "${player.name}" collided with unknown object x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+    } else if (collision.type === 'boundary') {
+      log(`Player "${player.name}" collided boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
     } else {
       // Log obstacle details
       const { x, z, w, d, h, baseY, rotation } = collision;
-      log(`Player "${player.name}" collided with obstacle x:${x.toFixed(2)}, z:${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, baseY:${baseY.toFixed(2)}, rotation:${rotation.toFixed(2)} (player x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2) })`);
+      log(`Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
     }
     return false;
   }
@@ -1004,7 +976,7 @@ wss.on('connection', (ws, req) => {
           break;
       }
     } catch (err) {
-      logError('Error handling message:', err);
+      logError('Error handling message:', err.message);
     }
   });
 
