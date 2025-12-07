@@ -56,8 +56,24 @@ const GAME_CONFIG = {
   JUMP_COOLDOWN: 500, // ms between jumps
 };
 
-// --- Map selection: set to 'random' or 'bzw' ---
-const MAP_SOURCE = 'hix.bzw'; // 'random' for random map, or filename of BZW map
+// --- Map selection: load from config and maps/ directory ---
+const configPath = path.join(__dirname, 'server-config.json');
+let serverConfig = {};
+try {
+  serverConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (e) {
+  logError('Could not load server-config.json:', e);
+}
+
+let MAP_SOURCE = serverConfig.mapFile || 'random';
+let mapPath = '';
+if (MAP_SOURCE !== 'random') {
+  mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
+  if (!fs.existsSync(mapPath)) {
+    logError(`Map file not found: ${mapPath}. Reverting to random map.`);
+    MAP_SOURCE = 'random';
+  }
+}
 
 // Parse a BZW file and convert to obstacle format
 function parseBZWMap(filename) {
@@ -227,7 +243,7 @@ if (MAP_SOURCE === 'random') {
 //  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
 //  {"x":0,"z":-10,"w":5,"d":5,"h":4,"baseY":0,"rotation":0,"name":"O1"}
 //];
-log(OBSTACLES);
+//log(OBSTACLES);
 
 // Generate random clouds with fractal patter.
 function generateClouds() {
