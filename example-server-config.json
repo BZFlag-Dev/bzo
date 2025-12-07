@@ -1,0 +1,8 @@
+{
+  "serverName": "BZFlag Test Server",
+  "description": "A test server for BZFlag-style tank game with map selection.",
+  "mapFile": "test.bzw", // or "random" for random map
+  "motd": "Welcome to the test server!",
+  "maxPlayers": 16,
+  "port": 3000
+}
