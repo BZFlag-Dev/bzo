@@ -1420,24 +1420,48 @@ function recreateObstacles() {
     let mesh;
     if (obs.type === 'pyramid') {
       // Pyramid: use ConeGeometry with 4 sides (square base)
-      const base = Math.max(obs.w, obs.d);
-      const geometry = new THREE.ConeGeometry(base / 2, h, 4, 1);
-      geometry.rotateY(Math.PI / 4); // Align base with axes
+      // Always use a unit square base (side 1) for geometry, then scale to match obs.d and obs.w
+      const geometry = new THREE.ConeGeometry(0.5 / Math.SQRT2, h, 4, 1); // base square: 1x1
+      // Ensure geometry groups for multi-material: sides (0), base (1)
+      geometry.clearGroups();
+      // Sides: faces 0 to geometry.index.count - 4 (each face is 3 indices, last 4 faces are base)
+      geometry.addGroup(0, geometry.index.count - 12, 0); // sides
+      geometry.addGroup(geometry.index.count - 12, 12, 1); // base (last 4 faces)
+      geometry.rotateY(-Math.PI / 4); // align with axes
+      // Rotate so long side runs North-South (Y axis)
+      if (obs.w > obs.d) {
+        geometry.rotateY(Math.PI / 2);
+      }
+      // Scale to match obs.w (X) and obs.d (Z) so base is exactly obs.w x obs.d in world
+      geometry.scale(2 * obs.w, 1, 2 * obs.d);
       if (obs.inverted) {
         geometry.rotateX(Math.PI); // Invert pyramid
       }
-      // Sand-like texture for pyramid
+      // Use concrete texture for pyramid base (same as box top/bottom)
+      const concreteTexture = createObstacleTexture();
+      concreteTexture.wrapS = THREE.RepeatWrapping;
+      concreteTexture.wrapT = THREE.RepeatWrapping;
+      concreteTexture.repeat.set(obs.w, obs.d);
+      // Invert texture for inverted pyramids
+      if (obs.inverted) {
+        concreteTexture.rotation = Math.PI;
+        concreteTexture.center.set(0.5, 0.5);
+      }
       const pyramidTexture = createPyramidTexture();
       pyramidTexture.wrapS = THREE.RepeatWrapping;
       pyramidTexture.wrapT = THREE.RepeatWrapping;
-      pyramidTexture.repeat.set(2, 1);
+      pyramidTexture.repeat.set(obs.w, obs.h);
+      // Multi-material: [sides, base]
       mesh = new THREE.Mesh(
         geometry,
-        new THREE.MeshLambertMaterial({ map: pyramidTexture, flatShading: true })
+        [
+          new THREE.MeshLambertMaterial({ map: pyramidTexture, flatShading: true }), // sides
+          new THREE.MeshLambertMaterial({ map: concreteTexture, flatShading: true })  // base
+        ]
       );
       // For inverted, base is on top, so adjust position
       if (obs.inverted) {
-        mesh.position.set(obs.x, baseY + h, obs.z);
+        mesh.position.set(obs.x, baseY + h / 2, obs.z);
       } else {
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
       }
@@ -1447,15 +1471,17 @@ function recreateObstacles() {
       scene.add(mesh);
       obstacleMeshes.push(mesh);
     } else {
-      // Box (default)
+      // Box (default, now aligned: width=X=w, depth=Z=d)
       const concreteTexture = createObstacleTexture();
       concreteTexture.wrapS = THREE.RepeatWrapping;
       concreteTexture.wrapT = THREE.RepeatWrapping;
-      concreteTexture.repeat.set(obs.w / 2, h / 2);
+      // Tile concrete texture by world units
+      concreteTexture.repeat.set(obs.w, h);
       const wallTexture = createWallTexture();
       wallTexture.wrapS = THREE.RepeatWrapping;
       wallTexture.wrapT = THREE.RepeatWrapping;
-      wallTexture.repeat.set(obs.d / 2, h / 2);
+      // Tile wall texture by world units
+      wallTexture.repeat.set(obs.d, h);
       const materials = [
         new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // right
         new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // left
@@ -1464,15 +1490,17 @@ function recreateObstacles() {
         new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // front
         new THREE.MeshLambertMaterial({ map: wallTexture.clone() })  // back
       ];
-      materials[0].map.repeat.set(obs.d / 2, h / 2); // right
-      materials[1].map.repeat.set(obs.d / 2, h / 2); // left
-      materials[4].map.repeat.set(obs.w / 2, h / 2); // front
-      materials[5].map.repeat.set(obs.w / 2, h / 2); // back
-      materials[2].map.repeat.set(obs.w / 2, obs.d / 2); // top
-      materials[3].map.repeat.set(obs.w / 2, obs.d / 2); // bottom
+      // Sides: repeat by world units (corrected)
+      materials[0].map.repeat.set(obs.d, h); // right
+      materials[1].map.repeat.set(obs.d, h); // left
+      materials[4].map.repeat.set(obs.w, h); // front
+      materials[5].map.repeat.set(obs.w, h); // back
+      // Top/bottom: repeat by world units
+      materials[2].map.repeat.set(obs.w, obs.d); // top
+      materials[3].map.repeat.set(obs.w, obs.d); // bottom
       materials.forEach(m => { m.map.needsUpdate = true; });
       mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(obs.w, h, obs.d),
+        new THREE.BoxGeometry(obs.w, h, obs.d), // Aligned: width=X=w, depth=Z=d
         materials
       );
       mesh.position.set(obs.x, baseY + h / 2, obs.z);
@@ -1897,6 +1925,10 @@ function updateDebugDisplay() {
   if (!debugContent) return;
 
   const tank = tanks.get(myPlayerId);
+  if (!tank) {
+    debugContent.innerHTML = '<div>No player tank data available.</div>';
+    return;
+  }
 
   let html = '<div style="margin-bottom: 10px; font-weight: bold;">PLAYER STATUS:</div>';
 
@@ -1910,11 +1942,12 @@ function updateDebugDisplay() {
     }
     html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
-    html += `<div><span class="label">Speed:</span><span class="value">${myTank.userData.forwardSpeed.toFixed(2)} u/s</span></div>`;
-    html += `<div><span class="label">Angular:</span><span class="value">${myTank.userData.rotationSpeed.toFixed(2)} rad/s</span></div>`;
-    const verticalSpeed = myTank && myTank.userData && typeof myTank.userData.verticalSpeed === 'number' ? myTank.userData.verticalSpeed : 0;
-    html += `<div><span class="label">Vertical:</span><span class="value">${verticalSpeed.toFixed(2)} u/s</span></div>`;
-    html += `<div><span class="label">Position:</span><span class="value">(${myTank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
+    try {
+    html += `<div><span class="label">Speed:</span><span class="value">${tank.userData.forwardSpeed.toFixed(2)} u/s</span></div>`;
+    html += `<div><span class="label">Angular:</span><span class="value">${tank.userData.rotationSpeed.toFixed(2)} rad/s</span></div>`;
+    html += `<div><span class="label">Vertical:</span><span class="value">${tank.userData.verticalSpeed.toFixed(2)} u/s</span></div>`;
+    } catch (e) {}
+    html += `<div><span class="label">Position:</span><span class="value">(${tank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
     html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
 
     html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
@@ -2156,6 +2189,8 @@ function handleServerMessage(message) {
         myTank.rotation.y = playerRotation;
         myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
         myTank.userData.playerState = message.player;
+        myTank.userData.fowardSpeed = message.player.forwardSpeed || 0;
+        myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
         scene.add(myTank);
         tanks.set(myPlayerId, myTank);
 
@@ -2901,7 +2936,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
         }
         if (y >= obstacleBase && y < obstacleTop) {
           if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', to: -1,text: `[COLLISION] x:${x.toFixed(2)}, y:${y !== null ? y.toFixed(2) : 'null'}, z:${z.toFixed(2)} obs: x:${obs.x.toFixed(2)}, z:${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, base:${obstacleBase.toFixed(2)}, height:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+            sendToServer({ type: 'chat', to: -1,text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
           }
           return true;
         }
