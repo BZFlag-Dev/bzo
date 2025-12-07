@@ -343,8 +343,38 @@ function toggleOperatorPanel() {
     operatorOverlay.style.setProperty('display', 'block');
     showMessage('Operator Panel: Shown');
     console.log('OperatorOverlay display set to block:', operatorOverlay.style.display);
+    // Request map list from server when panel is shown
+    if (window.ws && window.ws.readyState === 1) {
+      const reqId = Math.floor(Math.random() * 1e9);
+      window.ws.send(JSON.stringify({ type: 'admin', action: 'getMaps', adminReqId: reqId }));
+      window._operatorMapReqId = reqId;
+    }
   }
   updateOperatorBtn();
+// Handle admin responses (map list, motd, etc.)
+function handleAdminResponse(message) {
+  if (message.maps && Array.isArray(message.maps)) {
+    const mapList = document.getElementById('mapList');
+    if (mapList) {
+      mapList.innerHTML = '';
+      // Add 'random' option
+      const randomOption = document.createElement('option');
+      randomOption.value = 'random';
+      randomOption.textContent = 'Random Map';
+      mapList.appendChild(randomOption);
+      message.maps.forEach(map => {
+        const opt = document.createElement('option');
+        opt.value = map;
+        opt.textContent = map;
+        mapList.appendChild(opt);
+      });
+    }
+  }
+  if (message.motd) {
+    const motdEl = document.getElementById('motd');
+    if (motdEl) motdEl.textContent = 'MOTD: ' + message.motd;
+  }
+}
 }
 
 // Mouse movement toggle button
@@ -2079,6 +2109,11 @@ function connectToServer() {
 }
 
 function handleServerMessage(message) {
+  // Intercept admin responses for operator panel
+  if (message.adminReqId && (message.maps || message.motd || message.success || message.error)) {
+    handleAdminResponse(message);
+    return;
+  }
   switch (message.type) {
     case 'init':
       // Show server info in entryDialog
