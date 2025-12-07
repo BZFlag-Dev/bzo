@@ -899,15 +899,6 @@ wss.on('connection', (ws, req) => {
           });
           return;
         }
-        if (message.action === 'getMotd') {
-          try {
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            sendAdminResp({ motd: config.motd || '' });
-          } catch (e) {
-            sendAdminResp({ error: 'Failed to read MOTD' });
-          }
-          return;
-        }
         if (message.action === 'setMap') {
           const mapFile = message.mapFile;
           if (!mapFile || (mapFile !== 'random' && !mapFile.endsWith('.bzw'))) {

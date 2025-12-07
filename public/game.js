@@ -351,30 +351,6 @@ function toggleOperatorPanel() {
     }
   }
   updateOperatorBtn();
-// Handle admin responses (map list, motd, etc.)
-function handleAdminResponse(message) {
-  if (message.maps && Array.isArray(message.maps)) {
-    const mapList = document.getElementById('mapList');
-    if (mapList) {
-      mapList.innerHTML = '';
-      // Add 'random' option
-      const randomOption = document.createElement('option');
-      randomOption.value = 'random';
-      randomOption.textContent = 'Random Map';
-      mapList.appendChild(randomOption);
-      message.maps.forEach(map => {
-        const opt = document.createElement('option');
-        opt.value = map;
-        opt.textContent = map;
-        mapList.appendChild(opt);
-      });
-    }
-  }
-  if (message.motd) {
-    const motdEl = document.getElementById('motd');
-    if (motdEl) motdEl.textContent = 'MOTD: ' + message.motd;
-  }
-}
 }
 
 // Mouse movement toggle button
@@ -2119,7 +2095,7 @@ function connectToServer() {
 
 function handleServerMessage(message) {
   // Intercept admin responses for operator panel
-  if (message.adminReqId && (message.maps || message.motd || message.success || message.error)) {
+  if (message.adminReqId && (message.maps || message.success || message.error)) {
     handleAdminResponse(message);
     return;
   }
@@ -3808,6 +3784,7 @@ function updateRadar() {
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
       const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+
       // Obstacle size scaling
       const scale = (radius - 16) / SHOT_DISTANCE;
       const w = (obs.w || 8) * scale;

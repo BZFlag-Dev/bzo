@@ -18,8 +18,6 @@
 }
 
 /* Chat window responsive wrapping and scrolling */
-
-
 #chatTarget,
 #chatInput {
   height: 32px;
@@ -195,6 +193,7 @@
 @media (min-width: 900px) {
   #controlsOverlay { display: none; }
 }
+
 #hudButtons button {
   background: var(--color-btn-bg);
   color: var(--color-accent);
@@ -219,7 +218,6 @@
   background: var(--color-btn-bg-hover);
   color: var(--color-fg);
 }
-
 
 body {
   font-family: 'Arial', sans-serif;
@@ -386,7 +384,6 @@ body {
 
 /* Operator Panel Styling */
 #operatorOverlay {
-#operatorOverlay {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -448,6 +445,8 @@ body {
 #operatorOverlay button:active {
   background: rgba(76, 175, 80, 0.6);
 }
+
+#entryDialog {
   position: absolute;
   top: 50%;
   left: 50%;
