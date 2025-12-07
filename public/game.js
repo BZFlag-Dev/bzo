@@ -389,6 +389,15 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+  const operatorOverlay = document.getElementById('operatorOverlay');
+  if (operatorOverlay) {
+    ['click', 'mousedown', 'mouseup'].forEach(evt => {
+      operatorOverlay.addEventListener(evt, function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+      });
+    });
+  }
   // ...existing code...
   setupMobileOrientationDebug();
   const mouseBtn = document.getElementById('mouseBtn');
