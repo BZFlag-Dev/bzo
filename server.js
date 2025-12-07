@@ -149,6 +149,7 @@ function parseBZWMap(filename) {
 // Generate random obstacles on server start
 function generateObstacles() {
   const obstacles = [];
+  GAME_CONFIG.MAP_SIZE = 100;
   const mapSize = GAME_CONFIG.MAP_SIZE;
   const numBoxes = Math.floor(mapSize * mapSize / 2000 + Math.random() * 3);
   const numPyramids = Math.floor(numBoxes / 2);
