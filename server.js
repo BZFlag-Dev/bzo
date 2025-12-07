@@ -53,9 +53,9 @@ const wss = new WebSocketServer({ server });
 // Game constants
 const GAME_CONFIG = {
   MAP_SIZE: 400,
-  TANK_SPEED: 5, // units per second
+  TANK_SPEED: 10, // units per second
   TANK_ROTATION_SPEED: 2, // radians per second
-  SHOT_SPEED: 20,
+  SHOT_SPEED: 30,
   SHOT_COOLDOWN: 1000, // ms
   SHOT_DISTANCE: 50, // Max distance a shot can travel
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
