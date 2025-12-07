@@ -67,7 +67,20 @@ function parseBZWMap(filename) {
   let current = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (line.startsWith('box')) {
+    if (line.startsWith('world')) {
+      // Look ahead for size
+      for (let j = i + 1; j < lines.length; j++) {
+        const wline = lines[j].trim();
+        if (wline.startsWith('size')) {
+          const [, size] = wline.split(/\s+/);
+          if (size) {
+            GAME_CONFIG.MAP_SIZE = parseFloat(size);
+          }
+          break;
+        }
+        if (wline === 'end') break;
+      }
+    } else if (line.startsWith('box')) {
       current = { type: 'box' };
     } else if (line.startsWith('pyramid')) {
       current = { type: 'pyramid' };
@@ -214,7 +227,7 @@ if (MAP_SOURCE === 'random') {
 //  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
 //  {"x":0,"z":-10,"w":5,"d":5,"h":4,"baseY":0,"rotation":0,"name":"O1"}
 //];
-//log(OBSTACLES);
+log(OBSTACLES);
 
 // Generate random clouds with fractal patter.
 function generateClouds() {
