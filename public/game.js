@@ -189,9 +189,7 @@ function setupMobileOrientationDebug() {
     requestOrientationPermission();
   }
 }
-window.addEventListener('DOMContentLoaded', () => {
-  setupMobileOrientationDebug();
-});
+
 // Cobblestone texture for boundary walls
 function createCobblestoneTexture() {
   const canvas = document.createElement('canvas');
@@ -317,40 +315,82 @@ function toggleDebugHud() {
 const keys = {};
 let lastShotTime = 0;
 
+// Operator Panel logic: make globally accessible
+function updateOperatorBtn() {
+  const operatorBtn = document.getElementById('operatorBtn');
+  const operatorOverlay = document.getElementById('operatorOverlay');
+  if (!operatorBtn || !operatorOverlay) return;
+  if (operatorOverlay.style.display === 'block') {
+    operatorBtn.classList.add('active');
+    operatorBtn.title = 'Hide Operator Panel (O)';
+  } else {
+    operatorBtn.classList.remove('active');
+    operatorBtn.title = 'Show Operator Panel (O)';
+  }
+}
+
+function toggleOperatorPanel() {
+  const operatorOverlay = document.getElementById('operatorOverlay');
+  if (!operatorOverlay) return;
+  // Use computed style to check visibility
+  const computedStyle = window.getComputedStyle(operatorOverlay);
+  const isVisible = computedStyle.display !== 'none';
+  if (isVisible) {
+    operatorOverlay.style.setProperty('display', 'none');
+    showMessage('Operator Panel: Hidden');
+    console.log('OperatorOverlay display set to none:', operatorOverlay.style.display);
+  } else {
+    operatorOverlay.style.setProperty('display', 'block');
+    showMessage('Operator Panel: Shown');
+    console.log('OperatorOverlay display set to block:', operatorOverlay.style.display);
+  }
+  updateOperatorBtn();
+}
+
 // Mouse movement toggle button
 window.addEventListener('DOMContentLoaded', () => {
+  // Prevent mouse events on mainhud from passing through and triggering game actions
+  const mainhud = document.getElementById('mainhud');
+  if (mainhud) {
+    ['click', 'mousedown', 'mouseup'].forEach(evt => {
+      mainhud.addEventListener(evt, function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+      });
+    });
+  }
+  // ...existing code...
+  setupMobileOrientationDebug();
   const mouseBtn = document.getElementById('mouseBtn');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
   const debugBtn = document.getElementById('debugBtn');
   const cameraBtn = document.getElementById('cameraBtn');
   const helpBtn = document.getElementById('helpBtn');
-  if (helpBtn) {
-    const helpPanel = document.getElementById('helpPanel');
-    function updateHelpBtn() {
-      if (!helpPanel) return;
-      if (helpPanel.style.display === 'block') {
-        helpBtn.classList.add('active');
-        helpBtn.title = 'Hide Help (?)';
-      } else {
-        helpBtn.classList.remove('active');
-        helpBtn.title = 'Show Help (?)';
-      }
+  const playerNameEl = document.getElementById('playerName');
+  const helpPanel = document.getElementById('helpPanel');
+
+  function updateHelpBtn() {
+    if (!helpPanel || !helpBtn) return;
+    if (helpPanel.style.display === 'block') {
+      helpBtn.classList.add('active');
+      helpBtn.title = 'Hide Help (?)';
+    } else {
+      helpBtn.classList.remove('active');
+      helpBtn.title = 'Show Help (?)';
     }
-    helpBtn.addEventListener('click', () => {
-      if (!helpPanel) return;
-      helpPanel.style.display = (helpPanel.style.display === 'none' || !helpPanel.style.display) ? 'block' : 'none';
-      updateHelpBtn();
-    });
-    // Also update on load in case help is open by default
-    updateHelpBtn();
   }
 
-  // Restore camera mode from localStorage
-  const savedCameraMode = localStorage.getItem('cameraMode');
-  if (savedCameraMode === 'first-person' || savedCameraMode === 'third-person' || savedCameraMode === 'overview') {
-    cameraMode = savedCameraMode;
+  function toggleHelpPanel() {
+    if (!helpPanel) return;
+    if (helpPanel.style.display === 'block') {
+      helpPanel.style.display = 'none';
+      showMessage('Help Panel: Hidden');
+    } else {
+      helpPanel.style.display = 'block';
+      showMessage('Help Panel: Shown');
+    }
+    updateHelpBtn();
   }
-  // --- HUD/Key Handler Functions ---
 
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
@@ -358,7 +398,6 @@ window.addEventListener('DOMContentLoaded', () => {
     } else {
       document.exitFullscreen();
     }
-    // Log screen resolution to chat
     setTimeout(() => {
       const w = window.innerWidth;
       const h = window.innerHeight;
@@ -382,32 +421,51 @@ window.addEventListener('DOMContentLoaded', () => {
     if (typeof updateHudButtons === 'function') updateHudButtons();
   }
 
-  function toggleHelpPanel() {
-    if (!helpPanel) return;
-    helpPanel.style.display = (helpPanel.style.display === 'none' || !helpPanel.style.display) ? 'block' : 'none';
-    updateHelpBtn();
+  // Restore camera mode from localStorage
+  const savedCameraMode = localStorage.getItem('cameraMode');
+  if (savedCameraMode === 'first-person' || savedCameraMode === 'third-person' || savedCameraMode === 'overview') {
+    cameraMode = savedCameraMode;
   }
-
-  // Restore states from localStorage
-  // (savedCameraMode already declared above)
+  // Restore mouse mode from localStorage
   const savedMouseMode = localStorage.getItem('mouseControlEnabled');
   if (savedMouseMode === 'true') mouseControlEnabled = true;
 
-  // --- Attach HUD Button Handlers ---
+  // Attach HUD Button Handlers (only once)
   if (mouseBtn) mouseBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleMouseMode(); });
   if (fullscreenBtn) fullscreenBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
   if (debugBtn) debugBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleDebugHud(); });
   if (cameraBtn) cameraBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleCameraMode(); });
   if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel(); });
+  if (helpBtn) updateHelpBtn();
+  if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
+  if (operatorBtn) updateOperatorBtn();
+  if (playerNameEl) playerNameEl.addEventListener('click', () => {
+    localStorage.removeItem('playerName');
+    if (window.ws && window.ws.readyState === 1) {
+      window.ws.send(JSON.stringify({ type: 'leaveGame' }));
+    }
+    if (window.myTank && window.scene) {
+      window.scene.remove(window.myTank);
+      window.myTank = null;
+    }
+    if (typeof window.cameraMode !== 'undefined') {
+      window.cameraMode = 'overview';
+    }
+    const entryDialog = document.getElementById('entryDialog');
+    if (entryDialog) {
+      entryDialog.style.display = 'block';
+    }
+    window.isPaused = true;
+  });
 
-  // --- Attach Key Handlers ---
+  // Attach Key Handlers
   document.addEventListener('keydown', (e) => {
-    // Block all game/keyboard navigation keys if typing in chat
     if (document.activeElement === chatInput) return;
     if (e.key === 'm' || e.key === 'M') toggleMouseMode();
     else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
     else if (e.key === 'i' || e.key === 'I') toggleDebugHud();
     else if (e.key === 'c' || e.key === 'C') toggleCameraMode();
+    else if (e.key === 'o' || e.key === 'O') toggleOperatorPanel();
     else if (e.key === '?' || e.key === '/') toggleHelpPanel();
   });
   updateHudButtons();
@@ -831,8 +889,8 @@ function init() {
   window.addEventListener('resize', onWindowResize);
   document.addEventListener('keydown', (e) => {
     // Check if name dialog is open (declare once at top)
-    const nameDialog = document.getElementById('nameDialog');
-    const isNameDialogOpen = nameDialog && nameDialog.style.display === 'block';
+    const entryDialog = document.getElementById('entryDialog');
+    const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
 
     // Allow pause/unpause with P key even when paused
     if (e.code === 'KeyP') {
@@ -843,7 +901,7 @@ function init() {
     }
 
     // Activate chat with / or t, but NOT if name dialog is open
-    if (!chatActive && !isNameDialogOpen && (e.key === '/' || e.key === 't' || e.key === 'T')) {
+    if (!chatActive && !isentryDialogOpen && (e.key === '/' || e.key === 't' || e.key === 'T')) {
       chatInput.value = '';
       chatInput.focus();
       e.preventDefault();
@@ -856,26 +914,15 @@ function init() {
     }
 
     // Don't register game keys if dialog is open (except allow Escape to close things)
-    if (!isNameDialogOpen || e.code === 'Escape') {
+    if (!isentryDialogOpen || e.code === 'Escape') {
       keys[e.code] = true;
     }
 
     // If name dialog is open, only allow Escape and don't process other game controls
-    if (isNameDialogOpen && e.code !== 'Escape') {
+    if (isentryDialogOpen && e.code !== 'Escape') {
       return;
     }
-
-    // Toggle help panel with ? key (Shift+/)
-    if (e.key === '?') {
-      const helpPanel = document.getElementById('helpPanel');
-      if (helpPanel.style.display === 'none') {
-        helpPanel.style.display = 'block';
-      } else {
-        helpPanel.style.display = 'none';
-      }
-      e.preventDefault();
-      return;
-    }
+    // Prevent tab key default behavior
     if (e.key === 'Tab') {
       e.preventDefault();
       return;
@@ -884,8 +931,8 @@ function init() {
     // Switch to keyboard controls with Escape key (also closes dialogs)
     if (e.code === 'Escape') {
       // Close name dialog if open
-      if (isNameDialogOpen) {
-        nameDialog.style.display = 'none';
+      if (isentryDialogOpen) {
+        entryDialog.style.display = 'none';
         return;
       }
 
@@ -895,11 +942,11 @@ function init() {
   });
   document.addEventListener('keyup', (e) => {
     // Check if name dialog is open
-    const nameDialog = document.getElementById('nameDialog');
-    const isNameDialogOpen = nameDialog && nameDialog.style.display === 'block';
+    const entryDialog = document.getElementById('entryDialog');
+    const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
 
     // Only clear keys if dialog is not open
-    if (!isNameDialogOpen) {
+    if (!isentryDialogOpen) {
       keys[e.code] = false;
     }
   });
@@ -944,7 +991,6 @@ function init() {
         justActivatedMouseControl = false;
         return;
       }
-      // ...existing code...
       keys['Space'] = true;
     }
   });
@@ -967,37 +1013,37 @@ function init() {
 
   // Load saved player name from localStorage
   const savedName = localStorage.getItem('playerName');
-  const nameDialog = document.getElementById('nameDialog');
-  const nameInput = document.getElementById('nameInput');
-  let isNameDialogOpen = false;
+  const entryDialog = document.getElementById('entryDialog');
+  const entryInput = document.getElementById('entryInput');
+  let isentryDialogOpen = false;
   if (savedName && savedName.trim().length > 0) {
     const trimmed = savedName.trim();
     // Show dialog if name is 'Player' or 'Player n'
     if (trimmed === 'Player' || /^Player \d+$/.test(trimmed)) {
-      if (nameDialog) {
-        nameDialog.style.display = 'block';
+      if (entryDialog) {
+        entryDialog.style.display = 'block';
         isPaused = true;
-        isNameDialogOpen = true;
-        if (nameInput) {
-          nameInput.value = '';
-          nameInput.focus();
+        isentryDialogOpen = true;
+        if (entryInput) {
+          entryInput.value = '';
+          entryInput.focus();
         }
       }
     } else {
       myPlayerName = savedName;
       // Join game directly
-      if (nameDialog) nameDialog.style.display = 'none';
-      isNameDialogOpen = false;
+      if (entryDialog) entryDialog.style.display = 'none';
+      isentryDialogOpen = false;
     }
   } else {
     // Pause and show name dialog
-    if (nameDialog) {
-      nameDialog.style.display = 'block';
+    if (entryDialog) {
+      entryDialog.style.display = 'block';
       isPaused = true;
-      isNameDialogOpen = true;
-      if (nameInput) {
-        nameInput.value = '';
-        nameInput.focus();
+      isentryDialogOpen = true;
+      if (entryInput) {
+        entryInput.value = '';
+        entryInput.focus();
       }
     }
   }
@@ -1008,42 +1054,39 @@ function init() {
   const nameDefaultButton = document.getElementById('nameDefaultButton');
   const nameCancelButton = document.getElementById('nameCancelButton');
 
-  if (playerNameEl && nameDialog) {
+  if (playerNameEl && entryDialog) {
     playerNameEl.addEventListener('click', () => {
-      nameInput.value = myPlayerName;
-      nameDialog.style.display = 'block';
+      entryInput.value = myPlayerName;
+      entryDialog.style.display = 'block';
       isPaused = true;
-      isNameDialogOpen = true;
-      nameInput.focus();
-      nameInput.select();
+      isentryDialogOpen = true;
+      entryInput.focus();
+      entryInput.select();
     });
 
     // Stop clicks from propagating to the game
-    nameDialog.addEventListener('click', (e) => {
+    entryDialog.addEventListener('click', (e) => {
       e.stopPropagation();
     });
 
     nameOkButton.addEventListener('click', () => {
-      const newName = nameInput.value.trim().substring(0, 20);
+      const newName = entryInput.value.trim().substring(0, 20);
       if (newName.length > 0) {
         localStorage.setItem('playerName', newName);
         myPlayerName = newName;
-        // If not joined yet, send joinGame, else send changeName
-        if (!window.hasJoinedGame) {
-          sendToServer({
-            type: 'joinGame',
-            name: newName,
-          });
-          window.hasJoinedGame = true;
-        } else {
-          sendToServer({
-            type: 'changeName',
-            name: newName,
-          });
+        // Always leave and rejoin
+        if (window.ws && window.ws.readyState === 1) {
+          window.ws.send(JSON.stringify({ type: 'leaveGame' }));
         }
-        nameDialog.style.display = 'none';
+        window.hasJoinedGame = false;
+        sendToServer({
+          type: 'joinGame',
+          name: newName,
+        });
+        window.hasJoinedGame = true;
+        entryDialog.style.display = 'none';
         isPaused = false;
-        isNameDialogOpen = false;
+        isentryDialogOpen = false;
       }
     });
 
@@ -1051,35 +1094,32 @@ function init() {
       // Send blank name to server to request default Player n assignment
       localStorage.setItem('playerName', '');
       myPlayerName = '';
-      if (!window.hasJoinedGame) {
-        sendToServer({
-          type: 'joinGame',
-          name: "",
-        });
-        window.hasJoinedGame = true;
-      } else {
-        sendToServer({
-          type: 'changeName',
-          name: "",
-        });
+      if (window.ws && window.ws.readyState === 1) {
+        window.ws.send(JSON.stringify({ type: 'leaveGame' }));
       }
-      nameDialog.style.display = 'none';
+      window.hasJoinedGame = false;
+      sendToServer({
+        type: 'joinGame',
+        name: "",
+      });
+      window.hasJoinedGame = true;
+      entryDialog.style.display = 'none';
       isPaused = false;
-      isNameDialogOpen = false;
+      isentryDialogOpen = false;
     });
 
     nameCancelButton.addEventListener('click', () => {
       // Don't allow cancel if no name is set
       if (!localStorage.getItem('playerName')) {
-        nameInput.focus();
+        entryInput.focus();
         return;
       }
-      nameDialog.style.display = 'none';
+      entryDialog.style.display = 'none';
       isPaused = false;
-      isNameDialogOpen = false;
+      isentryDialogOpen = false;
     });
 
-    nameInput.addEventListener('keypress', (e) => {
+    entryInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         nameOkButton.click();
       } else if (e.key === 'Escape') {
@@ -2039,25 +2079,15 @@ function connectToServer() {
 }
 
 function handleServerMessage(message) {
-  if (message.type === 'chat') {
-     // Format: { type: 'chat', from, to, text, id }
-     // Lookup names for from/to
-    function getPlayerName(id) {
-      if (id === 0) return 'ALL';
-      if (id === -1) return 'SERVER';
-      const tank = tanks.get(id);
-      return tank && tank.userData && tank.userData.playerState && tank.userData.playerState.name ? tank.userData.playerState.name : `Player ${id}`;
-    }
-    const fromName = getPlayerName(message.from);
-    const toName = getPlayerName(message.to);
-    let prefix = `${fromName} -> ${toName} `;
-    chatMessages.push(prefix + message.text);
-    if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
-    updateChatWindow();
-    return;
-  }
   switch (message.type) {
     case 'init':
+      // Show server info in entryDialog
+      const serverNameEl = document.getElementById('serverName');
+      const serverDescriptionEl = document.getElementById('serverDescription');
+      const serverMotdEl = document.getElementById('serverMotd');
+      if (serverNameEl) serverNameEl.textContent = 'Server: ' + (message.serverName || '');
+      if (serverDescriptionEl) serverDescriptionEl.textContent = message.description || '';
+      if (serverMotdEl) serverMotdEl.textContent = message.motd || '';
       // Update player name at the top of the scoreboard and set myPlayerName to the name field
       if (message.player && message.player.name) {
         myPlayerName = message.player.name;
@@ -2106,14 +2136,14 @@ function handleServerMessage(message) {
 
       // If a default name is provided, use it for the join dialog
       if (message.player && message.player.defaultName) {
-        const nameInput = document.getElementById('nameInput');
-        const nameDialog = document.getElementById('nameDialog');
-        if (nameInput && nameDialog) {
-          nameInput.value = message.player.defaultName;
-          nameDialog.style.display = 'block';
+        const entryInput = document.getElementById('entryInput');
+        const entryDialog = document.getElementById('entryDialog');
+        if (entryInput && entryDialog) {
+          entryInput.value = message.player.defaultName;
+          entryDialog.style.display = 'block';
           isPaused = true;
-          nameInput.focus();
-          nameInput.select();
+          entryInput.focus();
+          entryInput.select();
         }
       }
       // Only set up world, not join yet

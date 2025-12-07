@@ -8,6 +8,22 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+    <div id="operatorOverlay" class="dialog" style="display:none">
+      <div class="dialogTitle">Operator Panel <button id="closeOperatorBtn" class="closeBtn">&times;</button></div>
+      <div class="dialogContent">
+        <div id="motd" style="margin-bottom: 10px; font-size: 1.1em; color: #4CAF50;">MOTD: </div>
+        <div style="margin-bottom: 10px;">
+          <label for="mapList">Map:</label>
+          <select id="mapList"></select>
+          <button id="restartBtn">Restart with Map</button>
+        </div>
+        <div style="margin-bottom: 10px;">
+          <label for="uploadMap">Upload Map:</label>
+          <input type="file" id="uploadMap" accept=".bzw,.txt">
+          <button id="uploadBtn">Upload</button>
+        </div>
+      </div>
+    </div>
   <!-- Mobile Controls Overlay (only visible on mobile) -->
   <!-- (Moved to end of body for z-index/DOM order reasons) -->
   <div id="mainhud">
@@ -19,6 +35,7 @@
         <button id="mouseBtn" title="Toggle Mouse Movement (M)">M</button>
         <button id="cameraBtn" title="Toggle Camera View (C)">C</button>
         <button id="helpBtn" title="Show Help (?)">?</button>
+        <button id="operatorBtn" title="Operator Panel (O)">O</button>
       </div>
     </div>
     <div id="scoreboard">
@@ -46,14 +63,15 @@
     <div id="debugContent"></div>
   </div>
 
-  <div id="nameDialog" style="display: none;">
+  <div id="entryDialog" style="display: none;">
     <h2>Battlezone Online</h2>
     <div id="serverInfo" style="margin-bottom: 10px; font-size: 1.1em; color: #333;">
-      <span id="serverName">Server: bz.rikers.org</span><br>
-      <span id="serverVersion">Version: 1.0.0</span>
+      <span id="serverName">Server:</span><br>
+      <span id="serverDescription"></span><br>
+      <span id="serverMotd" style="color: #4CAF50;"></span>
     </div>
-    <input type="text" id="nameInput" maxlength="20" placeholder="Enter your name">
-    <div class="nameDialogButtons">
+    <input type="text" id="entryInput" maxlength="20" placeholder="Enter your name">
+    <div class="entryDialogButtons">
       <button id="nameOkButton">OK</button>
       <button id="nameDefaultButton">Default</button>
       <button id="nameCancelButton">Cancel</button>
@@ -68,6 +86,8 @@
         <li><strong>F</strong> — <b>Fullscreen</b> (or click <b>F</b> button)</li>
         <li><strong>I</strong> — <b>Debug HUD</b> (or click <b>I</b> button)</li>
         <li><strong>M</strong> — <b>Mouse Movement</b> (or click <b>M</b> button)</li>
+        <li><strong>C</strong> — <b>Camera View</b> (or click <b>C</b> button)</li>
+        <li><strong>O</strong> — <b>Operator Panel</b> (or click <b>O</b> button)</li>
         <li><strong>?</strong> — <b>Show/Hide Help</b> (or click <b>?</b> button)</li>
       </ul>
 
@@ -79,6 +99,14 @@
         <li><strong>Tab</strong> — Jump</li>
         <li><strong>C</strong> — Toggle Camera View</li>
         <li><strong>P</strong> — Pause Game</li>
+        <li><strong>O</strong> — Operator Panel</li>
+      </ul>
+
+      <h2>Mobile On-Screen Controls</h2>
+      <ul>
+        <li><strong>⤒</strong> — Jump (tap button)</li>
+        <li><strong>●</strong> — Fire (tap button)</li>
+        <li>Use on-screen joystick to move/turn</li>
       </ul>
 
       <h2>Mouse Mode</h2>
@@ -114,6 +142,7 @@
     }
   </script>
   <script type="module" src="game.js"></script>
+  </script>
 </body>
 <!-- Mobile Controls Overlay (only visible on mobile) -->
 <div id="controlsOverlay" style="display:none;">

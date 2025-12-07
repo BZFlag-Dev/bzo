@@ -28,10 +28,20 @@ function logError(...args) {
 }
 
 const app = express();
+const bodyParser = require('body-parser');
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
 
 // Serve static files
 app.use(express.static('public'));
+// Serve admin panel for /admin route
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+// --- Admin API Endpoints ---
+
+// List available maps
 
 const server = app.listen(PORT, '::', () => {
   log(`Server running on http://[::]:${PORT}`);
@@ -236,8 +246,10 @@ if (MAP_SOURCE === 'random') {
   OBSTACLES = generateObstacles();
   log(`Generated ${OBSTACLES.length} random obstacles`);
 } else {
-  OBSTACLES = parseBZWMap(path.join(__dirname, MAP_SOURCE));
-  log(`Loaded ${OBSTACLES.length} obstacles from ${MAP_SOURCE}`);
+  // Always look for maps in maps/ directory
+  const mapFilePath = path.join(__dirname, 'maps', MAP_SOURCE);
+  OBSTACLES = parseBZWMap(mapFilePath);
+  log(`Loaded ${OBSTACLES.length} obstacles from maps/${MAP_SOURCE}`);
 }
 //const OBSTACLES = [
 //  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
@@ -863,12 +875,79 @@ wss.on('connection', (ws, req) => {
     obstacles: OBSTACLES,
     celestial: celestialPositions,
     clouds: clouds,
+    serverName: serverConfig.serverName || '',
+    description: serverConfig.description || '',
+    motd: serverConfig.motd || '',
   }));
 
   // Handle messages
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data);
+
+      // --- Admin overlay WebSocket API ---
+      if (message.type === 'admin' && message.action) {
+        const sendAdminResp = (resp) => {
+          ws.send(JSON.stringify({ ...resp, adminReqId: message.adminReqId }));
+        };
+        if (message.action === 'getMaps') {
+          fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
+            if (err) return sendAdminResp({ error: 'Failed to list maps' });
+            const maps = files.filter(f => f.endsWith('.bzw'));
+            sendAdminResp({ maps });
+          });
+          return;
+        }
+        if (message.action === 'getMotd') {
+          try {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            sendAdminResp({ motd: config.motd || '' });
+          } catch (e) {
+            sendAdminResp({ error: 'Failed to read MOTD' });
+          }
+          return;
+        }
+        if (message.action === 'setMap') {
+          const mapFile = message.mapFile;
+          if (!mapFile || (mapFile !== 'random' && !mapFile.endsWith('.bzw'))) {
+            return sendAdminResp({ error: 'Invalid map file' });
+          }
+          if (mapFile !== 'random') {
+            const mapPath = path.join(__dirname, 'maps', mapFile);
+            if (!fs.existsSync(mapPath)) {
+              return sendAdminResp({ error: 'Map file not found' });
+            }
+          }
+          try {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            config.mapFile = mapFile;
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+            sendAdminResp({ success: true });
+            log(`Admin set map to ${mapFile}. Server restart required.`);
+            process.exit(0);
+          } catch (e) {
+            sendAdminResp({ error: 'Failed to update config' });
+          }
+          return;
+        }
+        if (message.action === 'uploadMap') {
+          const { mapName, mapContent } = message;
+          if (!mapName || !mapName.endsWith('.bzw') || !mapContent) {
+            return sendAdminResp({ error: 'Invalid map upload' });
+          }
+          const mapPath = path.join(__dirname, 'maps', mapName);
+          fs.writeFile(mapPath, mapContent, err => {
+            if (err) {
+              logError('Map upload failed:', err);
+              return sendAdminResp({ error: 'Failed to save map' });
+            }
+            log(`Admin uploaded new map: ${mapName}`);
+            sendAdminResp({ success: true });
+          });
+          return;
+        }
+        // Add more admin actions as needed
+      }
 
       switch (message.type) {
 
@@ -888,7 +967,7 @@ wss.on('connection', (ws, req) => {
             log(`[CHAT] ${fromName}->${toName}: ${message.text}`);
             break;
           }
-          console.log('chat:', message, toName, targetId, players.get(targetId));
+          //console.log('chat:', message, toName, targetId, players.get(targetId));
           // Broadcast to all if to == 0
           if (targetId === 0) {
             log(`[CHAT] ${fromName}->ALL: ${message.text}`);
@@ -1044,20 +1123,6 @@ wss.on('connection', (ws, req) => {
             type: 'playerJoined',
             player: player.getState(),
           }, ws);
-          break;
-
-        case 'changeName':
-          let newName = nameCheck(message.name, player.id);
-          if (newName !== player.name) {
-            const oldName = player.name;
-            player.name = newName;
-            log(`Player name changed: "${oldName}" -> "${newName}"`);
-            broadcastAll({
-              type: 'nameChanged',
-              playerId: player.id,
-              name: player.name,
-            });
-          }
           break;
 
         case 'pause':
