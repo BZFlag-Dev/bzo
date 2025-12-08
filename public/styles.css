@@ -722,34 +722,82 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   background: var(--color-panel-bg-solid);
-  border-radius: 16px;
-  padding: 32px 24px;
+  border-radius: 4vw;
+  padding: 4vw 3vw;
   z-index: 1000;
-  box-shadow: 0 4px 32px #0008;
-  min-width: 320px;
+  box-shadow: 0 0.5vw 2vw #0008;
+  min-width: 40vw;
+  min-height: 20vw;
+  width: 80vw;
+  height: 40vw;
+  max-width: 95vw;
+  max-height: 80vh;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+@media (orientation: portrait) {
+  #settingsHud {
+    width: 90vw;
+    height: 35vw;
+    min-width: 60vw;
+    min-height: 20vw;
+    max-width: 98vw;
+    max-height: 60vh;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: center;
+  }
+  .settingsHudContent {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 3vw;
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+  }
+  .settingsHudBtn {
+    width: 40vw;
+    min-width: 30vw;
+    max-width: 45vw;
+    height: 12vw;
+    font-size: 1.2em;
+    margin: 2vw 1vw;
+  }
 }
 .settingsHudContent {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 18px;
+  justify-content: center;
+  gap: 2vw;
+  width: 100%;
 }
 .settingsHudBtn {
-  font-size: 1.3em;
-  margin: 12px 0;
-  width: 80%;
-  padding: 16px;
-  border-radius: 8px;
+  font-size: 1.2em;
+  margin: 2vw 1vw;
+  min-width: 120px;
+  max-width: 45vw;
+  border-radius: 2vw;
   border: none;
   background: #444;
   color: #fff;
   cursor: pointer;
   transition: background 0.2s;
+  box-sizing: border-box;
 }
-.settingsHudBtn:hover {
-  background: var(--color-btn-bg-hover);
-}
-.settingsHudBtn:active {
-  background: var(--color-btn-bg-active);
+@media (max-width: 600px) {
+  .settingsHudBtn {
+    min-width: 60vw;
+    max-width: 98vw;
+    min-height: 40px;
+    font-size: 1em;
+  }
 }
