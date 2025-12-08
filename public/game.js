@@ -17,137 +17,137 @@ function isMobileBrowser() {
   return isIpad;
 }
 const isMobile = isMobileBrowser();
+let virtualControlsEnabled = false;
 
 let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
 let lastVirtualJump = false;
-if (isMobile) {
-  console.log('Mobile device detected, enabling virtual joystick and buttons.');
-  window.addEventListener('DOMContentLoaded', () => {
-    const overlay = document.getElementById('controlsOverlay');
-    if (overlay) overlay.style.display = 'block';
-    const joystick = document.getElementById('joystick');
-    const knob = document.getElementById('joystickKnob');
-    const fireBtn = document.getElementById('fireBtn');
-    const jumpBtn = document.getElementById('jumpBtn');
-    let joystickActive = false;
-    let joystickTouchId = null;
-    let joystickCenter = { x: 0, y: 0 };
-    function setJoystick(x, y) {
-      // Clamp to circle
-      const mag = Math.sqrt(x * x + y * y);
-      if (mag > 1) { x /= mag; y /= mag; }
-      virtualInput.forward = -y; // Up is forward
-      virtualInput.turn = -x;
-      if (knob) knob.style.transform = `translate(${x * 35}px, ${y * 35}px)`;
-    }
-    function handleJoystickStart(e) {
-      // Only start joystick if touch is within joystick element
-      if (e.touches && e.touches.length > 0) {
-        // Find the touch that started within the joystick
-        for (let i = 0; i < e.touches.length; i++) {
-          const touch = e.touches[i];
-          const rect = joystick.getBoundingClientRect();
-          if (
-            touch.clientX >= rect.left && touch.clientX <= rect.right &&
-            touch.clientY >= rect.top && touch.clientY <= rect.bottom
-          ) {
-            joystickActive = true;
-            joystickTouchId = touch.identifier;
-            joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-            handleJoystickMove(e);
-            e.preventDefault();
-            break;
-          }
-        }
-      } else {
-        // Mouse event
-        joystickActive = true;
-        joystickTouchId = null;
+window.addEventListener('DOMContentLoaded', () => {
+  const joystick = document.getElementById('joystick');
+  const knob = document.getElementById('joystickKnob');
+  const fireBtn = document.getElementById('fireBtn');
+  const jumpBtn = document.getElementById('jumpBtn');
+  let joystickActive = false;
+  let joystickTouchId = null;
+  let joystickCenter = { x: 0, y: 0 };
+  function setJoystick(x, y) {
+    // Clamp to circle
+    const mag = Math.sqrt(x * x + y * y);
+    if (mag > 1) { x /= mag; y /= mag; }
+    virtualInput.forward = -y; // Up is forward
+    virtualInput.turn = -x;
+    if (knob) knob.style.transform = `translate(${x * 35}px, ${y * 35}px)`;
+  }
+  function handleJoystickStart(e) {
+    // Only start joystick if touch is within joystick element
+    if (e.touches && e.touches.length > 0) {
+      // Find the touch that started within the joystick
+      for (let i = 0; i < e.touches.length; i++) {
+        const touch = e.touches[i];
         const rect = joystick.getBoundingClientRect();
-        joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        handleJoystickMove(e);
-        e.preventDefault();
-      }
-    }
-    function handleJoystickMove(e) {
-      if (!joystickActive) return;
-      let clientX, clientY;
-      if (e.touches && e.touches.length > 0) {
-        // Find the touch matching joystickTouchId
-        let found = false;
-        for (let i = 0; i < e.touches.length; i++) {
-          const touch = e.touches[i];
-          if (touch.identifier === joystickTouchId) {
-            clientX = touch.clientX;
-            clientY = touch.clientY;
-            found = true;
-            break;
-          }
+        if (
+          touch.clientX >= rect.left && touch.clientX <= rect.right &&
+          touch.clientY >= rect.top && touch.clientY <= rect.bottom
+        ) {
+          joystickActive = true;
+          joystickTouchId = touch.identifier;
+          joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          handleJoystickMove(e);
+          e.preventDefault();
+          break;
         }
-        if (!found) return;
-      } else {
-        clientX = e.clientX;
-        clientY = e.clientY;
       }
-      const dx = clientX - joystickCenter.x;
-      const dy = clientY - joystickCenter.y;
-      setJoystick(dx / 60, dy / 60);
+    } else {
+      // Mouse event
+      joystickActive = true;
+      joystickTouchId = null;
+      const rect = joystick.getBoundingClientRect();
+      joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      handleJoystickMove(e);
       e.preventDefault();
     }
-    function handleJoystickEnd(e) {
-      if (e.changedTouches && e.changedTouches.length > 0) {
-        // Only end joystick if the touch ending matches joystickTouchId
-        for (let i = 0; i < e.changedTouches.length; i++) {
-          const touch = e.changedTouches[i];
-          if (touch.identifier === joystickTouchId) {
-            joystickActive = false;
-            joystickTouchId = null;
-            setJoystick(0, 0);
-            e.preventDefault();
-            break;
-          }
+  }
+  function handleJoystickMove(e) {
+    if (!joystickActive) return;
+    let clientX, clientY;
+    if (e.touches && e.touches.length > 0) {
+      // Find the touch matching joystickTouchId
+      let found = false;
+      for (let i = 0; i < e.touches.length; i++) {
+        const touch = e.touches[i];
+        if (touch.identifier === joystickTouchId) {
+          clientX = touch.clientX;
+          clientY = touch.clientY;
+          found = true;
+          break;
         }
-      } else {
-        // Mouse event
-        joystickActive = false;
-        joystickTouchId = null;
-        setJoystick(0, 0);
-        e.preventDefault();
       }
+      if (!found) return;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
     }
-    if (joystick) {
-      joystick.addEventListener('touchstart', handleJoystickStart);
-      joystick.addEventListener('touchmove', handleJoystickMove);
-      joystick.addEventListener('touchend', handleJoystickEnd);
-      joystick.addEventListener('mousedown', handleJoystickStart);
-      window.addEventListener('mousemove', handleJoystickMove);
-      window.addEventListener('mouseup', handleJoystickEnd);
-    }
-    if (fireBtn) {
-      function setFirePressed(pressed) {
-        if (pressed) fireBtn.classList.add('pressed');
-        else fireBtn.classList.remove('pressed');
+    const dx = clientX - joystickCenter.x;
+    const dy = clientY - joystickCenter.y;
+    setJoystick(dx / 60, dy / 60);
+    e.preventDefault();
+  }
+  function handleJoystickEnd(e) {
+    if (e.changedTouches && e.changedTouches.length > 0) {
+      // Only end joystick if the touch ending matches joystickTouchId
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        if (touch.identifier === joystickTouchId) {
+          joystickActive = false;
+          joystickTouchId = null;
+          setJoystick(0, 0);
+          e.preventDefault();
+          break;
+        }
       }
-      fireBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
-      fireBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
-      fireBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
-      fireBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
-      fireBtn.addEventListener('mouseleave', e => { setFirePressed(false); });
-      fireBtn.addEventListener('touchcancel', e => { setFirePressed(false); });
+    } else {
+      // Mouse event
+      joystickActive = false;
+      joystickTouchId = null;
+      setJoystick(0, 0);
+      e.preventDefault();
     }
-    if (jumpBtn) {
-      function setJumpPressed(pressed) {
-        if (pressed) jumpBtn.classList.add('pressed');
-        else jumpBtn.classList.remove('pressed');
-      }
-      jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
-      jumpBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
-      jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
-      jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
-      jumpBtn.addEventListener('mouseleave', e => { setJumpPressed(false); });
-      jumpBtn.addEventListener('touchcancel', e => { setJumpPressed(false); });
+  }
+  if (joystick) {
+    joystick.addEventListener('touchstart', handleJoystickStart);
+    joystick.addEventListener('touchmove', handleJoystickMove);
+    joystick.addEventListener('touchend', handleJoystickEnd);
+    joystick.addEventListener('mousedown', handleJoystickStart);
+    window.addEventListener('mousemove', handleJoystickMove);
+    window.addEventListener('mouseup', handleJoystickEnd);
+  }
+  if (fireBtn) {
+    function setFirePressed(pressed) {
+      if (pressed) fireBtn.classList.add('pressed');
+      else fireBtn.classList.remove('pressed');
     }
-  });
+    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
+    fireBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
+    fireBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
+    fireBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
+    fireBtn.addEventListener('mouseleave', e => { setFirePressed(false); });
+    fireBtn.addEventListener('touchcancel', e => { setFirePressed(false); });
+  }
+  if (jumpBtn) {
+    function setJumpPressed(pressed) {
+      if (pressed) jumpBtn.classList.add('pressed');
+      else jumpBtn.classList.remove('pressed');
+    }
+    jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
+    jumpBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
+    jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
+    jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
+    jumpBtn.addEventListener('mouseleave', e => { setJumpPressed(false); });
+    jumpBtn.addEventListener('touchcancel', e => { setJumpPressed(false); });
+  }
+});
+
+if (isMobile) {
+  toggleVirtualControls(true);
 }
 let latestOrientation = { alpha: null, beta: null, gamma: null, status: '' };
 function setupMobileOrientationDebug() {
@@ -314,7 +314,7 @@ function toggleDebugHud() {
 const keys = {};
 let lastShotTime = 0;
 
-// Operator Panel logic: make globally accessible
+// Operator Panel Toggle
 function updateOperatorBtn() {
   const operatorBtn = document.getElementById('operatorBtn');
   const operatorOverlay = document.getElementById('operatorOverlay');
@@ -355,28 +355,11 @@ function toggleOperatorPanel() {
 // Mouse movement toggle button
 window.addEventListener('DOMContentLoaded', () => {
   // Prevent mouse events on huds from passing through and triggering game actions
-  const mainhud = document.getElementById('mainhud');
-  if (mainhud) {
+  for (const id of ['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'settingsHud', 'operatorOverlay', 'helpPanel' ]) {
+    const hud = document.getElementById(id);
+    if (!hud) continue;
     ['click', 'mousedown', 'mouseup'].forEach(evt => {
-      mainhud.addEventListener(evt, function(e) {
-        e.stopPropagation();
-        e.preventDefault();
-      });
-    });
-  }
-  const operatorOverlay = document.getElementById('operatorOverlay');
-  if (operatorOverlay) {
-    ['click', 'mousedown', 'mouseup'].forEach(evt => {
-      operatorOverlay.addEventListener(evt, function(e) {
-        e.stopPropagation();
-        e.preventDefault();
-      });
-    });
-  }
-  const entryDialog = document.getElementById('entryDialog');
-  if (entryDialog) {
-    ['click', 'mousedown', 'mouseup'].forEach(evt => {
-      entryDialog.addEventListener(evt, function(e) {
+      hud.addEventListener(evt, function(e) {
         e.stopPropagation();
         e.preventDefault();
       });
@@ -384,6 +367,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
   
   setupMobileOrientationDebug();
+  const virtualConrolsBtn = document.getElementById('virtualControlsBtn');
   const mouseBtn = document.getElementById('mouseBtn');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
   const debugBtn = document.getElementById('debugBtn');
@@ -393,6 +377,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const settingsHud = document.getElementById('settingsHud');
   const playerNameEl = document.getElementById('playerName');
   const helpPanel = document.getElementById('helpPanel');
+  const closeSettingsBtn = document.getElementById('closeSettingsHud');
   
   function updateSettingsBtn() {
     if (!settingsHud || !settingsBtn) return;
@@ -478,6 +463,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedMouseMode === 'true') mouseControlEnabled = true;
 
   // Attach HUD Button Handlers (only once)
+  if (virtualConrolsBtn) virtualConrolsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleVirtualControls(); });
   if (mouseBtn) mouseBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleMouseMode(); });
   if (fullscreenBtn) fullscreenBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
   if (debugBtn) debugBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleDebugHud(); });
@@ -485,6 +471,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel(); });
   if (helpBtn) updateHelpBtn();
   if (settingsBtn) settingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); });
+  if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); });
   if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); toggleOperatorPanel(); });
   if (closeOperatorBtn) closeOperatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
   if (operatorBtn) updateOperatorBtn();
@@ -3335,6 +3322,32 @@ function toggleMouseMode() {
   if (typeof updateHudButtons === 'function') updateHudButtons();
 }
 
+// Operator Panel Toggle
+function updateVirtualControlsBtn() {
+  const virtualControlsBtn = document.getElementById('virtualControlsBtn');
+  const controlsOverlay = document.getElementById('controlsOverlay');
+  if (!virtualControlsBtn || !controlsOverlay) return;
+  if (controlsOverlay.style.display === 'block') {
+    virtualControlsBtn.classList.add('active');
+    virtualControlsBtn.title = 'Hide Virtual Controls';
+  } else {
+    virtualControlsBtn.classList.remove('active');
+    virtualControlsBtn.title = 'Show Virtual Controls';
+  }
+}
+function toggleVirtualControls(forceState) {
+  const overlay = document.getElementById('controlsOverlay');
+  if (!overlay) return;
+  virtualControlsEnabled = !virtualControlsEnabled;
+  showMessage(`Virtual Controls: ${virtualControlsEnabled ? 'Enabled' : 'Disabled'}`);
+  overlay.style.display = (overlay.style.display === 'block') ? 'none' : 'block';
+  if (typeof forceState === 'boolean') {
+    overlay.style.display = forceState ? 'block' : 'none';
+    virtualControlsEnabled = forceState;
+  }
+  updateVirtualControlsBtn()
+}
+
 // Intended input state
 let intendedForward = 0; // -1..1
 let intendedRotation = 0; // -1..1
@@ -3388,7 +3401,7 @@ function handleInputEvents() {
     intendedForward = myTank.userData.forwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
-    if (isMobile) {
+    if (virtualControlsEnabled) {
       intendedForward = virtualInput.forward;
       intendedRotation = virtualInput.turn;
       if (!isInAir && virtualInput.jump) {

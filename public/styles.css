@@ -768,7 +768,6 @@ canvas {
     max-width: 45vw;
     height: 12vw;
     font-size: 1.2em;
-    margin: 2vw 1vw;
   }
 }
 .settingsHudContent {
@@ -782,9 +781,6 @@ canvas {
 }
 .settingsHudBtn {
   font-size: 1.2em;
-  margin: 2vw 1vw;
-  min-width: 120px;
-  max-width: 45vw;
   border-radius: 2vw;
   border: none;
   background: #444;
