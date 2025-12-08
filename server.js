@@ -847,6 +847,13 @@ wss.on('connection', (ws, req) => {
   let player = new Player(ws);
   players.set(player.id, player);
 
+  // Broadcast newPlayer to all clients (player is dead until they join)
+  player.health = 0;
+  broadcastAll({
+    type: 'newPlayer',
+    player: player.getState(),
+  });
+
   // Get client IP and port
   const forwardedFor = req.headers['x-forwarded-for'];
   const forwardedPort = req.headers['x-forwarded-port'];
@@ -1110,11 +1117,11 @@ wss.on('connection', (ws, req) => {
             log(`Player ${player.id} joining game as "${joinName}"`);
           }
 
-          // broadcast join to all
+          // broadcast join to all (full player info)
           broadcastAll({
             type: 'playerJoined',
             player: player.getState(),
-          }, ws);
+          });
           break;
 
         case 'pause':

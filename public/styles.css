@@ -715,3 +715,41 @@ canvas {
     min-height: 40px;
   }
 }
+
+#settingsHud {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--color-panel-bg-solid);
+  border-radius: 16px;
+  padding: 32px 24px;
+  z-index: 1000;
+  box-shadow: 0 4px 32px #0008;
+  min-width: 320px;
+  text-align: center;
+}
+.settingsHudContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+.settingsHudBtn {
+  font-size: 1.3em;
+  margin: 12px 0;
+  width: 80%;
+  padding: 16px;
+  border-radius: 8px;
+  border: none;
+  background: #444;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.settingsHudBtn:hover {
+  background: var(--color-btn-bg-hover);
+}
+.settingsHudBtn:active {
+  background: var(--color-btn-bg-active);
+}

@@ -30,12 +30,7 @@
     <div id="stats" style="display: flex; align-items: center; gap: 12px;">
       <span id="playerName" style="cursor: pointer; color: #4CAF50; font-weight: bold; font-size: 20px;" title="Click to change name">Player</span>
       <div id="hudButtons" style="display: inline-flex; gap: 6px; margin-left: 8px;">
-        <button id="fullscreenBtn" title="Toggle Fullscreen (F)">F</button>
-        <button id="debugBtn" title="Toggle Debug HUD (I)">I</button>
-        <button id="mouseBtn" title="Toggle Mouse Movement (M)">M</button>
-        <button id="cameraBtn" title="Toggle Camera View (C)">C</button>
-        <button id="helpBtn" title="Show Help (?)">?</button>
-        <button id="operatorBtn" title="Operator Panel (O)">O</button>
+        <button id="settingsBtn" title="Settings"><span style="font-size:1.5em">&#9881;</span></button>
       </div>
     </div>
     <div id="scoreboard">
@@ -44,6 +39,18 @@
         <span class="scoreboardStats">Kills / Deaths</span>
       </div>
       <div id="scoreboardList"></div>
+    </div>
+  </div>
+
+  <div id="settingsHud" style="display:none">
+    <div class="settingsHudContent">
+      <button id="mouseBtn" class="settingsHudBtn">Mouse Mode</button>
+      <button id="fullscreenBtn" class="settingsHudBtn">Fullscreen</button>
+      <button id="debugBtn" class="settingsHudBtn">Debug</button>
+      <button id="cameraBtn" class="settingsHudBtn">Camera</button>
+      <button id="helpBtn" class="settingsHudBtn">Help</button>
+      <button id="operatorBtn" class="settingsHudBtn">Operator</button>
+      <button id="closeSettingsHud" class="settingsHudBtn">Close</button>
     </div>
   </div>
 

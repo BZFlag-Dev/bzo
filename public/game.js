@@ -18,8 +18,6 @@ function isMobileBrowser() {
 }
 const isMobile = isMobileBrowser();
 
-// --- Mobile Device Orientation Debugging ---
-// --- Mobile Controls Overlay (Joystick, Jump, Fire) ---
 let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
 let lastVirtualJump = false;
 if (isMobile) {
@@ -311,6 +309,7 @@ function toggleDebugHud() {
   showMessage(`Debug Mode: ${debugEnabled ? 'ON' : 'OFF'}`);
 }
 
+
 // Input state
 const keys = {};
 let lastShotTime = 0;
@@ -355,7 +354,7 @@ function toggleOperatorPanel() {
 
 // Mouse movement toggle button
 window.addEventListener('DOMContentLoaded', () => {
-  // Prevent mouse events on mainhud from passing through and triggering game actions
+  // Prevent mouse events on huds from passing through and triggering game actions
   const mainhud = document.getElementById('mainhud');
   if (mainhud) {
     ['click', 'mousedown', 'mouseup'].forEach(evt => {
@@ -374,16 +373,49 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
-  // ...existing code...
+  const entryDialog = document.getElementById('entryDialog');
+  if (entryDialog) {
+    ['click', 'mousedown', 'mouseup'].forEach(evt => {
+      entryDialog.addEventListener(evt, function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+      });
+    });
+  }
+  
   setupMobileOrientationDebug();
   const mouseBtn = document.getElementById('mouseBtn');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
   const debugBtn = document.getElementById('debugBtn');
   const cameraBtn = document.getElementById('cameraBtn');
   const helpBtn = document.getElementById('helpBtn');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsHud = document.getElementById('settingsHud');
   const playerNameEl = document.getElementById('playerName');
   const helpPanel = document.getElementById('helpPanel');
+  
+  function updateSettingsBtn() {
+    if (!settingsHud || !settingsBtn) return;
+    if (settingsHud.style.display === 'block') {
+      settingsBtn.classList.add('active');
+      settingsBtn.title = 'Hide Settings';
+    } else {
+      settingsBtn.classList.remove('active');
+      settingsBtn.title = 'Show Settings';
+    }
+  }
 
+  function toggleSettingsHud() {
+    if (!settingsHud) return;
+    if (settingsHud.style.display === 'block') {
+      settingsHud.style.display = 'none';
+      showMessage('Settings: Hidden');
+    } else {
+      settingsHud.style.display = 'block';
+      showMessage('Settings: Shown');
+    }
+    updateSettingsBtn();
+  }
   function updateHelpBtn() {
     if (!helpPanel || !helpBtn) return;
     if (helpPanel.style.display === 'block') {
@@ -452,13 +484,16 @@ window.addEventListener('DOMContentLoaded', () => {
   if (cameraBtn) cameraBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleCameraMode(); });
   if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel(); });
   if (helpBtn) updateHelpBtn();
-  if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
+  if (settingsBtn) settingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); });
+  if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); toggleOperatorPanel(); });
+  if (closeOperatorBtn) closeOperatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
   if (operatorBtn) updateOperatorBtn();
   if (playerNameEl) playerNameEl.addEventListener('click', () => {
     localStorage.removeItem('playerName');
     if (window.ws && window.ws.readyState === 1) {
       window.ws.send(JSON.stringify({ type: 'leaveGame' }));
     }
+    // Remove old tank from scene if present
     if (window.myTank && window.scene) {
       window.scene.remove(window.myTank);
       window.myTank = null;
@@ -476,6 +511,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Attach Key Handlers
   document.addEventListener('keydown', (e) => {
     if (document.activeElement === chatInput) return;
+    if (document.activeElement === entryInput) return;
     if (e.key === 'm' || e.key === 'M') toggleMouseMode();
     else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
     else if (e.key === 'i' || e.key === 'I') toggleDebugHud();
@@ -948,6 +984,11 @@ function init() {
       // Close name dialog if open
       if (isentryDialogOpen) {
         entryDialog.style.display = 'none';
+        return;
+      }
+      // Close help dialog if open
+      if (helpPanel.style.display === 'block') {
+        toggleHelpPanel();
         return;
       }
 
@@ -2100,6 +2141,13 @@ function handleServerMessage(message) {
     return;
   }
   switch (message.type) {
+    case 'newPlayer':
+      // Add player to scoreboard as dead, but do not create tank in scene
+      if (message.player) {
+        addPlayer(message.player);
+        updateScoreboard();
+      }
+      break;
     case 'init':
       // Show server info in entryDialog
       const serverNameEl = document.getElementById('serverName');
@@ -2247,6 +2295,7 @@ function handleServerMessage(message) {
         updateStats(message.player);
         updateScoreboard();
       } else {
+        // Another player joined: update their info and create their tank if needed
         addPlayer(message.player);
         updateScoreboard();
         showMessage(`${message.player.name} joined the game`);
