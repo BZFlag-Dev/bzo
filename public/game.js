@@ -338,25 +338,52 @@ function toggleOperatorPanel() {
   if (isVisible) {
     operatorOverlay.style.setProperty('display', 'none');
     showMessage('Operator Panel: Hidden');
-    console.log('OperatorOverlay display set to none:', operatorOverlay.style.display);
   } else {
     operatorOverlay.style.setProperty('display', 'block');
     showMessage('Operator Panel: Shown');
-    console.log('OperatorOverlay display set to block:', operatorOverlay.style.display);
     // Request map list from server when panel is shown
-    if (window.ws && window.ws.readyState === 1) {
-      const reqId = Math.floor(Math.random() * 1e9);
-      window.ws.send(JSON.stringify({ type: 'admin', action: 'getMaps', adminReqId: reqId }));
-      window._operatorMapReqId = reqId;
-    }
+    const reqId = Math.floor(Math.random() * 1e9);
+    sendToServer({
+      type: 'getMaps',
+      adminReqId: reqId,
+    });
+    window._operatorMapReqId = reqId;
   }
   updateOperatorBtn();
+}
+
+function toggleEntryDialog(name = '') {
+  const entryDialog = document.getElementById('entryDialog');
+  const entryInput = document.getElementById('entryInput');
+  if (!entryDialog || !entryInput) return;
+  const isentryDialogOpen = entryDialog.style.display !== 'block';
+  entryDialog.style.display = isentryDialogOpen ? 'block' : 'none';
+  isPaused = isentryDialogOpen;
+  if (isentryDialogOpen) {
+    if (name === '') name = myPlayerName;
+    lastCameraMode = cameraMode;
+    cameraMode = 'overview';
+    entryInput.value = name;
+    entryInput.focus();
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'leaveGame' }));
+    }
+    // Hide tank from scene if present
+    if (myTank && scene) {
+      const tank = tanks.get(myPlayerId);
+      if (tank) {
+        tank.visible = false;
+      }
+    }
+  } else {
+    cameraMode = 'first-person';
+  }
 }
 
 // Mouse movement toggle button
 window.addEventListener('DOMContentLoaded', () => {
   // Prevent mouse events on huds from passing through and triggering game actions
-  for (const id of ['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'settingsHud', 'operatorOverlay', 'helpPanel' ]) {
+  for (const id of ['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'settingsHud', 'helpPanel' ]) {
     const hud = document.getElementById(id);
     if (!hud) continue;
     ['click', 'mousedown', 'mouseup'].forEach(evt => {
@@ -366,7 +393,17 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
-  
+  // For operatorOverlay, only stop propagation, do NOT prevent default
+  const operatorOverlay = document.getElementById('operatorOverlay');
+  if (operatorOverlay) {
+    ['click', 'mousedown', 'mouseup'].forEach(evt => {
+      operatorOverlay.addEventListener(evt, function(e) {
+        e.stopPropagation();
+        // Do NOT call e.preventDefault() so form controls work
+      });
+    });
+  }
+
   setupMobileOrientationDebug();
   const virtualConrolsBtn = document.getElementById('virtualControlsBtn');
   const mouseBtn = document.getElementById('mouseBtn');
@@ -379,7 +416,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const playerNameEl = document.getElementById('playerName');
   const helpPanel = document.getElementById('helpPanel');
   const closeSettingsBtn = document.getElementById('closeSettingsHud');
-  
+
   function updateSettingsBtn() {
     if (!settingsHud || !settingsBtn) return;
     if (settingsHud.style.display === 'block') {
@@ -476,25 +513,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); toggleOperatorPanel(); });
   if (closeOperatorBtn) closeOperatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
   if (operatorBtn) updateOperatorBtn();
-  if (playerNameEl) playerNameEl.addEventListener('click', () => {
-    localStorage.removeItem('playerName');
-    if (window.ws && window.ws.readyState === 1) {
-      window.ws.send(JSON.stringify({ type: 'leaveGame' }));
-    }
-    // Remove old tank from scene if present
-    if (window.myTank && window.scene) {
-      window.scene.remove(window.myTank);
-      window.myTank = null;
-    }
-    if (typeof window.cameraMode !== 'undefined') {
-      window.cameraMode = 'overview';
-    }
-    const entryDialog = document.getElementById('entryDialog');
-    if (entryDialog) {
-      entryDialog.style.display = 'block';
-    }
-    window.isPaused = true;
-  });
+  if (playerNameEl) playerNameEl.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleEntryDialog(); });
 
   // Attach Key Handlers
   document.addEventListener('keydown', (e) => {
@@ -1054,7 +1073,6 @@ function init() {
     }
   });
 
-
   // Load saved player name from localStorage
   const savedName = localStorage.getItem('playerName');
   const entryDialog = document.getElementById('entryDialog');
@@ -1064,111 +1082,49 @@ function init() {
     const trimmed = savedName.trim();
     // Show dialog if name is 'Player' or 'Player n'
     if (trimmed === 'Player' || /^Player \d+$/.test(trimmed)) {
-      if (entryDialog) {
-        entryDialog.style.display = 'block';
-        isPaused = true;
-        isentryDialogOpen = true;
-        if (entryInput) {
-          entryInput.value = '';
-          entryInput.focus();
-        }
-      }
+      toggleEntryDialog(savedName);
     } else {
       myPlayerName = savedName;
-      // Join game directly
-      if (entryDialog) entryDialog.style.display = 'none';
-      isentryDialogOpen = false;
     }
   } else {
-    // Pause and show name dialog
-    if (entryDialog) {
-      entryDialog.style.display = 'block';
-      isPaused = true;
-      isentryDialogOpen = true;
-      if (entryInput) {
-        entryInput.value = '';
-        entryInput.focus();
-      }
-    }
+    toggleEntryDialog();
   }
 
   // Add click handler for name change
   const playerNameEl = document.getElementById('playerName');
-  const nameOkButton = document.getElementById('nameOkButton');
-  const nameDefaultButton = document.getElementById('nameDefaultButton');
-  const nameCancelButton = document.getElementById('nameCancelButton');
+  const entryOkButton = document.getElementById('entryOkButton');
+  const entryDefaultButton = document.getElementById('entryDefaultButton');
 
   if (playerNameEl && entryDialog) {
-    playerNameEl.addEventListener('click', () => {
-      entryInput.value = myPlayerName;
-      entryDialog.style.display = 'block';
-      isPaused = true;
-      isentryDialogOpen = true;
-      entryInput.focus();
-      entryInput.select();
-    });
-
-    // Stop clicks from propagating to the game
-    entryDialog.addEventListener('click', (e) => {
-      e.stopPropagation();
-    });
-
-    nameOkButton.addEventListener('click', () => {
+    entryOkButton.addEventListener('click', () => {
       const newName = entryInput.value.trim().substring(0, 20);
-      if (newName.length > 0) {
-        localStorage.setItem('playerName', newName);
-        myPlayerName = newName;
-        // Always leave and rejoin
-        if (window.ws && window.ws.readyState === 1) {
-          window.ws.send(JSON.stringify({ type: 'leaveGame' }));
-        }
-        window.hasJoinedGame = false;
-        sendToServer({
-          type: 'joinGame',
-          name: newName,
-          isMobile: isMobile,
-        });
-        window.hasJoinedGame = true;
-        entryDialog.style.display = 'none';
-        isPaused = false;
-        isentryDialogOpen = false;
-      }
+      localStorage.setItem('playerName', newName);
+      myPlayerName = newName;
+      sendToServer({
+        type: 'joinGame',
+        name: myPlayerName,
+        isMobile,
+      });
+      toggleEntryDialog();
     });
 
-    nameDefaultButton.addEventListener('click', () => {
+    entryDefaultButton.addEventListener('click', () => {
       // Send blank name to server to request default Player n assignment
       localStorage.setItem('playerName', '');
       myPlayerName = '';
-      if (window.ws && window.ws.readyState === 1) {
-        window.ws.send(JSON.stringify({ type: 'leaveGame' }));
-      }
-      window.hasJoinedGame = false;
       sendToServer({
         type: 'joinGame',
-        name: "",
+        name: myPlayerName,
+        isMobile,
       });
-      window.hasJoinedGame = true;
-      entryDialog.style.display = 'none';
-      isPaused = false;
-      isentryDialogOpen = false;
-    });
-
-    nameCancelButton.addEventListener('click', () => {
-      // Don't allow cancel if no name is set
-      if (!localStorage.getItem('playerName')) {
-        entryInput.focus();
-        return;
-      }
-      entryDialog.style.display = 'none';
-      isPaused = false;
-      isentryDialogOpen = false;
+      toggleEntryDialog();
     });
 
     entryInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
-        nameOkButton.click();
+        entrykButton.click();
       } else if (e.key === 'Escape') {
-        nameCancelButton.click();
+        entryDefaultButton.click();
       }
     });
   }
@@ -2028,36 +1984,38 @@ function updateDebugDisplay() {
     html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
     try {
-    html += `<div><span class="label">Speed:</span><span class="value">${tank.userData.forwardSpeed.toFixed(2)} u/s</span></div>`;
-    html += `<div><span class="label">Angular:</span><span class="value">${tank.userData.rotationSpeed.toFixed(2)} rad/s</span></div>`;
-    html += `<div><span class="label">Vertical:</span><span class="value">${tank.userData.verticalSpeed.toFixed(2)} u/s</span></div>`;
+      html += `<div><span class="label">Speed:</span><span class="value">${tank.userData.forwardSpeed.toFixed(2)} u/s</span></div>`;
+      html += `<div><span class="label">Angular:</span><span class="value">${tank.userData.rotationSpeed.toFixed(2)} rad/s</span></div>`;
+      if (tank.userData.verticalSpeed !== undefined) {a
+        html += `<div><span class="label">Vertical:</span><span class="value">${tank.userData.verticalSpeed.toFixed(2)} u/s</span></div>`;
+      }
+      html += `<div><span class="label">Position:</span><span class="value">(${tank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
+      html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
+
+      html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
+
+      // Count scene objects
+      let totalObjects = 0;
+      scene.traverse(() => totalObjects++);
+      html += `<div><span class="label">Total Objects:</span><span class="value">${totalObjects}</span></div>`;
+      html += `<div><span class="label">Tanks:</span><span class="value">${tanks.size}</span></div>`;
+      html += `<div><span class="label">Projectiles:</span><span class="value">${projectiles.size}</span></div>`;
+      html += `<div><span class="label">Shields:</span><span class="value">${playerShields.size}</span></div>`;
+
+      html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS SENT:</div>';
+
+      const sentTypes = Array.from(packetsSent.entries()).sort((a, b) => b[1] - a[1]);
+      sentTypes.forEach(([type, count]) => {
+        html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
+      });
+
+      html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS RECEIVED:</div>';
+
+      const receivedTypes = Array.from(packetsReceived.entries()).sort((a, b) => b[1] - a[1]);
+      receivedTypes.forEach(([type, count]) => {
+        html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
+      });
     } catch (e) {}
-    html += `<div><span class="label">Position:</span><span class="value">(${tank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
-    html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
-
-    html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
-
-    // Count scene objects
-    let totalObjects = 0;
-    scene.traverse(() => totalObjects++);
-    html += `<div><span class="label">Total Objects:</span><span class="value">${totalObjects}</span></div>`;
-    html += `<div><span class="label">Tanks:</span><span class="value">${tanks.size}</span></div>`;
-    html += `<div><span class="label">Projectiles:</span><span class="value">${projectiles.size}</span></div>`;
-    html += `<div><span class="label">Shields:</span><span class="value">${playerShields.size}</span></div>`;
-
-    html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS SENT:</div>';
-
-    const sentTypes = Array.from(packetsSent.entries()).sort((a, b) => b[1] - a[1]);
-    sentTypes.forEach(([type, count]) => {
-      html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
-    });
-
-    html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS RECEIVED:</div>';
-
-    const receivedTypes = Array.from(packetsReceived.entries()).sort((a, b) => b[1] - a[1]);
-    receivedTypes.forEach(([type, count]) => {
-      html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
-    });
   }
   debugContent.innerHTML = html;
 }
@@ -2124,10 +2082,10 @@ function connectToServer() {
 
 function handleServerMessage(message) {
   // Intercept admin responses for operator panel
-  if (message.adminReqId && (message.maps || message.success || message.error)) {
-    handleAdminResponse(message);
-    return;
-  }
+  //if (message.adminReqId && (message.maps || message.success || message.error)) {
+  //  handleAdminResponse(message);
+  //  return;
+  //}
   switch (message.type) {
     case 'newPlayer':
       // Add player to scoreboard as dead, but do not create tank in scene
@@ -2275,7 +2233,7 @@ function handleServerMessage(message) {
         myTank.rotation.y = playerRotation;
         myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
         myTank.userData.playerState = message.player;
-        myTank.userData.fowardSpeed = message.player.forwardSpeed || 0;
+        myTank.userData.forwardSpeed = message.player.forwardSpeed || 0;
         myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
         scene.add(myTank);
         tanks.set(myPlayerId, myTank);
@@ -2389,7 +2347,6 @@ function handleServerMessage(message) {
       break;
 
     case 'playerPaused':
-      console.log('Player paused:', message.playerId, message.x, message.y, message.z);
       if (message.playerId === myPlayerId) {
         isPaused = true;
         pauseCountdownStart = 0;
@@ -2399,7 +2356,6 @@ function handleServerMessage(message) {
       break;
 
     case 'playerUnpaused':
-      console.log('Player unpaused:', message.playerId);
       if (message.playerId === myPlayerId) {
         isPaused = false;
         pauseCountdownStart = 0;
@@ -2438,8 +2394,11 @@ function handleServerMessage(message) {
       updateScoreboard();
       break;
 
+    case 'mapsList':
+      handleMapsList(message);
+      break;
+
     case 'reload':
-      console.log('Server requested reload');
       showMessage('Server updated - reloading...', 'death');
       setTimeout(() => {
         window.location.reload();
@@ -2582,11 +2541,12 @@ function handlePlayerRespawn(message) {
     tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
     tank.userData.verticalVelocity = message.player.verticalVelocity;
-    tank.visible = true; // Make tank visible again after respawn
+    tank.visible = true;
   }
 
   if (message.player.id === myPlayerId) {
     playerX = message.player.x;
+    playerY = message.player.y;
     playerZ = message.player.z;
     playerRotation = message.player.rotation;
     showMessage('You respawned!');
@@ -2594,6 +2554,25 @@ function handlePlayerRespawn(message) {
     cameraMode = lastCameraMode === 'overview' ? 'first-person' : lastCameraMode;
     const crosshair = document.getElementById('crosshair');
     if (crosshair) crosshair.style.display = '';
+  }
+}
+function handleMapsList(message) {
+  const mapList = document.getElementById('mapList');
+  if (!mapList) return;
+  console.log(message)
+
+  // Clear existing options
+  mapList.innerHTML = '';
+
+  message.maps.forEach((mapName) => {
+    const option = document.createElement('option');
+    option.value = mapName;
+    option.textContent = mapName;
+    mapList.appendChild(option);
+  });
+
+  if (message.currentMap) {
+    mapList.value = message.currentMap;
   }
 }
 

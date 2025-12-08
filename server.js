@@ -29,6 +29,7 @@ function logError(...args) {
 
 const app = express();
 const bodyParser = require('body-parser');
+const { type } = require('os');
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
@@ -618,6 +619,14 @@ function validateShot(player, shotX, shotY, shotZ) {
   return true;
 }
 
+// send message to a specific player
+function sendToPlayer(ws, message) {
+  const data = JSON.stringify(message);
+  if (ws.readyState === 1) {
+    ws.send(data);
+  }
+}
+
 // Broadcast to all players except sender
 function broadcast(message, excludeWs = null) {
   const data = JSON.stringify(message);
@@ -1159,6 +1168,18 @@ wss.on('connection', (ws, req) => {
               playerId: player.id,
             });
           }
+          break;
+        case 'getMaps':
+          fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
+            if (err) return sendAdminResp({ error: 'Failed to list maps' });
+            let maps = files.filter(f => f.endsWith('.bzw'));
+            maps = ['random', ...maps.filter(m => m !== 'random')];
+            sendToPlayer(ws, {
+              type: 'mapsList',
+              currentMap: serverConfig.mapFile || 'random',
+              maps,
+            });
+          });
           break;
       }
     } catch (err) {
