@@ -1138,6 +1138,7 @@ function init() {
         sendToServer({
           type: 'joinGame',
           name: newName,
+          isMobile: isMobile,
         });
         window.hasJoinedGame = true;
         entryDialog.style.display = 'none';
