@@ -230,11 +230,8 @@ body {
   position: fixed;
   top: 10px;
   left: 10px;
-  max-height: 28vh;
-  padding: 20px;
+  padding: 1vw;
   border-radius: 10px;
-  width: 25vw;
-  height: 33vh;
   box-sizing: border-box;
   background: var(--color-panel-bg);
 }
@@ -275,9 +272,8 @@ body {
 }
 
 #scoreboard {
-  margin-bottom: 15px;
   border-top: 1px solid #444;
-  padding-top: 15px;
+  padding-top: 1vw;
 }
 
 #scoreboard h3 {

@@ -19,6 +19,12 @@ function isMobileBrowser() {
 const isMobile = isMobileBrowser();
 let virtualControlsEnabled = false;
 
+// Chat state
+let chatMessages = [];
+let chatActive = false;
+let chatInput = null;
+const CHAT_MAX_MESSAGES = 6;
+
 let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
 let lastVirtualJump = false;
 window.addEventListener('DOMContentLoaded', () => {
@@ -252,11 +258,6 @@ import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 // Game state
-// Chat state
-let chatMessages = [];
-let chatActive = false;
-let chatInput = null;
-const CHAT_MAX_MESSAGES = 6;
 
 let scene, camera, renderer, labelRenderer;
 let myPlayerId = null;
@@ -2067,7 +2068,6 @@ function connectToServer() {
 
   ws.onopen = () => {
     showMessage('Connected to server!');
-    showMessage('Updating coordinates, things are broken');
 
     // Only send join if there is a saved name that is not 'Player' or 'Player n'
     const savedName = localStorage.getItem('playerName');
