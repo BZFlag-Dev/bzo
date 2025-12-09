@@ -131,6 +131,7 @@ function createCobblestoneTexture() {
 
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { createShootBuffer, createExplosionBuffer, createJumpBuffer, createLandBuffer } from './audio.js';
 
 // FPS
 let fps = 0;
@@ -740,88 +741,28 @@ function init() {
   camera.position.set(0, 15, 20);
   camera.lookAt(0, 0, 0);
 
+
   // Audio
   audioListener = new THREE.AudioListener();
   camera.add(audioListener);
-
-  // Create shoot sound
-  shootSound = new THREE.Audio(audioListener);
-  const audioLoader = new THREE.AudioLoader();
-
-  // Create synthetic shoot sound using Web Audio API
   const audioContext = audioListener.context;
-  const sampleRate = audioContext.sampleRate;
-  const duration = 0.2;
-  const length = sampleRate * duration;
-  const buffer = audioContext.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
 
-  // Generate laser/shoot sound
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    const frequency = 800 - (t * 3000); // Descending pitch
-    const decay = Math.exp(-t * 15); // Quick decay
-    data[i] = Math.sin(2 * Math.PI * frequency * t) * decay * 0.3;
-  }
-
-  shootSound.setBuffer(buffer);
+  // Create and assign sound buffers using audio.js
+  shootSound = new THREE.Audio(audioListener);
+  shootSound.setBuffer(createShootBuffer(audioContext));
   shootSound.setVolume(0.5);
 
-  // Create explosion sound
   const explosionSound = new THREE.Audio(audioListener);
-  const explosionDuration = 0.5;
-  const explosionLength = sampleRate * explosionDuration;
-  const explosionBuffer = audioContext.createBuffer(1, explosionLength, sampleRate);
-  const explosionData = explosionBuffer.getChannelData(0);
-
-  // Generate explosion sound (rumble with descending pitch)
-  for (let i = 0; i < explosionLength; i++) {
-    const t = i / sampleRate;
-    const frequency = 100 - (t * 80); // Deep rumble descending
-    const decay = Math.exp(-t * 5); // Slower decay
-    const noise = (Math.random() * 2 - 1) * 0.3; // Add noise for texture
-    const tone = Math.sin(2 * Math.PI * frequency * t) * 0.7;
-    explosionData[i] = (tone + noise) * decay * 0.4;
-  }
-
-  explosionSound.setBuffer(explosionBuffer);
+  explosionSound.setBuffer(createExplosionBuffer(audioContext));
   explosionSound.setVolume(0.7);
-  window.explosionSound = explosionSound; // Make it globally accessible
+  window.explosionSound = explosionSound;
 
-  // Create jump sound (upward swoosh)
   jumpSound = new THREE.Audio(audioListener);
-  const jumpDuration = 0.15;
-  const jumpLength = sampleRate * jumpDuration;
-  const jumpBuffer = audioContext.createBuffer(1, jumpLength, sampleRate);
-  const jumpData = jumpBuffer.getChannelData(0);
-
-  for (let i = 0; i < jumpLength; i++) {
-    const t = i / sampleRate;
-    const frequency = 200 + (t * 400); // Ascending pitch
-    const envelope = Math.sin((t / jumpDuration) * Math.PI); // Bell curve
-    jumpData[i] = Math.sin(2 * Math.PI * frequency * t) * envelope * 0.2;
-  }
-
-  jumpSound.setBuffer(jumpBuffer);
+  jumpSound.setBuffer(createJumpBuffer(audioContext));
   jumpSound.setVolume(0.4);
 
-  // Create land sound (thump)
   landSound = new THREE.Audio(audioListener);
-  const landDuration = 0.1;
-  const landLength = sampleRate * landDuration;
-  const landBuffer = audioContext.createBuffer(1, landLength, sampleRate);
-  const landData = landBuffer.getChannelData(0);
-
-  for (let i = 0; i < landLength; i++) {
-    const t = i / sampleRate;
-    const frequency = 80 - (t * 60); // Descending thump
-    const decay = Math.exp(-t * 30); // Quick decay
-    const noise = (Math.random() * 2 - 1) * 0.2; // Add impact noise
-    const tone = Math.sin(2 * Math.PI * frequency * t) * 0.8;
-    landData[i] = (tone + noise) * decay * 0.3;
-  }
-
-  landSound.setBuffer(landBuffer);
+  landSound.setBuffer(createLandBuffer(audioContext));
   landSound.setVolume(0.5);
 
   // Renderer
