@@ -27,17 +27,7 @@ import {
   updateHudButtons,
   toggleDebugHud
 } from './hud.js';
-
-
-import * as THREE from 'three';
-import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { createShootBuffer, createExplosionBuffer, createJumpBuffer, createLandBuffer } from './audio.js';
-import {
-  createCobblestoneTexture,
-  createGroundTexture,
-  createWallTexture,
-  createObstacleTexture
-} from './texture.js';
+import { renderManager } from './render.js';
 
 // FPS
 let fps = 0;
@@ -56,16 +46,15 @@ function updateFps() {
 
 // Game state
 
-let scene, camera, renderer, labelRenderer;
+let scene;
+let camera;
 let myPlayerId = null;
 let myPlayerName = '';
 let myTank = null;
 let tanks = new Map();
 let projectiles = new Map();
-let clouds = [];
 let ws = null;
 let gameConfig = null;
-let audioListener, shootSound, jumpSound, landSound;
 let radarCanvas, radarCtx;
 
 // Removed duplicate setActive, updateHudButtons, toggleDebugHud, toggleSettingsHud, toggleHelpPanel definitions (now imported from hud.js)
@@ -198,7 +187,7 @@ function getDebugState() {
     myTank,
     cameraMode,
     OBSTACLES,
-    clouds,
+    clouds: renderManager.getClouds(),
     latestOrientation,
   };
 }
@@ -317,79 +306,19 @@ function init() {
       updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
       showMessage,
       updateDebugDisplay,
-      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds, latestOrientation })
+      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation })
     });
   }
 
-  // Scene
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87CEEB);
-  scene.fog = new THREE.Fog(0x87CEEB, 50, 200);
-
-  // Camera
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.set(0, 15, 20);
-  camera.lookAt(0, 0, 0);
-
-
-  // Audio
-  audioListener = new THREE.AudioListener();
-  camera.add(audioListener);
-  const audioContext = audioListener.context;
-
-  // Create and assign sound buffers using audio.js
-  shootSound = new THREE.Audio(audioListener);
-  shootSound.setBuffer(createShootBuffer(audioContext));
-  shootSound.setVolume(0.5);
-
-  const explosionSound = new THREE.Audio(audioListener);
-  explosionSound.setBuffer(createExplosionBuffer(audioContext));
-  explosionSound.setVolume(0.7);
-  window.explosionSound = explosionSound;
-
-  jumpSound = new THREE.Audio(audioListener);
-  jumpSound.setBuffer(createJumpBuffer(audioContext));
-  jumpSound.setVolume(0.4);
-
-  landSound = new THREE.Audio(audioListener);
-  landSound.setBuffer(createLandBuffer(audioContext));
-  landSound.setVolume(0.5);
-
-  // Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  document.body.appendChild(renderer.domElement);
-
-  // Label renderer for floating names
-  labelRenderer = new CSS2DRenderer();
-  labelRenderer.setSize(window.innerWidth, window.innerHeight);
-  labelRenderer.domElement.style.position = 'absolute';
-  labelRenderer.domElement.style.top = '0';
-  labelRenderer.domElement.style.pointerEvents = 'none';
-  document.body.appendChild(labelRenderer.domElement);
+  const renderContext = renderManager.init({});
+  scene = renderContext.scene;
+  camera = renderContext.camera;
 
   // Radar map
   radarCanvas = document.getElementById('radar');
   radarCtx = radarCanvas.getContext('2d');
   resizeRadar();
   updateRadar();
-
-  // Lighting
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambientLight);
-
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(50, 50, 50);
-  dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 2048;
-  dirLight.shadow.mapSize.height = 2048;
-  dirLight.shadow.camera.left = -60;
-  dirLight.shadow.camera.right = 60;
-  dirLight.shadow.camera.top = 60;
-  dirLight.shadow.camera.bottom = -60;
-  scene.add(dirLight);
 
   // Event listeners
   window.addEventListener('resize', onWindowResize);
@@ -596,807 +525,6 @@ function init() {
   animate();
 }
 
-function createMapBoundaries(mapSize = 100) {
-  const wallHeight = 5;
-  const wallThickness = 1;
-
-  // Create materials for each wall with proper texture scaling
-  // Scale texture to show 1 brick repeat per 2 units for consistent brick size
-
-  // North/South walls: mapSize × wallHeight × wallThickness (100 × 5 × 1)
-  const nsWallTexture = createCobblestoneTexture();
-  nsWallTexture.wrapS = THREE.RepeatWrapping;
-  nsWallTexture.wrapT = THREE.RepeatWrapping;
-
-  const nsWallMaterials = [
-    new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() }), // right
-    new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() }), // left
-    new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() }), // top
-    new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() }), // bottom
-    new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() }), // front
-    new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() })  // back
-  ];
-
-  // Set repeats for each face
-  nsWallMaterials[0].map.repeat.set(wallThickness / 2, wallHeight / 2); // right: 1×5
-  nsWallMaterials[1].map.repeat.set(wallThickness / 2, wallHeight / 2); // left: 1×5
-  nsWallMaterials[2].map.repeat.set(mapSize / 2, wallThickness / 2);    // top: 100×1
-  nsWallMaterials[3].map.repeat.set(mapSize / 2, wallThickness / 2);    // bottom: 100×1
-  nsWallMaterials[4].map.repeat.set(mapSize / 2, wallHeight / 2);       // front: 100×5
-  nsWallMaterials[5].map.repeat.set(mapSize / 2, wallHeight / 2);       // back: 100×5
-
-  // East/West walls: wallThickness × wallHeight × mapSize (1 × 5 × 100)
-  const ewWallTexture = createCobblestoneTexture();
-  ewWallTexture.wrapS = THREE.RepeatWrapping;
-  ewWallTexture.wrapT = THREE.RepeatWrapping;
-
-  const ewWallMaterials = [
-    new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() }), // right
-    new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() }), // left
-    new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() }), // top
-    new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() }), // bottom
-    new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() }), // front
-    new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() })  // back
-  ];
-
-  // Set repeats for each face
-  ewWallMaterials[0].map.repeat.set(mapSize / 2, wallHeight / 2);       // right: 100×5
-  ewWallMaterials[1].map.repeat.set(mapSize / 2, wallHeight / 2);       // left: 100×5
-  ewWallMaterials[2].map.repeat.set(mapSize / 2, wallThickness / 2);    // top: 100×1 (swapped for rotation)
-  ewWallMaterials[2].map.rotation = Math.PI / 2;                        // rotate top 90°
-  ewWallMaterials[2].map.center.set(0.5, 0.5);                          // rotate around center
-  ewWallMaterials[3].map.repeat.set(mapSize / 2, wallThickness / 2);    // bottom: 100×1 (swapped for rotation)
-  ewWallMaterials[3].map.rotation = Math.PI / 2;                        // rotate bottom 90°
-  ewWallMaterials[3].map.center.set(0.5, 0.5);                          // rotate around center
-  ewWallMaterials[4].map.repeat.set(wallThickness / 2, wallHeight / 2); // front: 1×5
-  ewWallMaterials[5].map.repeat.set(wallThickness / 2, wallHeight / 2); // back: 1×5
-
-  // North wall (red, now at Z = -mapSize/2)
-  const northWall = new THREE.Mesh(
-    new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
-    nsWallMaterials
-  );
-  northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
-  northWall.castShadow = true;
-  northWall.receiveShadow = true;
-  scene.add(northWall);
-
-  // Add giant 'N' above north wall
-  (function() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, 256, 256);
-    ctx.font = 'bold 200px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#B20000';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 10;
-    ctx.strokeText('N', 128, 128);
-    ctx.fillText('N', 128, 128);
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
-    const sprite = new THREE.Sprite(material);
-    sprite.position.set(0, wallHeight + 8, -mapSize / 2);
-    sprite.scale.set(20, 20, 1);
-    scene.add(sprite);
-  })();
-
-  // South wall (blue, now at Z = +mapSize/2)
-  const southWall = new THREE.Mesh(
-    new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
-    nsWallMaterials
-  );
-  southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
-  southWall.castShadow = true;
-  southWall.receiveShadow = true;
-  scene.add(southWall);
-
-  // Add giant 'S' above south wall
-  (function() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, 256, 256);
-    ctx.font = 'bold 200px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#1976D2';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 10;
-    ctx.strokeText('S', 128, 128);
-    ctx.fillText('S', 128, 128);
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
-    const sprite = new THREE.Sprite(material);
-    sprite.position.set(0, wallHeight + 8, mapSize / 2);
-    sprite.scale.set(20, 20, 1);
-    scene.add(sprite);
-  })();
-
-  // East wall (+X, green)
-  const eastWall = new THREE.Mesh(
-    new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-    ewWallMaterials
-  );
-  eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
-  eastWall.castShadow = true;
-  eastWall.receiveShadow = true;
-  scene.add(eastWall);
-
-  // Add giant 'E' above east wall
-  (function() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, 256, 256);
-    ctx.font = 'bold 200px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#388E3C';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 10;
-    ctx.strokeText('E', 128, 128);
-    ctx.fillText('E', 128, 128);
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
-    const sprite = new THREE.Sprite(material);
-    sprite.position.set(mapSize / 2, wallHeight + 8, 0);
-    sprite.scale.set(20, 20, 1);
-    scene.add(sprite);
-  })();
-
-  // West wall (-X, yellow)
-  const westWall = new THREE.Mesh(
-    new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-    ewWallMaterials
-  );
-  westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
-  westWall.castShadow = true;
-  westWall.receiveShadow = true;
-  scene.add(westWall);
-
-  // Add giant 'W' above west wall
-  (function() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, 256, 256);
-    ctx.font = 'bold 200px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#FBC02D';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 10;
-    ctx.strokeText('W', 128, 128);
-    ctx.fillText('W', 128, 128);
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
-    const sprite = new THREE.Sprite(material);
-    sprite.position.set(-mapSize / 2, wallHeight + 8, 0);
-    sprite.scale.set(20, 20, 1);
-    scene.add(sprite);
-  })();
-
-  // Add some obstacles
-  addObstacles();
-}
-
-function createMountains() {
-  const mountainDistance = 1.8 * gameConfig.MAP_SIZE; // 1.8 times the map size
-  const mountainCount = 8;
-
-  for (let i = 0; i < mountainCount; i++) {
-    const angle = (i / mountainCount) * Math.PI * 2;
-    const x = Math.cos(angle) * mountainDistance;
-    const z = Math.sin(angle) * mountainDistance;
-
-    // Vary mountain size
-    const width = 30 + Math.random() * 40;
-    const height = 40 + Math.random() * 60;
-    const depth = 30 + Math.random() * 40;
-
-    // Create cone for mountain
-    const geometry = new THREE.ConeGeometry(width / 2, height, 4);
-    const color = new THREE.Color().setHSL(0.3, 0.3, 0.3 + Math.random() * 0.2);
-    const material = new THREE.MeshStandardMaterial({
-      color,
-      flatShading: true,
-      roughness: 0.9,
-      metalness: 0.1
-    });
-    const mountain = new THREE.Mesh(geometry, material);
-
-    mountain.position.set(x, height / 2, z);
-    mountain.rotation.y = Math.random() * Math.PI * 2;
-    mountain.receiveShadow = true;
-    scene.add(mountain);
-
-    // Add snow cap
-    const snowCapHeight = height * 0.3;
-    const snowCapGeometry = new THREE.ConeGeometry(width / 4, snowCapHeight, 4);
-    const snowMaterial = new THREE.MeshStandardMaterial({
-      color: 0xFFFFFF,
-      flatShading: true,
-      roughness: 0.7,
-      metalness: 0.0
-    });
-    const snowCap = new THREE.Mesh(snowCapGeometry, snowMaterial);
-    snowCap.position.set(x, height - snowCapHeight / 2, z);
-    snowCap.rotation.y = mountain.rotation.y;
-    scene.add(snowCap);
-  }
-}
-
-function createClouds(cloudsData) {
-  cloudsData.forEach(cloudData => {
-    const cloudGroup = new THREE.Group();
-
-    // Create puffs for each cloud
-    cloudData.puffs.forEach(puff => {
-      const geometry = new THREE.SphereGeometry(puff.radius, 8, 8);
-      const material = new THREE.MeshLambertMaterial({
-        color: 0xFFFFFF,
-        transparent: true,
-        opacity: 0.7
-      });
-      const sphere = new THREE.Mesh(geometry, material);
-      sphere.position.set(puff.offsetX, puff.offsetY, puff.offsetZ);
-      cloudGroup.add(sphere);
-    });
-
-    cloudGroup.position.set(cloudData.x, cloudData.y, cloudData.z);
-
-    // Store velocity for animation (vary speeds between clouds)
-    cloudGroup.userData.velocity = 0.5 + Math.random() * 1.0; // Speed between 0.5 and 1.5
-    cloudGroup.userData.startX = cloudData.x; // Store starting position for wrapping
-
-    scene.add(cloudGroup);
-    clouds.push(cloudGroup);
-  });
-}
-
-function createCelestialBodies(celestialData) {
-  // Create sun
-  if (celestialData.sun.visible) {
-    const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
-    const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xFFFF00 });
-    const sun = new THREE.Mesh(sunGeometry, sunMaterial);
-    sun.position.set(celestialData.sun.x, celestialData.sun.y, celestialData.sun.z);
-    scene.add(sun);
-
-    // Add sun glow
-    const glowGeometry = new THREE.SphereGeometry(12, 32, 32);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-      color: 0xFFFF88,
-      transparent: true,
-      opacity: 0.3
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    glow.position.copy(sun.position);
-    scene.add(glow);
-  }
-
-  // Create moon
-  if (celestialData.moon.visible) {
-    const moonGeometry = new THREE.SphereGeometry(6, 32, 32);
-    const moonMaterial = new THREE.MeshLambertMaterial({ color: 0xCCCCCC });
-    const moon = new THREE.Mesh(moonGeometry, moonMaterial);
-    moon.position.set(celestialData.moon.x, celestialData.moon.y, celestialData.moon.z);
-    scene.add(moon);
-  }
-}
-
-// Track obstacle meshes so we can remove them
-let obstacleMeshes = [];
-
-function recreateObstacles() {
-  // Remove existing obstacles
-  obstacleMeshes.forEach(mesh => {
-    scene.remove(mesh);
-  });
-  obstacleMeshes = [];
-
-  // Create new obstacles from server data
-  OBSTACLES.forEach(obs => {
-    const h = obs.h || 4;
-    const baseY = obs.baseY || 0;
-    let mesh;
-    if (obs.type === 'pyramid') {
-      // Pyramid: use ConeGeometry with 4 sides (square base)
-      // Always use a unit square base (side 1) for geometry, then scale to match obs.d and obs.w
-      const geometry = new THREE.ConeGeometry(0.5 / Math.SQRT2, h, 4, 1); // base square: 1x1
-      // Ensure geometry groups for multi-material: sides (0), base (1)
-      geometry.clearGroups();
-      // Sides: faces 0 to geometry.index.count - 4 (each face is 3 indices, last 4 faces are base)
-      geometry.addGroup(0, geometry.index.count - 12, 0); // sides
-      geometry.addGroup(geometry.index.count - 12, 12, 1); // base (last 4 faces)
-      geometry.rotateY(-Math.PI / 4); // align with axes
-      // Rotate so long side runs North-South (Y axis)
-      if (obs.w > obs.d) {
-        geometry.rotateY(Math.PI / 2);
-      }
-      // Scale to match obs.w (X) and obs.d (Z) so base is exactly obs.w x obs.d in world
-      geometry.scale(2 * obs.w, 1, 2 * obs.d);
-      if (obs.inverted) {
-        geometry.rotateX(Math.PI); // Invert pyramid
-      }
-      // Use concrete texture for pyramid base (same as box top/bottom)
-      const concreteTexture = createObstacleTexture();
-      concreteTexture.wrapS = THREE.RepeatWrapping;
-      concreteTexture.wrapT = THREE.RepeatWrapping;
-      concreteTexture.repeat.set(obs.w, obs.d);
-      // Invert texture for inverted pyramids
-      if (obs.inverted) {
-        concreteTexture.rotation = Math.PI;
-        concreteTexture.center.set(0.5, 0.5);
-      }
-      const pyramidTexture = createPyramidTexture();
-      pyramidTexture.wrapS = THREE.RepeatWrapping;
-      pyramidTexture.wrapT = THREE.RepeatWrapping;
-      pyramidTexture.repeat.set(obs.w, obs.h);
-      // Multi-material: [sides, base]
-      mesh = new THREE.Mesh(
-        geometry,
-        [
-          new THREE.MeshLambertMaterial({ map: pyramidTexture, flatShading: true }), // sides
-          new THREE.MeshLambertMaterial({ map: concreteTexture, flatShading: true })  // base
-        ]
-      );
-      // For inverted, base is on top, so adjust position
-      if (obs.inverted) {
-        mesh.position.set(obs.x, baseY + h / 2, obs.z);
-      } else {
-        mesh.position.set(obs.x, baseY + h / 2, obs.z);
-      }
-      mesh.rotation.y = obs.rotation || 0;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
-      obstacleMeshes.push(mesh);
-    } else {
-      // Box (default, now aligned: width=X=w, depth=Z=d)
-      const concreteTexture = createObstacleTexture();
-      concreteTexture.wrapS = THREE.RepeatWrapping;
-      concreteTexture.wrapT = THREE.RepeatWrapping;
-      // Tile concrete texture by world units
-      concreteTexture.repeat.set(obs.w, h);
-      const wallTexture = createWallTexture();
-      wallTexture.wrapS = THREE.RepeatWrapping;
-      wallTexture.wrapT = THREE.RepeatWrapping;
-      // Tile wall texture by world units
-      wallTexture.repeat.set(obs.d, h);
-      const materials = [
-        new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // right
-        new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // left
-        new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // top
-        new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }), // bottom
-        new THREE.MeshLambertMaterial({ map: wallTexture.clone() }), // front
-        new THREE.MeshLambertMaterial({ map: wallTexture.clone() })  // back
-      ];
-      // Sides: repeat by world units (corrected)
-      materials[0].map.repeat.set(obs.d, h); // right
-      materials[1].map.repeat.set(obs.d, h); // left
-      materials[4].map.repeat.set(obs.w, h); // front
-      materials[5].map.repeat.set(obs.w, h); // back
-      // Top/bottom: repeat by world units
-      materials[2].map.repeat.set(obs.w, obs.d); // top
-      materials[3].map.repeat.set(obs.w, obs.d); // bottom
-      materials.forEach(m => { m.map.needsUpdate = true; });
-      mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(obs.w, h, obs.d), // Aligned: width=X=w, depth=Z=d
-        materials
-      );
-      mesh.position.set(obs.x, baseY + h / 2, obs.z);
-      mesh.rotation.y = obs.rotation || 0;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
-      obstacleMeshes.push(mesh);
-    }
-  });
-}
-
-// Sand-like texture for BZFlag-style pyramids
-function createPyramidTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  // Base BZFlag blue color
-  ctx.fillStyle = '#3a5fa9'; // BZFlag default blue
-  ctx.fillRect(0, 0, 128, 128);
-  // Add some noise for grain (blue shades)
-  for (let i = 0; i < 4000; i++) {
-    const x = Math.random() * 128;
-    const y = Math.random() * 128;
-    const alpha = Math.random() * 0.15 + 0.05;
-    ctx.fillStyle = `rgba(58, 95, 169, ${alpha.toFixed(2)})`;
-    ctx.fillRect(x, y, 1, 1);
-  }
-  // Subtle horizontal lines for wind effect (lighter blue)
-  ctx.globalAlpha = 0.08;
-  ctx.strokeStyle = '#7faaff';
-  for (let y = 0; y < 128; y += 8) {
-    ctx.beginPath();
-    ctx.moveTo(0, y + Math.random() * 2);
-    ctx.lineTo(128, y + Math.random() * 2);
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1.0;
-  return new THREE.CanvasTexture(canvas);
-}
-
-function addObstacles() {
-  recreateObstacles();
-}
-
-function createTankTexture(baseColor) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-
-  // Base color
-  const baseHex = baseColor.toString(16).padStart(6, '0');
-  const r = parseInt(baseHex.substr(0, 2), 16);
-  const g = parseInt(baseHex.substr(2, 2), 16);
-  const b = parseInt(baseHex.substr(4, 2), 16);
-
-  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-  ctx.fillRect(0, 0, 128, 128);
-
-  // Create camouflage pattern with organic blobs
-  const numBlobs = 25;
-
-  for (let i = 0; i < numBlobs; i++) {
-    const x = Math.random() * 128;
-    const y = Math.random() * 128;
-    const radius = Math.random() * 20 + 10;
-
-    // Vary the color - darker or lighter than base
-    const variation = (Math.random() - 0.5) * 0.4;
-    const newR = Math.max(0, Math.min(255, r + r * variation));
-    const newG = Math.max(0, Math.min(255, g + g * variation));
-    const newB = Math.max(0, Math.min(255, b + b * variation));
-
-    ctx.fillStyle = `rgba(${Math.floor(newR)}, ${Math.floor(newG)}, ${Math.floor(newB)}, 0.6)`;
-
-    // Draw irregular blob shape
-    ctx.beginPath();
-    const points = 8;
-    for (let j = 0; j <= points; j++) {
-      const angle = (j / points) * Math.PI * 2;
-      const radiusVariation = radius * (0.7 + Math.random() * 0.6);
-      const px = x + Math.cos(angle) * radiusVariation;
-      const py = y + Math.sin(angle) * radiusVariation;
-      if (j === 0) {
-        ctx.moveTo(px, py);
-      } else {
-        ctx.lineTo(px, py);
-      }
-    }
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Add some darker spots for depth
-  for (let i = 0; i < 15; i++) {
-    const x = Math.random() * 128;
-    const y = Math.random() * 128;
-    const radius = Math.random() * 8 + 4;
-
-    ctx.fillStyle = `rgba(0, 0, 0, ${0.1 + Math.random() * 0.2})`;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function createTreadTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-
-  // Dark base
-  ctx.fillStyle = '#333333';
-  ctx.fillRect(0, 0, 128, 64);
-
-  // Tread pattern
-  ctx.fillStyle = '#222222';
-  for (let x = 0; x < 128; x += 16) {
-    ctx.fillRect(x, 0, 10, 64);
-  }
-
-  // Highlight grooves
-  ctx.strokeStyle = '#111111';
-  ctx.lineWidth = 2;
-  for (let x = 10; x < 128; x += 16) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, 64);
-    ctx.stroke();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function createTreadCapTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-
-  // Grey base color
-  const r = 100;
-  const g = 100;
-  const b = 100;
-
-  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-  ctx.fillRect(0, 0, 128, 128);
-
-  // Create camouflage pattern with organic blobs (same as body but grey)
-  const numBlobs = 25;
-
-  for (let i = 0; i < numBlobs; i++) {
-    const x = Math.random() * 128;
-    const y = Math.random() * 128;
-    const radius = Math.random() * 20 + 10;
-
-    // Vary the grey color - darker or lighter
-    const variation = (Math.random() - 0.5) * 0.4;
-    const newR = Math.max(0, Math.min(255, r + r * variation));
-    const newG = Math.max(0, Math.min(255, g + g * variation));
-    const newB = Math.max(0, Math.min(255, b + b * variation));
-
-    ctx.fillStyle = `rgba(${Math.floor(newR)}, ${Math.floor(newG)}, ${Math.floor(newB)}, 0.6)`;
-
-    // Draw irregular blob shape
-    ctx.beginPath();
-    const points = 8;
-    for (let j = 0; j <= points; j++) {
-      const angle = (j / points) * Math.PI * 2;
-      const radiusVariation = radius * (0.7 + Math.random() * 0.6);
-      const px = x + Math.cos(angle) * radiusVariation;
-      const py = y + Math.sin(angle) * radiusVariation;
-      if (j === 0) {
-        ctx.moveTo(px, py);
-      } else {
-        ctx.lineTo(px, py);
-      }
-    }
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Add some darker spots for depth
-  for (let i = 0; i < 15; i++) {
-    const x = Math.random() * 128;
-    const y = Math.random() * 128;
-    const radius = Math.random() * 8 + 4;
-
-    ctx.fillStyle = `rgba(0, 0, 0, ${0.1 + Math.random() * 0.2})`;
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function updateSpriteLabel(sprite, name) {
-  // Create canvas for text
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
-  canvas.width = 256;
-  canvas.height = 64;
-
-  // Draw text
-  context.fillStyle = 'rgba(0, 0, 0, 0.7)';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.font = 'bold 36px Arial';
-  context.fillStyle = '#4CAF50';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillText(name, canvas.width / 2, canvas.height / 2);
-
-  // Update sprite texture
-  const texture = new THREE.CanvasTexture(canvas);
-  sprite.material.map = texture;
-  sprite.material.needsUpdate = true;
-}
-
-function createTank(color = 0x4CAF50, name = '') {
-  const tankGroup = new THREE.Group();
-
-  // Create name label as a sprite (will be occluded by 3D objects)
-  if (name) {
-    const spriteMaterial = new THREE.SpriteMaterial({
-      depthTest: true,
-      depthWrite: false
-    });
-    const sprite = new THREE.Sprite(spriteMaterial);
-    sprite.position.set(0, 3, 0);
-    sprite.scale.set(2, 0.5, 1);
-    tankGroup.add(sprite);
-    tankGroup.userData.nameLabel = sprite;
-    updateSpriteLabel(sprite, name);
-  }
-
-  // Create textures
-  const bodyTexture = createTankTexture(color);
-  const treadTexture = createTreadTexture();
-  const treadTextureRotated = treadTexture.clone();
-  treadTextureRotated.rotation = Math.PI / 2;
-  treadTextureRotated.center.set(0.5, 0.5);
-  treadTextureRotated.needsUpdate = true;
-  const treadCapTexture = createTreadCapTexture();
-
-  // Create separate textures for each face dimension
-  const treadCapTextureSide = treadCapTexture.clone(); // For 1.0 x 3.0 faces (right, left, front, back)
-  treadCapTextureSide.repeat.set(3.0, 1.0); // 3.0 horizontally, 1.0 vertically
-  treadCapTextureSide.wrapS = THREE.RepeatWrapping;
-  treadCapTextureSide.wrapT = THREE.RepeatWrapping;
-  treadCapTextureSide.needsUpdate = true;
-
-  // Tank body with texture (raised)
-  const bodyGeometry = new THREE.BoxGeometry(3, 1, 4);
-  const bodyMaterial = new THREE.MeshLambertMaterial({ map: bodyTexture });
-  const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-  body.position.y = 0.8;
-  body.castShadow = true;
-  body.receiveShadow = true;
-  // body.rotation.y = Math.PI; // No rotation: face +Z at rad=0
-  tankGroup.add(body);
-  tankGroup.userData.body = body; // Store reference for hiding in first-person
-
-  // Left tread (realistic shape with half-cylinders at front/rear)
-  const treadMat = new THREE.MeshLambertMaterial({ map: treadTexture.clone() });
-  const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
-
-  // Create a group for each tread
-  const leftTreadGroup = new THREE.Group();
-  leftTreadGroup.position.set(-1.75, 0.5, 0);
-
-  // Store tread textures for animation - separate left and right for independent speed
-  tankGroup.userData.leftTreadTextures = [];
-  tankGroup.userData.rightTreadTextures = [];
-
-  // Flat middle section - length matches distance between cylinder centers
-  const treadHeight = 1.0;
-  const treadWidth = 1.0;
-  const treadCapRadius = treadHeight / 2;
-  const treadMiddleLength = 3.0;
-  const treadMiddleGeom = new THREE.BoxGeometry(treadWidth, treadHeight, treadMiddleLength);
-  const leftTreadRotatedTex = treadTextureRotated.clone();
-  leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
-  leftTreadRotatedTex.wrapT = THREE.RepeatWrapping;
-  const leftTreadRotatedMat = new THREE.MeshLambertMaterial({ map: leftTreadRotatedTex });
-  const treadCapMatSide = new THREE.MeshLambertMaterial({ map: treadCapTextureSide });
-  // Multi-material: right, left, top, bottom, front, back
-  const leftTreadMiddle = new THREE.Mesh(treadMiddleGeom, [treadCapMatSide, treadCapMatSide, leftTreadRotatedMat, leftTreadRotatedMat, treadCapMatSide, treadCapMatSide]);
-  leftTreadMiddle.castShadow = true;
-  leftTreadGroup.add(leftTreadMiddle);
-
-  // Store texture references for animation
-  tankGroup.userData.leftTreadTextures.push(leftTreadRotatedTex);
-
-  // Front half-cylinder (curved end at front of tank) - use multi-material for curved and flat sides
-  const treadCapGeom = new THREE.CylinderGeometry(treadCapRadius, treadCapRadius, treadWidth, 16, 1, false, 0, Math.PI);
-  // Rear half-cylinder geometry (flipped to face outward at rear)
-  const treadCapGeomRear = new THREE.CylinderGeometry(treadCapRadius, treadCapRadius, treadWidth, 16, 1, false, Math.PI, Math.PI);
-  const leftTreadFrontTex = treadTexture.clone();
-  leftTreadFrontTex.wrapS = THREE.RepeatWrapping;
-  leftTreadFrontTex.wrapT = THREE.RepeatWrapping;
-  const leftTreadFrontMat = new THREE.MeshLambertMaterial({ map: leftTreadFrontTex });
-  const leftTreadFront = new THREE.Mesh(treadCapGeom, [leftTreadFrontMat, treadCapMat, treadCapMat]);
-  leftTreadFront.rotation.x = Math.PI / 2;
-  leftTreadFront.rotation.z = Math.PI / 2;
-  leftTreadFront.position.z = treadMiddleLength / 2;
-  leftTreadFront.castShadow = true;
-  leftTreadGroup.add(leftTreadFront);
-  tankGroup.userData.leftTreadTextures.push(leftTreadFrontTex);
-
-  // Rear half-cylinder (curved end at rear of tank)
-  const leftTreadRearTex = treadTexture.clone();
-  leftTreadRearTex.wrapS = THREE.RepeatWrapping;
-  leftTreadRearTex.wrapT = THREE.RepeatWrapping;
-  const leftTreadRearMat = new THREE.MeshLambertMaterial({ map: leftTreadRearTex });
-  const leftTreadRear = new THREE.Mesh(treadCapGeomRear, [leftTreadRearMat, treadCapMat, treadCapMat]);
-  leftTreadRear.rotation.x = Math.PI / 2;
-  leftTreadRear.rotation.z = Math.PI / 2;
-  leftTreadRear.position.z = -treadMiddleLength / 2;
-  leftTreadRear.castShadow = true;
-  leftTreadGroup.add(leftTreadRear);
-  tankGroup.userData.leftTreadTextures.push(leftTreadRearTex);
-
-  tankGroup.add(leftTreadGroup);
-
-  // Right tread
-  const rightTreadGroup = new THREE.Group();
-  rightTreadGroup.position.set(1.75, 0.5, 0);
-
-  const rightTreadRotatedTex = treadTextureRotated.clone();
-  rightTreadRotatedTex.wrapS = THREE.RepeatWrapping;
-  rightTreadRotatedTex.wrapT = THREE.RepeatWrapping;
-  const rightTreadRotatedMat = new THREE.MeshLambertMaterial({ map: rightTreadRotatedTex });
-  const rightTreadMiddle = new THREE.Mesh(treadMiddleGeom, [treadCapMatSide, treadCapMatSide, rightTreadRotatedMat, rightTreadRotatedMat, treadCapMatSide, treadCapMatSide]);
-  rightTreadMiddle.castShadow = true;
-  rightTreadGroup.add(rightTreadMiddle);
-  tankGroup.userData.rightTreadTextures.push(rightTreadRotatedTex);
-
-  const rightTreadFrontTex = treadTexture.clone();
-  rightTreadFrontTex.wrapS = THREE.RepeatWrapping;
-  rightTreadFrontTex.wrapT = THREE.RepeatWrapping;
-  const rightTreadFrontMat = new THREE.MeshLambertMaterial({ map: rightTreadFrontTex });
-  const rightTreadFront = new THREE.Mesh(treadCapGeom, [rightTreadFrontMat, treadCapMat, treadCapMat]);
-  rightTreadFront.rotation.x = Math.PI / 2;
-  rightTreadFront.rotation.z = Math.PI / 2;
-  rightTreadFront.position.z = treadMiddleLength / 2;
-  rightTreadFront.castShadow = true;
-  rightTreadGroup.add(rightTreadFront);
-  tankGroup.userData.rightTreadTextures.push(rightTreadFrontTex);
-
-  const rightTreadRearTex = treadTexture.clone();
-  rightTreadRearTex.wrapS = THREE.RepeatWrapping;
-  rightTreadRearTex.wrapT = THREE.RepeatWrapping;
-  const rightTreadRearMat = new THREE.MeshLambertMaterial({ map: rightTreadRearTex });
-  const rightTreadRear = new THREE.Mesh(treadCapGeomRear, [rightTreadRearMat, treadCapMat, treadCapMat]);
-  rightTreadRear.rotation.x = Math.PI / 2;
-  rightTreadRear.rotation.z = Math.PI / 2;
-  rightTreadRear.position.z = -treadMiddleLength / 2;
-  rightTreadRear.castShadow = true;
-  rightTreadGroup.add(rightTreadRear);
-  tankGroup.userData.rightTreadTextures.push(rightTreadRearTex);
-
-  tankGroup.add(rightTreadGroup);
-
-  // Tank turret with texture - round cylinder
-  const turretGeometry = new THREE.CylinderGeometry(1, 1, 0.8, 32);
-  const turretTexture = bodyTexture.clone();
-  turretTexture.wrapS = THREE.RepeatWrapping;
-  turretTexture.wrapT = THREE.RepeatWrapping;
-  // Scale texture to match world coordinates - circumference is 2πr ≈ 6.28 for radius 1
-  turretTexture.repeat.set(6.28 / 4, 0.8 / 4); // Adjust to match body texture scale
-  turretTexture.needsUpdate = true;
-  const turretMaterial = new THREE.MeshLambertMaterial({ map: turretTexture });
-  const turret = new THREE.Mesh(turretGeometry, turretMaterial);
-  turret.position.y = 1.7;
-  turret.castShadow = true;
-  // turret.rotation.y = Math.PI; // No rotation: face +Z at rad=0
-  tankGroup.add(turret);
-  tankGroup.userData.turret = turret; // Store reference for hiding in first-person
-
-  // Tank barrel
-  const barrelGeometry = new THREE.CylinderGeometry(0.2, 0.2, 3, 8);
-  const barrelMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
-  const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 1.7, -1.5); // Point barrel toward -Z
-  barrel.castShadow = true;
-  // barrel.rotation.y = Math.PI; // No rotation: face +Z at rad=0
-  tankGroup.add(barrel);
-  tankGroup.userData.barrel = barrel; // Store reference
-
-  return tankGroup;
-}
-
 function sendToServer(message) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     // Track sent packets
@@ -1526,10 +654,7 @@ function handleServerMessage(message) {
       playerShields.clear();
 
       // Clear any existing clouds
-      clouds.forEach((cloud) => {
-        scene.remove(cloud);
-      });
-      clouds.length = 0;
+      renderManager.clearClouds();
 
       myPlayerId = message.player.id;
       gameConfig = message.config;
@@ -1550,27 +675,9 @@ function handleServerMessage(message) {
         }
       }
       // Only set up world, not join yet
-      // Ground with texture
-      const groundGeometry = new THREE.PlaneGeometry(gameConfig.MAP_SIZE * 3, gameConfig.MAP_SIZE * 3);
-      const groundTexture = createGroundTexture();
-      groundTexture.wrapS = THREE.RepeatWrapping;
-      groundTexture.wrapT = THREE.RepeatWrapping;
-      groundTexture.repeat.set(20, 20);
-      const groundMaterial = new THREE.MeshLambertMaterial({
-        map: groundTexture,
-        side: THREE.DoubleSide
-      });
-      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-      ground.rotation.x = -Math.PI / 2;
-      ground.receiveShadow = true;
-      scene.add(ground);
-
-      // Ground grid
-      const gridHelper = new THREE.GridHelper(gameConfig.MAP_SIZE * 3, gameConfig.MAP_SIZE, 0x000000, 0x555555);
-      scene.add(gridHelper);
-
-      // Map boundaries (walls)
-      createMapBoundaries(gameConfig.MAP_SIZE);
+      // Build world geometry
+      renderManager.buildGround(gameConfig.MAP_SIZE);
+      renderManager.createMapBoundaries(gameConfig.MAP_SIZE);
 
       // Initialize dead reckoning state
       lastSentX = playerX;
@@ -1581,17 +688,23 @@ function handleServerMessage(message) {
       // Update obstacles from server
       if (message.obstacles) {
         OBSTACLES = message.obstacles;
-        // Recreate obstacles in scene
-        recreateObstacles();
+        renderManager.setObstacles(OBSTACLES);
+      } else {
+        OBSTACLES = [];
+        renderManager.setObstacles([]);
       }
 
       // Create environmental features
-      createMountains();
+      renderManager.createMountains(gameConfig.MAP_SIZE);
       if (message.celestial) {
-        createCelestialBodies(message.celestial);
+        renderManager.createCelestialBodies(message.celestial);
+      } else {
+        renderManager.clearCelestialBodies();
       }
       if (message.clouds) {
-        createClouds(message.clouds);
+        renderManager.createClouds(message.clouds);
+      } else {
+        renderManager.clearClouds();
       }
       message.players.forEach(player => {
         if (player.health > 0) {
@@ -1617,7 +730,7 @@ function handleServerMessage(message) {
         document.getElementById('playerName').textContent = myPlayerName;
 
         // Create my tank
-        myTank = createTank(0x2196F3, myPlayerName);
+        myTank = renderManager.createTank(0x2196F3, myPlayerName);
         myTank.position.set(playerX, playerY, playerZ);
         myTank.rotation.y = playerRotation;
         myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
@@ -1663,14 +776,12 @@ function handleServerMessage(message) {
 
         // Detect jump (vertical velocity suddenly became positive and large)
         if (oldVerticalVel < 10 && message.verticalVelocity >= 20) {
-          // Play jump sound at tank's position
-          if (jumpSound && jumpSound.context) {
+          const jumpSoundClone = renderManager.cloneJumpSound();
+          if (jumpSoundClone) {
             try {
-              const jumpSoundClone = jumpSound.clone();
               tank.add(jumpSoundClone);
               jumpSoundClone.setVolume(0.4);
               jumpSoundClone.play();
-              // Remove sound after playing
               setTimeout(() => tank.remove(jumpSoundClone), 200);
             } catch (error) {
             }
@@ -1679,14 +790,12 @@ function handleServerMessage(message) {
 
         // Detect landing
         if (oldVerticalVel < 0 && message.verticalVelocity === 0 && oldY > message.y) {
-          // Play land sound at tank's position
-          if (landSound && landSound.context) {
+          const landSoundClone = renderManager.cloneLandSound();
+          if (landSoundClone) {
             try {
-              const landSoundClone = landSound.clone();
               tank.add(landSoundClone);
               landSoundClone.setVolume(0.5);
               landSoundClone.play();
-              // Remove sound after playing
               setTimeout(() => tank.remove(landSoundClone), 150);
             } catch (error) {
             }
@@ -1763,7 +872,7 @@ function handleServerMessage(message) {
 
         // Update tank name label
         if (myTank && myTank.userData.nameLabel) {
-          updateSpriteLabel(myTank.userData.nameLabel, message.name);
+          renderManager.updateSpriteLabel(myTank.userData.nameLabel, message.name);
         }
 
         showMessage(`Name changed to: ${message.name}`);
@@ -1772,7 +881,7 @@ function handleServerMessage(message) {
         const tank = tanks.get(message.playerId);
         if (tank) {
           if (tank.userData.nameLabel) {
-            updateSpriteLabel(tank.userData.nameLabel, message.name);
+            renderManager.updateSpriteLabel(tank.userData.nameLabel, message.name);
           }
           if (tank.userData.playerState) {
             tank.userData.playerState.name = message.name;
@@ -1799,7 +908,7 @@ function handleServerMessage(message) {
 function addPlayer(player) {
   if (tanks.has(player.id)) return;
 
-  const tank = createTank(0xFF5722, player.name);
+  const tank = renderManager.createTank(0xFF5722, player.name);
   tank.position.set(player.x, player.y, player.z);
   tank.rotation.y = player.rotation;
   tank.userData.playerState = player; // Store player state for scoreboard
@@ -1823,16 +932,8 @@ function createShield(playerId, x, y, z) {
   // Remove existing shield if any
   removeShield(playerId);
 
-  const shieldGeometry = new THREE.SphereGeometry(3, 16, 16);
-  const shieldMaterial = new THREE.MeshBasicMaterial({
-    color: 0x00FFFF,
-    transparent: true,
-    opacity: 0.3,
-    wireframe: true,
-  });
-  const shield = new THREE.Mesh(shieldGeometry, shieldMaterial);
-  shield.position.set(x, y + 2, z);
-  scene.add(shield);
+  const shield = renderManager.createShield({ x, y, z });
+  if (!shield) return;
   playerShields.set(playerId, shield);
 
   // Animate shield
@@ -1842,36 +943,21 @@ function createShield(playerId, x, y, z) {
 function removeShield(playerId) {
   const shield = playerShields.get(playerId);
   if (shield) {
-    scene.remove(shield);
+    renderManager.removeShield(shield);
     playerShields.delete(playerId);
   }
 }
 
 function createProjectile(data) {
-  const geometry = new THREE.SphereGeometry(0.3, 8, 8);
-  const material = new THREE.MeshBasicMaterial({ color: 0xFFFF00 });
-  const projectile = new THREE.Mesh(geometry, material);
-  projectile.position.set(data.x, data.y, data.z);
-  projectile.userData = {
-    dirX: data.dirX,
-    dirZ: data.dirZ,
-  };
-  scene.add(projectile);
+  const projectile = renderManager.createProjectile(data);
+  if (!projectile) return;
   projectiles.set(data.id, projectile);
-
-  // Play shoot sound
-  if (shootSound && shootSound.buffer) {
-    if (shootSound.isPlaying) {
-      shootSound.stop();
-    }
-    shootSound.play();
-  }
 }
 
 function removeProjectile(id) {
   const projectile = projectiles.get(id);
   if (projectile) {
-    scene.remove(projectile);
+    renderManager.removeProjectile(projectile);
     projectiles.delete(id);
   }
 }
@@ -1919,7 +1005,7 @@ function handlePlayerHit(message) {
     // Immediately hide the tank from the scene
     victimTank.visible = false;
     // Create explosion with tank parts
-    createExplosion(victimTank.position, victimTank);
+    renderManager.createExplosion(victimTank.position, victimTank);
   }
 }
 
@@ -1963,279 +1049,6 @@ function handleMapsList(message) {
   if (message.currentMap) {
     mapList.value = message.currentMap;
   }
-}
-
-function launchTankPart(part, centerPos, debrisPieces, speedMultiplier = 1.0) {
-  scene.add(part);
-
-  // Mark as tank part so we don't dispose shared materials/geometries
-  part.userData.isTankPart = true;
-
-  // Random velocity outward from explosion center
-  const angle = Math.random() * Math.PI * 2;
-  const elevation = (Math.random() - 0.3) * Math.PI / 3;
-  const speed = (Math.random() * 10 + 8) * speedMultiplier;
-
-  part.velocity = new THREE.Vector3(
-    Math.cos(angle) * Math.cos(elevation) * speed,
-    Math.sin(elevation) * speed + 8,
-    Math.sin(angle) * Math.cos(elevation) * speed
-  );
-
-  // Random rotation velocity
-  part.rotationVelocity = new THREE.Vector3(
-    (Math.random() - 0.5) * 8,
-    (Math.random() - 0.5) * 8,
-    (Math.random() - 0.5) * 8
-  );
-
-  debrisPieces.push({
-    mesh: part,
-    lifetime: 0,
-    maxLifetime: 2.0
-  });
-}
-
-function createExplosion(position, tank) {
-  if (!position) return;
-
-  // Play explosion sound
-  if (window.explosionSound && window.explosionSound.buffer) {
-    if (window.explosionSound.isPlaying) {
-      window.explosionSound.stop();
-    }
-    window.explosionSound.play();
-  }
-
-  // Create central explosion sphere
-  const geometry = new THREE.SphereGeometry(2, 16, 16);
-  const material = new THREE.MeshBasicMaterial({
-    color: 0xFF4500,
-    transparent: true,
-    opacity: 0.8
-  });
-  const explosion = new THREE.Mesh(geometry, material);
-  explosion.position.copy(position);
-  scene.add(explosion);
-
-  // Animate explosion sphere
-  let scale = 1;
-  const animateExplosion = () => {
-    scale += 0.1;
-    explosion.scale.set(scale, scale, scale);
-    material.opacity -= 0.05;
-
-    if (material.opacity > 0) {
-      requestAnimationFrame(animateExplosion);
-    } else {
-      scene.remove(explosion);
-      // Dispose of resources
-      geometry.dispose();
-      material.dispose();
-    }
-  };
-  animateExplosion();
-
-  // Create flying debris pieces
-  const debrisPieces = [];
-
-  // If we have the tank, launch its actual parts
-  if (tank && tank.userData) {
-    const tankWorldPos = new THREE.Vector3();
-    tank.getWorldPosition(tankWorldPos);
-    const tankRotation = tank.rotation.y;
-
-    // Launch tank body
-    if (tank.userData.body) {
-      const part = tank.userData.body.clone();
-      part.position.copy(tankWorldPos);
-      part.position.y = tank.userData.body.position.y;
-      part.rotation.y = tankRotation;
-      launchTankPart(part, tankWorldPos, debrisPieces, 1.0);
-    }
-
-    // Launch turret
-    if (tank.userData.turret) {
-      const part = tank.userData.turret.clone();
-      part.position.copy(tankWorldPos);
-      part.position.y = tank.userData.turret.position.y;
-      part.rotation.y = tankRotation;
-      launchTankPart(part, tankWorldPos, debrisPieces, 0.8);
-    }
-
-    // Launch barrel
-    if (tank.userData.barrel) {
-      const part = tank.userData.barrel.clone();
-      part.position.copy(tankWorldPos);
-      part.position.y = tank.userData.barrel.position.y;
-      part.position.z += 1.5 * Math.cos(tankRotation);
-      part.position.x += 1.5 * Math.sin(tankRotation);
-      part.rotation.copy(tank.userData.barrel.rotation);
-      part.rotation.y += tankRotation;
-      launchTankPart(part, tankWorldPos, debrisPieces, 0.6);
-    }
-
-    // Launch tread groups (left and right)
-    tank.children.forEach(child => {
-      if (child instanceof THREE.Group && child.children.length > 0) {
-        const treadGroup = child.clone();
-        treadGroup.position.copy(tankWorldPos);
-        treadGroup.position.x += child.position.x * Math.cos(tankRotation);
-        treadGroup.position.z += child.position.x * Math.sin(tankRotation);
-        treadGroup.position.y = child.position.y;
-        treadGroup.rotation.y = tankRotation;
-        launchTankPart(treadGroup, tankWorldPos, debrisPieces, 0.9);
-      }
-    });
-  }
-
-  const debrisCount = 15;
-
-  for (let i = 0; i < debrisCount; i++) {
-    // Create random box geometry for debris
-    const size = Math.random() * 0.5 + 0.3;
-    const debrisGeom = new THREE.BoxGeometry(size, size, size);
-    const debrisMat = new THREE.MeshLambertMaterial({
-      color: i % 3 === 0 ? 0x4CAF50 : (i % 3 === 1 ? 0x666666 : 0xFF5722)
-    });
-    const debris = new THREE.Mesh(debrisGeom, debrisMat);
-
-    // Position at explosion center
-    debris.position.copy(position);
-
-    // Random velocity in all directions
-    const angle = Math.random() * Math.PI * 2;
-    const elevation = (Math.random() - 0.3) * Math.PI / 3;
-    const speed = Math.random() * 15 + 10;
-
-    debris.velocity = new THREE.Vector3(
-      Math.cos(angle) * Math.cos(elevation) * speed,
-      Math.sin(elevation) * speed + 5,
-      Math.sin(angle) * Math.cos(elevation) * speed
-    );
-
-    // Random rotation
-    debris.rotation.set(
-      Math.random() * Math.PI,
-      Math.random() * Math.PI,
-      Math.random() * Math.PI
-    );
-
-    debris.rotationVelocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 10,
-      (Math.random() - 0.5) * 10,
-      (Math.random() - 0.5) * 10
-    );
-
-    // Mark as disposable debris (not a tank part)
-    debris.userData.isTankPart = false;
-
-    scene.add(debris);
-    debrisPieces.push({
-      mesh: debris,
-      lifetime: 0,
-      maxLifetime: 1.5
-    });
-  }
-
-  // Animate debris
-  const animateDebris = () => {
-    let anyAlive = false;
-    const dt = 0.016; // ~60fps
-
-    debrisPieces.forEach(piece => {
-      if (piece.lifetime < piece.maxLifetime) {
-        anyAlive = true;
-        piece.lifetime += dt;
-
-        // Apply gravity
-        piece.mesh.velocity.y -= 20 * dt;
-
-        // Update position
-        piece.mesh.position.x += piece.mesh.velocity.x * dt;
-        piece.mesh.position.y += piece.mesh.velocity.y * dt;
-        piece.mesh.position.z += piece.mesh.velocity.z * dt;
-
-        // Update rotation
-        piece.mesh.rotation.x += piece.mesh.rotationVelocity.x * dt;
-        piece.mesh.rotation.y += piece.mesh.rotationVelocity.y * dt;
-        piece.mesh.rotation.z += piece.mesh.rotationVelocity.z * dt;
-
-        // Fade out near end of lifetime
-        const fadeStart = piece.maxLifetime * 0.7;
-        if (piece.lifetime > fadeStart) {
-          const fadeProgress = (piece.lifetime - fadeStart) / (piece.maxLifetime - fadeStart);
-
-          // Handle both single material and material arrays
-          if (piece.mesh.material) {
-            if (Array.isArray(piece.mesh.material)) {
-              piece.mesh.material.forEach(mat => {
-                if (mat) {
-                  mat.opacity = 1 - fadeProgress;
-                  mat.transparent = true;
-                }
-              });
-            } else {
-              piece.mesh.material.opacity = 1 - fadeProgress;
-              piece.mesh.material.transparent = true;
-            }
-          }
-
-          // Also fade children (for tank parts with sub-meshes)
-          piece.mesh.traverse((child) => {
-            if (child.material) {
-              if (Array.isArray(child.material)) {
-                child.material.forEach(mat => {
-                  if (mat) {
-                    mat.opacity = 1 - fadeProgress;
-                    mat.transparent = true;
-                  }
-                });
-              } else {
-                child.material.opacity = 1 - fadeProgress;
-                child.material.transparent = true;
-              }
-            }
-          });
-        }
-
-        // Remove if hit ground
-        if (piece.mesh.position.y < 0) {
-          piece.lifetime = piece.maxLifetime;
-        }
-      } else {
-        // Remove from scene
-        scene.remove(piece.mesh);
-
-        // For cloned tank parts, don't dispose shared materials/geometries
-        // Only dispose if this is a unique debris piece (not a tank part)
-        if (piece.mesh.userData && !piece.mesh.userData.isTankPart) {
-          if (piece.mesh.geometry) {
-            piece.mesh.geometry.dispose();
-          }
-          if (piece.mesh.material) {
-            if (Array.isArray(piece.mesh.material)) {
-              piece.mesh.material.forEach(mat => mat.dispose());
-            } else {
-              piece.mesh.material.dispose();
-            }
-          }
-        }
-
-        // Recursively remove children from scene
-        if (piece.mesh.children) {
-          piece.mesh.children.forEach(child => {
-            scene.remove(child);
-          });
-        }
-      }
-    });
-
-    if (anyAlive) {
-      requestAnimationFrame(animateDebris);
-    }
-  };
-  animateDebris();
 }
 
 function updateStats(player) {
@@ -2803,8 +1616,7 @@ function handleMotion(deltaTime) {
   if (jumpTriggered && !isInAir) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
-    if (jumpSound && jumpSound.isPlaying) jumpSound.stop();
-    if (jumpSound) jumpSound.play();
+    renderManager.playLocalJumpSound();
   }
 
   const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
@@ -2935,68 +1747,9 @@ function updateShields() {
   });
 }
 
-function updateCamera() {
-  if (cameraMode === 'overview' || !myTank) {
-    // Overview camera (used at name dialog and after death)
-    camera.position.set(0, 15, 20);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(0, 0, 0);
-    return;
-  }
-
-  if (cameraMode === 'first-person') {
-    // Hide tank body and turret in first-person view
-    if (myTank.userData.body) {
-      myTank.userData.body.visible = false;
-    }
-    if (myTank.userData.turret) {
-      myTank.userData.turret.visible = false;
-    }
-
-    // First-person view - inside the tank turret
-      const fpOffset = new THREE.Vector3(
-        -Math.sin(playerRotation) * 0.5,
-        2.2, // Eye level inside turret
-        -Math.cos(playerRotation) * 0.5
-      );
-      camera.position.copy(myTank.position).add(fpOffset);
-
-      // Look forward in the direction the tank is facing
-      const lookTarget = new THREE.Vector3(
-        myTank.position.x - Math.sin(playerRotation) * 10,
-        myTank.position.y + 2,
-        myTank.position.z - Math.cos(playerRotation) * 10
-      );
-      camera.lookAt(lookTarget);
-  } else {
-    // Show tank body and turret in third-person view
-    if (myTank.userData.body) {
-      myTank.userData.body.visible = true;
-    }
-    if (myTank.userData.turret) {
-      myTank.userData.turret.visible = true;
-    }
-
-    // Third-person view - lower and flatter for better forward visibility
-    const cameraOffset = new THREE.Vector3(
-      Math.sin(playerRotation) * 12,
-      4,
-      Math.cos(playerRotation) * 12
-    );
-    camera.position.copy(myTank.position).add(cameraOffset);
-    camera.lookAt(new THREE.Vector3(
-      myTank.position.x - Math.sin(playerRotation) * 10,
-      myTank.position.y + 3,
-      myTank.position.z - Math.cos(playerRotation) * 10
-    ));
-  }
-}
-
 function onWindowResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+  renderManager.handleResize();
+  camera = renderManager.getCamera();
   resizeRadar();
 }
 
@@ -3242,75 +1995,6 @@ function updateRadar() {
   });
 }
 
-function updateTreads(deltaTime) {
-  tanks.forEach((tank, playerId) => {
-    // Initialize tracking variables
-    if (!tank.userData.leftTreadOffset) {
-      tank.userData.leftTreadOffset = 0;
-      tank.userData.rightTreadOffset = 0;
-    }
-
-    // Always use tank.userData.forwardSpeed and rotationSpeed for all tanks
-    const forwardSpeed = tank.userData.forwardSpeed || 0;
-    const rotationSpeed = tank.userData.rotationSpeed || 0;
-
-    // Tank tread width (distance between tread centers)
-    const treadWidth = 3.5;
-
-    // Calculate base movement amounts
-    const tankSpeed = gameConfig ? gameConfig.TANK_SPEED : 5;
-    const tankRotSpeed = gameConfig ? gameConfig.TANK_ROTATION_SPEED : 2;
-
-    const forwardDistance = forwardSpeed * tankSpeed * deltaTime;
-    const rotationDistance = rotationSpeed * tankRotSpeed * deltaTime * treadWidth / 2;
-
-    // Left tread speed (positive rotation = turn right, left tread goes faster)
-    const leftDistance = forwardDistance - rotationDistance;
-    // Right tread speed (positive rotation = turn right, right tread goes slower)
-    const rightDistance = forwardDistance + rotationDistance;
-
-    // Adjust multiplier for more realistic tread speed
-    const treadSpeed = 0.5;
-    tank.userData.leftTreadOffset -= leftDistance * treadSpeed;
-    tank.userData.rightTreadOffset -= rightDistance * treadSpeed;
-
-    // Animate left tread textures
-    if (tank.userData.leftTreadTextures) {
-      for (let i = 0; i < tank.userData.leftTreadTextures.length; i++) {
-        const texture = tank.userData.leftTreadTextures[i];
-        if (texture && texture.offset) {
-          texture.offset.x = tank.userData.leftTreadOffset;
-        }
-      }
-    }
-
-    // Animate right tread textures
-    if (tank.userData.rightTreadTextures) {
-      for (let i = 0; i < tank.userData.rightTreadTextures.length; i++) {
-        const texture = tank.userData.rightTreadTextures[i];
-        if (texture && texture.offset) {
-          texture.offset.x = tank.userData.rightTreadOffset;
-        }
-      }
-    }
-  });
-}
-
-function updateClouds(deltaTime) {
-  const mapSize = gameConfig ? gameConfig.MAP_SIZE : 100;
-  const mapBoundary = mapSize / 2;
-
-  clouds.forEach((cloud) => {
-    // Move cloud across the sky (in X direction)
-    cloud.position.x += cloud.userData.velocity * deltaTime;
-
-    // Wrap around when cloud goes past the boundary
-    if (cloud.position.x > mapBoundary + 30) {
-      cloud.position.x = -mapBoundary - 30;
-    }
-  });
-}
-
 let lastTime = performance.now();
 
 function updateChatWindow() {
@@ -3339,13 +2023,14 @@ function animate() {
   handleMotion(deltaTime);
   updateProjectiles();
   updateShields();
-  updateTreads(deltaTime);
-  updateClouds(deltaTime);
-  updateCamera();
+  renderManager.updateTreads(tanks, deltaTime, gameConfig);
+  if (gameConfig) {
+    renderManager.updateClouds(deltaTime, gameConfig.MAP_SIZE || 100);
+  }
+  renderManager.updateCamera({ cameraMode, myTank, playerRotation });
   updateRadar();
 
-  renderer.render(scene, camera);
-  labelRenderer.render(scene, camera);
+  renderManager.renderFrame();
 }
 
 // Start the game
