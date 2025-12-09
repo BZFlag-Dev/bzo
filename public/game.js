@@ -26,6 +26,14 @@ let sentBps = 0;
 let receivedBps = 0;
 
 import { setupInputHandlers, virtualInput, keys, lastVirtualJump } from './input.js';
+import {
+  updateDebugDisplay,
+  setActive,
+  updateHudButtons,
+  toggleDebugHud,
+  toggleSettingsHud,
+  toggleHelpPanel
+} from './hud.js';
 
 
 // Setup input handlers on DOMContentLoaded
@@ -135,7 +143,6 @@ function createCobblestoneTexture() {
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createShootBuffer, createExplosionBuffer, createJumpBuffer, createLandBuffer } from './audio.js';
-import { updateDebugDisplay } from './hud.js';
 
 // FPS
 let fps = 0;
@@ -166,60 +173,7 @@ let gameConfig = null;
 let audioListener, shootSound, jumpSound, landSound;
 let radarCanvas, radarCtx;
 
-function setActive(btn, active, activeTitle, inactiveTitle) {
-  if (!btn) return;
-  if (active) {
-    btn.classList.add('active');
-    if (activeTitle) btn.title = activeTitle;
-  } else {
-    btn.classList.remove('active');
-    if (inactiveTitle) btn.title = inactiveTitle;
-  }
-}
-
-function updateHudButtons() {
-  setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
-  setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
-  setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
-  if (cameraBtn) {
-    let camTitle = 'Toggle Camera View (C)';
-    if (typeof cameraMode !== 'undefined') {
-      camTitle = `Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'} (C)`;
-    }
-    cameraBtn.title = camTitle;
-  }
-}
-
-function toggleDebugHud() {
-  debugEnabled = !debugEnabled;
-  localStorage.setItem('debugEnabled', debugEnabled.toString());
-  const debugHud = document.getElementById('debugHud');
-  if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
-  if (debugEnabled && !debugUpdateInterval) {
-    debugUpdateInterval = setInterval(() => updateDebugDisplay({
-      fps,
-      latency,
-      packetsSent,
-      packetsReceived,
-      sentBps,
-      receivedBps,
-      playerX,
-      playerY,
-      playerZ,
-      playerRotation,
-      myTank,
-      cameraMode,
-      OBSTACLES,
-      clouds,
-      latestOrientation
-    }), 500);
-  } else if (!debugEnabled && debugUpdateInterval) {
-    clearInterval(debugUpdateInterval);
-    debugUpdateInterval = null;
-  }
-  updateHudButtons();
-  showMessage(`Debug Mode: ${debugEnabled ? 'ON' : 'OFF'}`);
-}
+// Removed duplicate setActive, updateHudButtons, toggleDebugHud, toggleSettingsHud, toggleHelpPanel definitions (now imported from hud.js)
 
 
 // Input state
@@ -439,19 +393,21 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedMouseMode === 'true') mouseControlEnabled = true;
 
   // Attach HUD Button Handlers (only once)
-  if (virtualConrolsBtn) virtualConrolsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleVirtualControls(); });
-  if (mouseBtn) mouseBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleMouseMode(); });
-  if (fullscreenBtn) fullscreenBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleFullscreen(); });
-  if (debugBtn) debugBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleDebugHud(); });
-  if (cameraBtn) cameraBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleCameraMode(); });
-  if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel(); });
-  if (helpBtn) updateHelpBtn();
-  if (settingsBtn) settingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); });
-  if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); });
-  if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); toggleOperatorPanel(); });
-  if (closeOperatorBtn) closeOperatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
-  if (operatorBtn) updateOperatorBtn();
-  if (playerNameEl) playerNameEl.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleEntryDialog(); });
+  if (debugBtn) debugBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleDebugHud({
+    debugEnabled,
+    setDebugEnabled: v => { debugEnabled = v; },
+    updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
+    showMessage,
+    updateDebugDisplay,
+    getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds, latestOrientation })
+}); });
+if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn }); });
+if (settingsBtn) settingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updateSettingsBtn }); });
+if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updateSettingsBtn }); });
+if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); toggleOperatorPanel(); });
+if (closeOperatorBtn) closeOperatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
+if (operatorBtn) updateOperatorBtn();
+if (playerNameEl) playerNameEl.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleEntryDialog(); });
 
   // Attach Key Handlers
   document.addEventListener('keydown', (e) => {
@@ -459,12 +415,19 @@ window.addEventListener('DOMContentLoaded', () => {
     if (document.activeElement === entryInput) return;
     if (e.key === 'm' || e.key === 'M') toggleMouseMode();
     else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-    else if (e.key === 'i' || e.key === 'I') toggleDebugHud();
+    else if (e.key === 'i' || e.key === 'I') toggleDebugHud({
+      debugEnabled,
+      setDebugEnabled: v => { debugEnabled = v; },
+      updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
+      showMessage,
+      updateDebugDisplay,
+      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds, latestOrientation })
+    });
     else if (e.key === 'c' || e.key === 'C') toggleCameraMode();
     else if (e.key === 'o' || e.key === 'O') toggleOperatorPanel();
-    else if (e.key === '?' || e.key === '/') toggleHelpPanel();
+    else if (e.key === '?' || e.key === '/') toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn });
   });
-  updateHudButtons();
+  updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode });
 });
 
 // Obstacle definitions (received from server)
@@ -748,7 +711,14 @@ function init() {
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
   if (savedDebugState === 'true') {
-    toggleDebugHud();
+    toggleDebugHud({
+      debugEnabled,
+      setDebugEnabled: v => { debugEnabled = v; },
+      updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
+      showMessage,
+      updateDebugDisplay,
+      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds, latestOrientation })
+    });
   }
 
   // Scene

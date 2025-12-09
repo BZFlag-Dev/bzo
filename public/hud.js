@@ -1,3 +1,70 @@
+// Set button active/inactive and update title
+export function setActive(btn, active, activeTitle, inactiveTitle) {
+  if (!btn) return;
+  if (active) {
+    btn.classList.add('active');
+    if (activeTitle) btn.title = activeTitle;
+  } else {
+    btn.classList.remove('active');
+    if (inactiveTitle) btn.title = inactiveTitle;
+  }
+}
+
+// Update HUD button states
+export function updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }) {
+  setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
+  setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
+  setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
+  if (cameraBtn) {
+    let camTitle = 'Toggle Camera View (C)';
+    if (typeof cameraMode !== 'undefined') {
+      camTitle = `Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'} (C)`;
+    }
+    cameraBtn.title = camTitle;
+  }
+}
+
+// Toggle debug HUD
+export function toggleDebugHud({ debugEnabled, setDebugEnabled, updateHudButtons, showMessage, updateDebugDisplay, getDebugState }) {
+  setDebugEnabled(!debugEnabled);
+  localStorage.setItem('debugEnabled', (!debugEnabled).toString());
+  const debugHud = document.getElementById('debugHud');
+  if (debugHud) debugHud.style.display = !debugEnabled ? 'block' : 'none';
+  if (!debugEnabled && !window.debugUpdateInterval) {
+    window.debugUpdateInterval = setInterval(() => updateDebugDisplay(getDebugState()), 500);
+  } else if (debugEnabled && window.debugUpdateInterval) {
+    clearInterval(window.debugUpdateInterval);
+    window.debugUpdateInterval = null;
+  }
+  updateHudButtons();
+  showMessage(`Debug Mode: ${!debugEnabled ? 'ON' : 'OFF'}`);
+}
+
+// Toggle settings HUD
+export function toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updateSettingsBtn }) {
+  if (!settingsHud) return;
+  if (settingsHud.style.display === 'block') {
+    settingsHud.style.display = 'none';
+    showMessage('Settings: Hidden');
+  } else {
+    settingsHud.style.display = 'block';
+    showMessage('Settings: Shown');
+  }
+  updateSettingsBtn();
+}
+
+// Toggle help panel
+export function toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn }) {
+  if (!helpPanel) return;
+  if (helpPanel.style.display === 'block') {
+    helpPanel.style.display = 'none';
+    showMessage('Help Panel: Hidden');
+  } else {
+    helpPanel.style.display = 'block';
+    showMessage('Help Panel: Shown');
+  }
+  updateHelpBtn();
+}
 /*
  * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
