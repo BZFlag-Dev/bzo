@@ -21,6 +21,9 @@ const CHAT_MAX_MESSAGES = 6;
 let chatInput = null;
 let chatActive = false;
 let virtualControlsEnabled = false;
+let latency = 0;
+let sentBps = 0;
+let receivedBps = 0;
 
 import { setupInputHandlers, virtualInput, keys, lastVirtualJump } from './input.js';
 
@@ -132,6 +135,7 @@ function createCobblestoneTexture() {
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createShootBuffer, createExplosionBuffer, createJumpBuffer, createLandBuffer } from './audio.js';
+import { updateDebugDisplay } from './hud.js';
 
 // FPS
 let fps = 0;
@@ -192,7 +196,23 @@ function toggleDebugHud() {
   const debugHud = document.getElementById('debugHud');
   if (debugHud) debugHud.style.display = debugEnabled ? 'block' : 'none';
   if (debugEnabled && !debugUpdateInterval) {
-    debugUpdateInterval = setInterval(updateDebugDisplay, 500);
+    debugUpdateInterval = setInterval(() => updateDebugDisplay({
+      fps,
+      latency,
+      packetsSent,
+      packetsReceived,
+      sentBps,
+      receivedBps,
+      playerX,
+      playerY,
+      playerZ,
+      playerRotation,
+      myTank,
+      cameraMode,
+      OBSTACLES,
+      clouds,
+      latestOrientation
+    }), 500);
   } else if (!debugEnabled && debugUpdateInterval) {
     clearInterval(debugUpdateInterval);
     debugUpdateInterval = null;
@@ -1818,66 +1838,6 @@ function sendToServer(message) {
   }
 }
 
-function updateDebugDisplay() {
-
-  const debugContent = document.getElementById('debugContent');
-  if (!debugContent) return;
-
-  const tank = tanks.get(myPlayerId);
-  if (!tank) {
-    debugContent.innerHTML = '<div>No player tank data available.</div>';
-    return;
-  }
-
-  let html = '<div style="margin-bottom: 10px; font-weight: bold;">PLAYER STATUS:</div>';
-  html += `<div><span class="label">FPS:</span><span class="value">${fps.toFixed(1)}</span></div>`;
-
-  // Mobile orientation status
-  if (typeof latestOrientation !== 'undefined' && latestOrientation.status) {
-    html += `<div><span class="label">Orientation Status:</span><span class="value">${latestOrientation.status}</span></div>`;
-    if (latestOrientation.alpha !== null && latestOrientation.beta !== null && latestOrientation.gamma !== null) {
-      html += `<div><span class="label">Orientation α:</span><span class="value">${latestOrientation.alpha.toFixed(1)}</span></div>`;
-      html += `<div><span class="label">Orientation β:</span><span class="value">${latestOrientation.beta.toFixed(1)}</span></div>`;
-      html += `<div><span class="label">Orientation γ:</span></span>${latestOrientation.gamma.toFixed(1)}</span></div>`;
-    }
-    html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
-  } else {
-    try {
-      html += `<div><span class="label">Speed:</span><span class="value">${tank.userData.forwardSpeed.toFixed(2)} u/s</span></div>`;
-      html += `<div><span class="label">Angular:</span><span class="value">${tank.userData.rotationSpeed.toFixed(2)} rad/s</span></div>`;
-      if (tank.userData.verticalSpeed !== undefined) {a
-        html += `<div><span class="label">Vertical:</span><span class="value">${tank.userData.verticalSpeed.toFixed(2)} u/s</span></div>`;
-      }
-      html += `<div><span class="label">Position:</span><span class="value">(${tank.position.x.toFixed(1)}, ${myTank ? myTank.position.y.toFixed(1) : '0.0'}, ${myTank.position.z.toFixed(1)})</span></div>`;
-      html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation.toFixed(2)} rad</span></div>`;
-
-      html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">SCENE OBJECTS:</div>';
-
-      // Count scene objects
-      let totalObjects = 0;
-      scene.traverse(() => totalObjects++);
-      html += `<div><span class="label">Total Objects:</span><span class="value">${totalObjects}</span></div>`;
-      html += `<div><span class="label">Tanks:</span><span class="value">${tanks.size}</span></div>`;
-      html += `<div><span class="label">Projectiles:</span><span class="value">${projectiles.size}</span></div>`;
-      html += `<div><span class="label">Shields:</span><span class="value">${playerShields.size}</span></div>`;
-
-      html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS SENT:</div>';
-
-      const sentTypes = Array.from(packetsSent.entries()).sort((a, b) => b[1] - a[1]);
-      sentTypes.forEach(([type, count]) => {
-        html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
-      });
-
-      html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS RECEIVED:</div>';
-
-      const receivedTypes = Array.from(packetsReceived.entries()).sort((a, b) => b[1] - a[1]);
-      receivedTypes.forEach(([type, count]) => {
-        html += `<div><span class="label">${type}:</span><span class="value">${count}</span></div>`;
-      });
-    } catch (e) {}
-  }
-  debugContent.innerHTML = html;
-}
 
 function connectToServer() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
