@@ -257,6 +257,21 @@ function createCobblestoneTexture() {
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
+// FPS
+let fps = 0;
+let frameCount = 0;
+let lastFpsUpdate = performance.now();
+
+function updateFps() {
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsUpdate >= 500) { // update every 0.5s
+    fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+    frameCount = 0;
+    lastFpsUpdate = now;
+  }
+}
+
 // Game state
 
 let scene, camera, renderer, labelRenderer;
@@ -1972,6 +1987,7 @@ function updateDebugDisplay() {
   }
 
   let html = '<div style="margin-bottom: 10px; font-weight: bold;">PLAYER STATUS:</div>';
+  html += `<div><span class="label">FPS:</span><span class="value">${fps.toFixed(1)}</span></div>`;
 
   // Mobile orientation status
   if (typeof latestOrientation !== 'undefined' && latestOrientation.status) {
@@ -1979,7 +1995,7 @@ function updateDebugDisplay() {
     if (latestOrientation.alpha !== null && latestOrientation.beta !== null && latestOrientation.gamma !== null) {
       html += `<div><span class="label">Orientation α:</span><span class="value">${latestOrientation.alpha.toFixed(1)}</span></div>`;
       html += `<div><span class="label">Orientation β:</span><span class="value">${latestOrientation.beta.toFixed(1)}</span></div>`;
-      html += `<div><span class="label">Orientation γ:</span><span class="value">${latestOrientation.gamma.toFixed(1)}</span></div>`;
+      html += `<div><span class="label">Orientation γ:</span></span>${latestOrientation.gamma.toFixed(1)}</span></div>`;
     }
     html += `<div><span class="label">Device Mode:</span><span class="value">${orientationMode}</span></div>`;
   } else {
@@ -3976,6 +3992,7 @@ function animate() {
   const deltaTime = (now - lastTime) / 1000;
   lastTime = now;
 
+  updateFps();
   updateChatWindow();
   requestAnimationFrame(animate);
   handleInputEvents();
