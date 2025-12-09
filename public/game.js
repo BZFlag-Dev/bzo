@@ -431,6 +431,34 @@ window.addEventListener('DOMContentLoaded', () => {
   const playerNameEl = document.getElementById('playerName');
   const helpPanel = document.getElementById('helpPanel');
   const closeSettingsBtn = document.getElementById('closeSettingsHud');
+  const wireframeBtn = document.getElementById('wireframeBtn');
+  let wireframeEnabled = false;
+
+  function setWireframeMode(enabled) {
+    if (!scene) return;
+    scene.traverse(obj => {
+      if (obj.isMesh && obj.material) {
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach(mat => { if (mat) mat.wireframe = enabled; });
+        } else {
+          obj.material.wireframe = enabled;
+        }
+      }
+    });
+    wireframeEnabled = enabled;
+    if (wireframeBtn) {
+      if (enabled) wireframeBtn.classList.add('active');
+      else wireframeBtn.classList.remove('active');
+    }
+  }
+
+  if (wireframeBtn) {
+    wireframeBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      setWireframeMode(!wireframeEnabled);
+    });
+  }
 
   function updateSettingsBtn() {
     if (!settingsHud || !settingsBtn) return;
