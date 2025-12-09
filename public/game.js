@@ -2,20 +2,6 @@
  * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
  */
-
-// Detect mobile browser
-function isMobileBrowser() {
-  const ua = navigator.userAgent || navigator.vendor || window.opera;
-  // Standard mobile detection
-  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return true;
-  // iPadOS 13+ sends Mac OS user agent, but has touch support and screen size like iPad
-  const isIpad = (
-    (navigator.platform === 'MacIntel' && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1) ||
-    (/iPad/.test(ua))
-  );
-  return isIpad;
-}
-const isMobile = isMobileBrowser();
 let chatMessages = [];
 const CHAT_MAX_MESSAGES = 6;
 let chatInput = null;
@@ -25,124 +11,33 @@ let latency = 0;
 let sentBps = 0;
 let receivedBps = 0;
 
-import { setupInputHandlers, virtualInput, keys, lastVirtualJump } from './input.js';
+import {
+  setupInputHandlers,
+  virtualInput,
+  keys,
+  lastVirtualJump,
+  initHudControls,
+  latestOrientation,
+  toggleMouseMode,
+  hideHelpPanel,
+  isMobile
+} from './input.js';
 import {
   updateDebugDisplay,
-  setActive,
   updateHudButtons,
-  toggleDebugHud,
-  toggleSettingsHud,
-  toggleHelpPanel
+  toggleDebugHud
 } from './hud.js';
 
-
-// Setup input handlers on DOMContentLoaded
-window.addEventListener('DOMContentLoaded', () => {
-  setupInputHandlers();
-});
-
-let latestOrientation = { alpha: null, beta: null, gamma: null, status: '' };
-function setupMobileOrientationDebug() {
-  function handleOrientation(event) {
-    const { alpha, beta, gamma } = event;
-    latestOrientation.alpha = alpha;
-    latestOrientation.beta = beta;
-    latestOrientation.gamma = gamma;
-    latestOrientation.status = 'OK';
-
-    // No analog tank controls from orientation; only update latestOrientation for debug HUD
-  }
-
-  // iOS 13+ requires permission for device orientation
-  function requestOrientationPermission() {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission().then(permissionState => {
-        if (permissionState === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation);
-          latestOrientation.status = 'Permission granted';
-        } else {
-          latestOrientation.status = 'Permission denied';
-        }
-      }).catch(err => {
-        latestOrientation.status = 'Permission error: ' + err;
-      });
-    } else {
-      // Android Chrome and others
-      window.addEventListener('deviceorientation', handleOrientation);
-      latestOrientation.status = 'Listener attached';
-    }
-  }
-
-  // Only activate on mobile devices
-  if (isMobile) {
-    latestOrientation.status = 'Mobile device detected';
-    requestOrientationPermission();
-  }
-}
-
-// Cobblestone texture for boundary walls
-function createCobblestoneTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-
-  // Fill with dark grey
-  ctx.fillStyle = '#333';
-  ctx.fillRect(0, 0, 256, 256);
-
-  // Draw cobblestones
-  const rows = 8;
-  const cols = 8;
-  const stoneW = 28;
-  const stoneH = 28;
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < cols; x++) {
-      // Offset every other row
-      const offsetX = (y % 2) * (stoneW / 2);
-      const cx = x * stoneW + offsetX + stoneW / 2 + 4 * Math.random();
-      const cy = y * stoneH + stoneH / 2 + 4 * Math.random();
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, stoneW * 0.45, stoneH * 0.4, 0, 0, Math.PI * 2);
-      // Vary color for realism
-      const shade = Math.floor(40 + Math.random() * 40);
-      ctx.fillStyle = `rgb(${shade},${shade},${shade})`;
-      ctx.fill();
-      // Draw highlight
-      ctx.beginPath();
-      ctx.ellipse(cx - 4, cy - 4, stoneW * 0.12, stoneH * 0.10, 0, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(200,200,200,0.08)`;
-      ctx.fill();
-      // Draw shadow
-      ctx.beginPath();
-      ctx.ellipse(cx + 4, cy + 4, stoneW * 0.12, stoneH * 0.10, 0, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(0,0,0,0.12)`;
-      ctx.fill();
-    }
-  }
-  // Draw mortar lines
-  ctx.strokeStyle = 'rgba(80,80,80,0.5)';
-  ctx.lineWidth = 2;
-  for (let y = 0; y <= rows; y++) {
-    ctx.beginPath();
-    ctx.moveTo(0, y * stoneH);
-    ctx.lineTo(256, y * stoneH);
-    ctx.stroke();
-  }
-  for (let x = 0; x <= cols; x++) {
-    ctx.beginPath();
-    ctx.moveTo(x * stoneW, 0);
-    ctx.lineTo(x * stoneW, 256);
-    ctx.stroke();
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
 
 import * as THREE from 'three';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { createShootBuffer, createExplosionBuffer, createJumpBuffer, createLandBuffer } from './audio.js';
+import {
+  createCobblestoneTexture,
+  createGroundTexture,
+  createWallTexture,
+  createObstacleTexture
+} from './texture.js';
 
 // FPS
 let fps = 0;
@@ -180,42 +75,6 @@ let radarCanvas, radarCtx;
 let lastShotTime = 0;
 
 // Operator Panel Toggle
-function updateOperatorBtn() {
-  const operatorBtn = document.getElementById('operatorBtn');
-  const operatorOverlay = document.getElementById('operatorOverlay');
-  if (!operatorBtn || !operatorOverlay) return;
-  if (operatorOverlay.style.display === 'block') {
-    operatorBtn.classList.add('active');
-    operatorBtn.title = 'Hide Operator Panel (O)';
-  } else {
-    operatorBtn.classList.remove('active');
-    operatorBtn.title = 'Show Operator Panel (O)';
-  }
-}
-
-function toggleOperatorPanel() {
-  const operatorOverlay = document.getElementById('operatorOverlay');
-  if (!operatorOverlay) return;
-  // Use computed style to check visibility
-  const computedStyle = window.getComputedStyle(operatorOverlay);
-  const isVisible = computedStyle.display !== 'none';
-  if (isVisible) {
-    operatorOverlay.style.setProperty('display', 'none');
-    showMessage('Operator Panel: Hidden');
-  } else {
-    operatorOverlay.style.setProperty('display', 'block');
-    showMessage('Operator Panel: Shown');
-    // Request map list from server when panel is shown
-    const reqId = Math.floor(Math.random() * 1e9);
-    sendToServer({
-      type: 'getMaps',
-      adminReqId: reqId,
-    });
-    window._operatorMapReqId = reqId;
-  }
-  updateOperatorBtn();
-}
-
 function toggleEntryDialog(name = '') {
   const entryDialog = document.getElementById('entryDialog');
   const entryInput = document.getElementById('entryInput');
@@ -244,191 +103,6 @@ function toggleEntryDialog(name = '') {
   }
 }
 
-// Mouse movement toggle button
-window.addEventListener('DOMContentLoaded', () => {
-  // Prevent mouse events on huds from passing through and triggering game actions
-  for (const id of ['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'settingsHud', 'helpPanel' ]) {
-    const hud = document.getElementById(id);
-    if (!hud) continue;
-    ['click', 'mousedown', 'mouseup'].forEach(evt => {
-      hud.addEventListener(evt, function(e) {
-        e.stopPropagation();
-        e.preventDefault();
-      });
-    });
-  }
-  // For operatorOverlay, only stop propagation, do NOT prevent default
-  const operatorOverlay = document.getElementById('operatorOverlay');
-  if (operatorOverlay) {
-    ['click', 'mousedown', 'mouseup'].forEach(evt => {
-      operatorOverlay.addEventListener(evt, function(e) {
-        e.stopPropagation();
-        // Do NOT call e.preventDefault() so form controls work
-      });
-    });
-  }
-
-  setupMobileOrientationDebug();
-  const virtualConrolsBtn = document.getElementById('virtualControlsBtn');
-  const mouseBtn = document.getElementById('mouseBtn');
-  const fullscreenBtn = document.getElementById('fullscreenBtn');
-  const debugBtn = document.getElementById('debugBtn');
-  const cameraBtn = document.getElementById('cameraBtn');
-  const helpBtn = document.getElementById('helpBtn');
-  const settingsBtn = document.getElementById('settingsBtn');
-  const settingsHud = document.getElementById('settingsHud');
-  const playerNameEl = document.getElementById('playerName');
-  const helpPanel = document.getElementById('helpPanel');
-  const closeSettingsBtn = document.getElementById('closeSettingsHud');
-  const wireframeBtn = document.getElementById('wireframeBtn');
-  let wireframeEnabled = false;
-
-  function setWireframeMode(enabled) {
-    if (!scene) return;
-    scene.traverse(obj => {
-      if (obj.isMesh && obj.material) {
-        if (Array.isArray(obj.material)) {
-          obj.material.forEach(mat => { if (mat) mat.wireframe = enabled; });
-        } else {
-          obj.material.wireframe = enabled;
-        }
-      }
-    });
-    wireframeEnabled = enabled;
-    if (wireframeBtn) {
-      if (enabled) wireframeBtn.classList.add('active');
-      else wireframeBtn.classList.remove('active');
-    }
-  }
-
-  if (wireframeBtn) {
-    wireframeBtn.addEventListener('click', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      setWireframeMode(!wireframeEnabled);
-    });
-  }
-
-  function updateSettingsBtn() {
-    if (!settingsHud || !settingsBtn) return;
-    if (settingsHud.style.display === 'block') {
-      settingsBtn.classList.add('active');
-      settingsBtn.title = 'Hide Settings';
-    } else {
-      settingsBtn.classList.remove('active');
-      settingsBtn.title = 'Show Settings';
-    }
-  }
-
-  function toggleSettingsHud() {
-    if (!settingsHud) return;
-    if (settingsHud.style.display === 'block') {
-      settingsHud.style.display = 'none';
-      showMessage('Settings: Hidden');
-    } else {
-      settingsHud.style.display = 'block';
-      showMessage('Settings: Shown');
-    }
-    updateSettingsBtn();
-  }
-  function updateHelpBtn() {
-    if (!helpPanel || !helpBtn) return;
-    if (helpPanel.style.display === 'block') {
-      helpBtn.classList.add('active');
-      helpBtn.title = 'Hide Help (?)';
-    } else {
-      helpBtn.classList.remove('active');
-      helpBtn.title = 'Show Help (?)';
-    }
-  }
-
-  function toggleHelpPanel() {
-    if (!helpPanel) return;
-    if (helpPanel.style.display === 'block') {
-      helpPanel.style.display = 'none';
-      showMessage('Help Panel: Hidden');
-    } else {
-      helpPanel.style.display = 'block';
-      showMessage('Help Panel: Shown');
-    }
-    updateHelpBtn();
-  }
-
-  function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-    } else {
-      document.exitFullscreen();
-    }
-    setTimeout(() => {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      const msg = `Screen resolution: ${w}x${h}`;
-      chatMessages.push(msg);
-      updateChatWindow();
-    }, 200);
-    setTimeout(updateHudButtons, 100);
-  }
-
-  function toggleCameraMode() {
-    if (cameraMode === 'first-person') {
-      cameraMode = 'third-person';
-    } else if (cameraMode === 'third-person') {
-      cameraMode = 'overview';
-    } else {
-      cameraMode = 'first-person';
-    }
-    localStorage.setItem('cameraMode', cameraMode);
-    showMessage(`Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'}`);
-    if (typeof updateHudButtons === 'function') updateHudButtons();
-  }
-
-  // Restore camera mode from localStorage
-  const savedCameraMode = localStorage.getItem('cameraMode');
-  if (savedCameraMode === 'first-person' || savedCameraMode === 'third-person' || savedCameraMode === 'overview') {
-    cameraMode = savedCameraMode;
-  }
-  // Restore mouse mode from localStorage
-  const savedMouseMode = localStorage.getItem('mouseControlEnabled');
-  if (savedMouseMode === 'true') mouseControlEnabled = true;
-
-  // Attach HUD Button Handlers (only once)
-  if (debugBtn) debugBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleDebugHud({
-    debugEnabled,
-    setDebugEnabled: v => { debugEnabled = v; },
-    updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
-    showMessage,
-    updateDebugDisplay,
-    getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds, latestOrientation })
-}); });
-if (helpBtn) helpBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn }); });
-if (settingsBtn) settingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updateSettingsBtn }); });
-if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updateSettingsBtn }); });
-if (operatorBtn) operatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleSettingsHud(); toggleOperatorPanel(); });
-if (closeOperatorBtn) closeOperatorBtn.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleOperatorPanel(); });
-if (operatorBtn) updateOperatorBtn();
-if (playerNameEl) playerNameEl.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); toggleEntryDialog(); });
-
-  // Attach Key Handlers
-  document.addEventListener('keydown', (e) => {
-    if (document.activeElement === chatInput) return;
-    if (document.activeElement === entryInput) return;
-    if (e.key === 'm' || e.key === 'M') toggleMouseMode();
-    else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-    else if (e.key === 'i' || e.key === 'I') toggleDebugHud({
-      debugEnabled,
-      setDebugEnabled: v => { debugEnabled = v; },
-      updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
-      showMessage,
-      updateDebugDisplay,
-      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds, latestOrientation })
-    });
-    else if (e.key === 'c' || e.key === 'C') toggleCameraMode();
-    else if (e.key === 'o' || e.key === 'O') toggleOperatorPanel();
-    else if (e.key === '?' || e.key === '/') toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn });
-  });
-  updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode });
-});
 
 // Obstacle definitions (received from server)
 let OBSTACLES = [];
@@ -509,130 +183,56 @@ const packetsSent = new Map();
 const packetsReceived = new Map();
 let debugUpdateInterval = null;
 
-// Texture creation functions
-function createGroundTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-
-  // Base grass color
-  ctx.fillStyle = '#3a8c3a';
-  ctx.fillRect(0, 0, 256, 256);
-
-  // Add some noise for grass texture
-  for (let i = 0; i < 5000; i++) {
-    const x = Math.random() * 256;
-    const y = Math.random() * 256;
-    const shade = Math.random() * 0.2 - 0.1; // -0.1 to 0.1
-    const brightness = Math.floor((58 + shade * 58)); // Vary the green component
-    ctx.fillStyle = `rgb(${Math.floor(58 + shade * 58)}, ${Math.floor(140 + shade * 140)}, ${Math.floor(58 + shade * 58)})`;
-    ctx.fillRect(x, y, 2, 2);
-  }
-
-  // Add subtle grid pattern
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.05)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 256; i += 32) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, 256);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(256, i);
-    ctx.stroke();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
+function getDebugState() {
+  return {
+    fps,
+    latency,
+    packetsSent,
+    packetsReceived,
+    sentBps,
+    receivedBps,
+    playerX,
+    playerY,
+    playerZ,
+    playerRotation,
+    myTank,
+    cameraMode,
+    OBSTACLES,
+    clouds,
+    latestOrientation,
+  };
 }
 
-function createWallTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-
-  // Base brick color
-  ctx.fillStyle = '#8B4513';
-  ctx.fillRect(0, 0, 256, 256);
-
-  // Draw brick pattern
-  const brickWidth = 64;
-  const brickHeight = 32;
-  const mortarSize = 2;
-
-  ctx.strokeStyle = '#654321';
-  ctx.lineWidth = mortarSize;
-
-  for (let y = 0; y < 256; y += brickHeight) {
-    for (let x = 0; x < 256; x += brickWidth) {
-      // Offset every other row
-      const offsetX = (y / brickHeight) % 2 === 0 ? 0 : brickWidth / 2;
-
-      // Add variation to brick color
-      const variation = Math.random() * 30 - 15;
-      ctx.fillStyle = `rgb(${139 + variation}, ${69 + variation * 0.5}, ${19 + variation * 0.3})`;
-      ctx.fillRect(x + offsetX, y, brickWidth - mortarSize, brickHeight - mortarSize);
-
-      // Draw mortar lines
-      ctx.strokeRect(x + offsetX, y, brickWidth - mortarSize, brickHeight - mortarSize);
+initHudControls({
+  showMessage,
+  updateHudButtons,
+  toggleDebugHud,
+  updateDebugDisplay,
+  getDebugEnabled: () => debugEnabled,
+  setDebugEnabled: (value) => { debugEnabled = value; },
+  getDebugState,
+  getCameraMode: () => cameraMode,
+  setCameraMode: (mode) => { cameraMode = mode; },
+  getMouseControlEnabled: () => mouseControlEnabled,
+  setMouseControlEnabled: (value) => { mouseControlEnabled = value; },
+  getVirtualControlsEnabled: () => virtualControlsEnabled,
+  setVirtualControlsEnabled: (value) => { virtualControlsEnabled = value; },
+  pushChatMessage: (msg) => {
+    chatMessages.push(msg);
+    if (chatMessages.length > CHAT_MAX_MESSAGES * 3) {
+      chatMessages.shift();
     }
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function createObstacleTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d');
-
-  // Base concrete color
-  ctx.fillStyle = '#666666';
-  ctx.fillRect(0, 0, 256, 256);
-
-  // Add concrete texture with random speckles
-  for (let i = 0; i < 8000; i++) {
-    const x = Math.random() * 256;
-    const y = Math.random() * 256;
-    const shade = Math.random() * 0.3 - 0.15; // -0.15 to 0.15
-    const brightness = Math.floor(102 + shade * 102);
-    ctx.fillStyle = `rgb(${brightness}, ${brightness}, ${brightness})`;
-    const size = Math.random() * 2;
-    ctx.fillRect(x, y, size, size);
-  }
-
-  // Add some cracks/lines for concrete appearance
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 10; i++) {
-    ctx.beginPath();
-    const startX = Math.random() * 256;
-    const startY = Math.random() * 256;
-    ctx.moveTo(startX, startY);
-    let x = startX;
-    let y = startY;
-    for (let j = 0; j < 5; j++) {
-      x += (Math.random() - 0.5) * 50;
-      y += (Math.random() - 0.5) * 50;
-      ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  return texture;
-}
+  },
+  updateChatWindow: () => updateChatWindow(),
+  sendToServer: (payload) => sendToServer(payload),
+  getScene: () => scene,
+  toggleEntryDialog: (name) => toggleEntryDialog(name),
+  getChatInput: () => chatInput,
+});
 
 // Initialize Three.js
 function init() {
+  setupInputHandlers();
 
   // Chat UI
   const chatWindow = document.getElementById('chatWindow');
@@ -843,7 +443,7 @@ function init() {
       }
       // Close help dialog if open
       if (helpPanel.style.display === 'block') {
-        toggleHelpPanel();
+        hideHelpPanel();
         return;
       }
 
@@ -3083,39 +2683,6 @@ function getCollisionNormal(fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) 
 
   return null;
 }
-function toggleMouseMode() {
-  mouseControlEnabled = !mouseControlEnabled;
-  localStorage.setItem('mouseControlEnabled', mouseControlEnabled);
-  showMessage(`Controls: ${mouseControlEnabled ? 'Mouse' : 'Keyboard'}`);
-  if (typeof updateHudButtons === 'function') updateHudButtons();
-}
-
-// Operator Panel Toggle
-function updateVirtualControlsBtn() {
-  const virtualControlsBtn = document.getElementById('virtualControlsBtn');
-  const controlsOverlay = document.getElementById('controlsOverlay');
-  if (!virtualControlsBtn || !controlsOverlay) return;
-  if (controlsOverlay.style.display === 'block') {
-    virtualControlsBtn.classList.add('active');
-    virtualControlsBtn.title = 'Hide Virtual Controls';
-  } else {
-    virtualControlsBtn.classList.remove('active');
-    virtualControlsBtn.title = 'Show Virtual Controls';
-  }
-}
-function toggleVirtualControls(forceState) {
-  const overlay = document.getElementById('controlsOverlay');
-  if (!overlay) return;
-  virtualControlsEnabled = !virtualControlsEnabled;
-  showMessage(`Virtual Controls: ${virtualControlsEnabled ? 'Enabled' : 'Disabled'}`);
-  overlay.style.display = (overlay.style.display === 'block') ? 'none' : 'block';
-  if (typeof forceState === 'boolean') {
-    overlay.style.display = forceState ? 'block' : 'none';
-    virtualControlsEnabled = forceState;
-  }
-  updateVirtualControlsBtn()
-}
-
 // Intended input state
 let intendedForward = 0; // -1..1
 let intendedRotation = 0; // -1..1

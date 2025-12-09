@@ -1,0 +1,36 @@
+## Repo Snapshot
+- Real-time BZFlag-inspired arena: Node/Express/WS server in `server.js`, browser-side Three.js client under `public/`.
+- All front-end modules are plain ES modules loaded directly by the browser; no bundler. Update the `<script type="importmap">` block in `public/index.html` when adding new external modules.
+- Preserve the AGPL license header that already appears at the top of major source files when creating or modifying files.
+
+## Dev Workflow
+- Install dependencies once with `npm install`.
+- `npm run dev` starts `server.js` via nodemon; `npm start` runs it without auto-restart.
+- The server watches `public/game.js`, `public/index.html`, `public/styles.css`, and `server.js`, forcing connected clients to reload and restarting itself if `server.js` changes.
+- Gameplay logs stream to `server.log`, which is cleared on each server boot.
+
+## Server Architecture (`server.js`)
+- Single Express app serves static assets and hosts a `ws` WebSocket server that drives gameplay.
+- Game loop (`setInterval(gameLoop, 16)`) updates jump physics, projectile travel, collision checks, and broadcasts authoritative states.
+- Player lifecycle: connection emits `init`, `newPlayer`, and `playerJoined` messages; `joinGame`, `move`, `shoot`, `pause`, and `chat` requests are validated server-side before broadcasting.
+- Movement/shot validation relies on `GAME_CONFIG` thresholds and obstacle collision helpers; keep any new mechanics in sync with these checks.
+- Map loading: reads `server-config.json` to choose between procedural obstacles and `.bzw` files parsed by `parseBZWMap`. Add maps to `maps/` and update the config or admin panel message to switch.
+- Admin overlay messages share the WebSocket channel; reuse that pattern for additional operator tools.
+- `forceClientReload()` broadcasts a `reload` message and closes sockets; it is exposed globally and triggered on `SIGUSR1` or watched file changes.
+
+## Client Architecture (`public/`)
+- `game.js` owns scene setup, Three.js assets, WebSocket handling, HUD orchestration, and per-frame prediction; any protocol changes must be reflected in its `handleServerMessage` switch.
+- Input is centralized in `input.js`, which exports `setupInputHandlers`, `virtualInput`, and `keys` for desktop and mobile controls.
+- HUD helpers live in `hud.js`; prefer extending those utilities over duplicating UI logic in `game.js`.
+- Audio buffers are generated procedurally in `audio.js` for shooting, explosions, jumping, and landing.
+- `styles.css` and `index.html` define HUD layout, mobile overlays, and the import map (currently referencing Three.js 0.160.0 even though `package.json` pulls 0.181.2; align versions if upgrading).
+- Client connects back to the host that served it (`ws://<host>`); avoid hardcoding URLs so the same build runs locally and in production.
+
+## Configuration & Data
+- Runtime settings (name, MOTD, default map) live in `server-config.json`; `example-server-config.json` documents the expected shape.
+- Obstacles are generated/resolved server-side and sent in the `init` payload; client recreates meshes from that data, so keep the schema stable when extending obstacle properties.
+- Maps in `maps/*.bzw` use scaled BZFlag coordinates (X/Z halved); ensure new parsers respect the scaling so collisions remain accurate.
+
+## Conventions & Testing
+- No automated tests are present; manual play sessions via the browser are the de-facto regression check.
+- When adding network messages, document them in both server switch statements and client handlers, and update debug HUD counters if needed.
