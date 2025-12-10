@@ -267,7 +267,8 @@ body {
   display: flex !important;
   gap: 6px;
   margin-left: 8px;
-  justify-content: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 #stats span {
   font-weight: bold;
@@ -732,7 +733,7 @@ canvas {
   max-width: 95vw;
   max-height: 80vh;
   text-align: center;
-  display: flex;
+  display: none;
   flex-direction: column;
   justify-content: center;
   align-items: center;
