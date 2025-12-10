@@ -160,7 +160,7 @@ const defaultHudContext = {
   getMouseControlEnabled: () => false,
   setMouseControlEnabled: () => {},
   getVirtualControlsEnabled: () => false,
-  setVirtualControlsEnabled: () => {},
+  setVirtualControlsEnabled: (isMobile) => {},
   pushChatMessage: () => {},
   updateChatWindow: () => {},
   sendToServer: () => {},
@@ -634,4 +634,5 @@ export function initHudControls(context) {
   } else {
     bindHudElements();
   }
+  toggleVirtualControls(isMobile);
 }
