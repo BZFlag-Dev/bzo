@@ -1214,31 +1214,33 @@ process.on('SIGUSR1', () => {
 });
 
 // Watch for file changes and auto-reload clients
-const filesToWatch = [
-  path.join(__dirname, 'public', 'game.js'),
-  path.join(__dirname, 'public', 'index.html'),
-  path.join(__dirname, 'public', 'styles.css'),
-  path.join(__dirname, 'server.js'),
-];
-
-console.log('Watching files for changes...');
-filesToWatch.forEach(file => {
-  if (fs.existsSync(file)) {
-    fs.watch(file, (eventType, filename) => {
+const publicDir = path.join(__dirname, 'public');
+console.log('Watching public/ for changes...');
+fs.readdirSync(publicDir).forEach(file => {
+  const filePath = path.join(publicDir, file);
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    fs.watch(filePath, (eventType, filename) => {
       if (eventType === 'change') {
-        console.log(`\n📝 File changed: ${filename || file}`);
+        console.log(`\n📝 File changed: ${filename || filePath}`);
         console.log('🔄 Reloading all clients...\n');
         forceClientReload();
-
-        // If server.js changed, restart the server
-        if (file.endsWith('server.js')) {
-          console.log('🔄 Restarting server...\n');
-          setTimeout(() => {
-            process.exit(0);
-          }, 1000);
-        }
       }
     });
-    console.log(`  ✓ Watching: ${path.basename(file)}`);
+    // console.log(`  ✓ Watching: ${path.basename(filePath)}`);
   }
 });
+
+// Watch server.js for changes and restart server if modified
+const serverJsPath = path.join(__dirname, 'server.js');
+if (fs.existsSync(serverJsPath)) {
+  fs.watch(serverJsPath, (eventType, filename) => {
+    if (eventType === 'change') {
+      console.log(`\n📝 server.js changed: ${filename || serverJsPath}`);
+      console.log('🔄 Restarting server...\n');
+      setTimeout(() => {
+        process.exit(0);
+      }, 1000);
+    }
+  });
+  console.log(`  ✓ Watching: server.js`);
+}
