@@ -193,6 +193,19 @@ class RenderManager {
   createMapBoundaries(mapSize = 100) {
     if (!this.scene) return;
 
+    // Remove old boundary meshes if present
+    if (!this.boundaryMeshes) this.boundaryMeshes = [];
+    this.boundaryMeshes.forEach(mesh => {
+      this.scene.remove(mesh);
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(mat => mat.dispose());
+      } else if (mesh.material) {
+        mesh.material.dispose();
+      }
+    });
+    this.boundaryMeshes = [];
+
     const wallHeight = 5;
     const wallThickness = 1;
 
@@ -244,6 +257,9 @@ class RenderManager {
     ewWallMaterials[4].map.repeat.set(wallThickness / 2, wallHeight / 2);
     ewWallMaterials[5].map.repeat.set(wallThickness / 2, wallHeight / 2);
 
+    // Create and track boundary meshes
+    const boundaryMeshes = [];
+
     const northWall = new THREE.Mesh(
       new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
       nsWallMaterials,
@@ -252,6 +268,7 @@ class RenderManager {
     northWall.castShadow = true;
     northWall.receiveShadow = true;
     this.scene.add(northWall);
+    boundaryMeshes.push(northWall);
     this._addCompassMarker('N', 0xB20000, new THREE.Vector3(0, wallHeight + 8, -mapSize / 2));
 
     const southWall = new THREE.Mesh(
@@ -262,6 +279,7 @@ class RenderManager {
     southWall.castShadow = true;
     southWall.receiveShadow = true;
     this.scene.add(southWall);
+    boundaryMeshes.push(southWall);
     this._addCompassMarker('S', 0x1976D2, new THREE.Vector3(0, wallHeight + 8, mapSize / 2));
 
     const eastWall = new THREE.Mesh(
@@ -272,6 +290,7 @@ class RenderManager {
     eastWall.castShadow = true;
     eastWall.receiveShadow = true;
     this.scene.add(eastWall);
+    boundaryMeshes.push(eastWall);
     this._addCompassMarker('E', 0x388E3C, new THREE.Vector3(mapSize / 2, wallHeight + 8, 0));
 
     const westWall = new THREE.Mesh(
@@ -282,7 +301,10 @@ class RenderManager {
     westWall.castShadow = true;
     westWall.receiveShadow = true;
     this.scene.add(westWall);
+    boundaryMeshes.push(westWall);
     this._addCompassMarker('W', 0xFBC02D, new THREE.Vector3(-mapSize / 2, wallHeight + 8, 0));
+
+    this.boundaryMeshes = boundaryMeshes;
   }
 
   _addCompassMarker(letter, color, position) {

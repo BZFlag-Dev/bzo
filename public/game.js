@@ -1245,16 +1245,41 @@ function checkCollision(x, y, z, tankRadius = 2) {
         }
       }
     } else if (obs.type === 'pyramid') {
-      // Pyramid collision: check if tank is inside the pyramid's base, then check height at that (x,z)
-      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
+      // Improved pyramid collision: check if any part of the tank (not just center) is inside the pyramid's base and under the sloped surface
+      // Sample points around the tank's base circle (8 directions + center)
+      const sampleCount = 8;
+      let collided = false;
+      for (let i = 0; i < sampleCount; i++) {
+        const angle = (Math.PI * 2 * i) / sampleCount;
+        const offsetX = Math.cos(angle) * tankRadius;
+        const offsetZ = Math.sin(angle) * tankRadius;
+        const sx = localX + offsetX;
+        const sz = localZ + offsetZ;
+        if (Math.abs(sx) <= halfW && Math.abs(sz) <= halfD) {
+          const nx = Math.abs(sx) / halfW;
+          const nz = Math.abs(sz) / halfD;
+          const n = Math.max(nx, nz);
+          const localY = y - obstacleBase;
+          const maxPyramidY = obs.h * (1 - n);
+          if (localY >= epsilon && localY < maxPyramidY - epsilon) {
+            collided = true;
+            break;
+          }
+        }
+      }
+      // Also check the center point for completeness
+      if (!collided && Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
         const nx = Math.abs(localX) / halfW;
         const nz = Math.abs(localZ) / halfD;
         const n = Math.max(nx, nz);
         const localY = y - obstacleBase;
         const maxPyramidY = obs.h * (1 - n);
         if (localY >= epsilon && localY < maxPyramidY - epsilon) {
-          return true;
+          collided = true;
         }
+      }
+      if (collided) {
+        return true;
       }
     }
   }
