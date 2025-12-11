@@ -1204,21 +1204,26 @@ function checkCollision(x, y, z, tankRadius = 2) {
   const mapSize = gameConfig.MAP_SIZE || gameConfig.mapSize || 100;
   const halfMap = mapSize / 2;
 
-  // Check map boundari es (always apply regardless of height)
+  // Check map boundaries (always apply regardless of height)
   if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
       z - tankRadius < -halfMap || z + tankRadius > halfMap) {
     return true;
   }
 
   // Check obstacles - check vertical range
+  let collided = false;
   for (const obs of OBSTACLES) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
     const epsilon = 0.15;
-    if (y >= obstacleTop - epsilon) continue;
     const tankHeight = 2;
-    if (y + tankHeight <= obstacleBase + epsilon) continue;
+    // Only check if tank top is below obstacle top and tank base is above obstacle base
+    const tankTop = y + tankHeight;
+    if (tankTop <= obstacleBase + epsilon) continue;
+    if (y >= obstacleTop - epsilon) continue;
+
+    // Shared math for both box and pyramid
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const rotation = obs.rotation || 0;
@@ -1228,7 +1233,9 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const sin = Math.sin(rotation);
     const localX = dx * cos - dz * sin;
     const localZ = dx * sin + dz * cos;
+
     if (obs.type === 'box' || !obs.type) {
+      // Box collision: check closest point on box to tank center
       const margin = tankRadius * 0.7;
       const closestX = Math.max(-halfW, Math.min(localX, halfW));
       const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
@@ -1236,24 +1243,14 @@ function checkCollision(x, y, z, tankRadius = 2) {
       const distZ = localZ - closestZ;
       const distSquared = distX * distX + distZ * distZ;
       if (distSquared < tankRadius * tankRadius) {
-        if (y < obstacleBase && y + tankHeight > obstacleBase) {
-          if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
-          }
-          return true;
-        }
-        if (y >= obstacleBase && y < obstacleTop) {
-          if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', to: -1,text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)}, rot:${(obs.rotation||0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
-          }
-          return true;
-        }
+        collided = true;
+        break;
       }
     } else if (obs.type === 'pyramid') {
-      // Improved pyramid collision: check if any part of the tank (not just center) is inside the pyramid's base and under the sloped surface
-      // Sample points around the tank's base circle (8 directions + center)
+      // Pyramid collision: check if tank top is under the sloped surface
+      // Sample points around the tank's top circle (8 directions + center)
       const sampleCount = 8;
-      let collided = false;
+      const localY_top = tankTop - obstacleBase;
       for (let i = 0; i < sampleCount; i++) {
         const angle = (Math.PI * 2 * i) / sampleCount;
         const offsetX = Math.cos(angle) * tankRadius;
@@ -1264,9 +1261,8 @@ function checkCollision(x, y, z, tankRadius = 2) {
           const nx = Math.abs(sx) / halfW;
           const nz = Math.abs(sz) / halfD;
           const n = Math.max(nx, nz);
-          const localY = y - obstacleBase;
           const maxPyramidY = obs.h * (1 - n);
-          if (localY >= epsilon && localY < maxPyramidY - epsilon) {
+          if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
             collided = true;
             break;
           }
@@ -1277,15 +1273,17 @@ function checkCollision(x, y, z, tankRadius = 2) {
         const nx = Math.abs(localX) / halfW;
         const nz = Math.abs(localZ) / halfD;
         const n = Math.max(nx, nz);
-        const localY = y - obstacleBase;
         const maxPyramidY = obs.h * (1 - n);
-        if (localY >= epsilon && localY < maxPyramidY - epsilon) {
+        if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
           collided = true;
         }
       }
-      if (collided) {
-        return true;
+    }
+    if (collided) {
+      if (typeof sendToServer === 'function') {
+        sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
       }
+      return true;
     }
   }
   return false;
