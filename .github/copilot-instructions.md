@@ -6,12 +6,12 @@
 ## Dev Workflow
 - Install dependencies once with `npm install`.
 - `npm run dev` starts `server.js` via nodemon; `npm start` runs it without auto-restart.
-- The server watches `public/game.js`, `public/index.html`, `public/styles.css`, and `server.js`, forcing connected clients to reload and restarting itself if `server.js` changes.
+- The server watches all files in `public/` and `server.js`, forcing connected clients to reload on any change in `public/` and restarting itself if `server.js` changes.
 - Gameplay logs stream to `server.log`, which is cleared on each server boot.
 
 ## Server Architecture (`server.js`)
 - Single Express app serves static assets and hosts a `ws` WebSocket server that drives gameplay.
-- Game loop (`setInterval(gameLoop, 16)`) updates jump physics, projectile travel, collision checks, and broadcasts authoritative states.
+- Game loop (`setInterval(gameLoop, 16)`) updates projectile travel and collision checks. The server only verifies player 'move' messages and does not create new playerMoved messages itself; movement updates are broadcast only in response to client 'move' messages.
 - Player lifecycle: connection emits `init`, `newPlayer`, and `playerJoined` messages; `joinGame`, `move`, `shoot`, `pause`, and `chat` requests are validated server-side before broadcasting.
 - Movement/shot validation relies on `GAME_CONFIG` thresholds and obstacle collision helpers; keep any new mechanics in sync with these checks.
 - Map loading: reads `server-config.json` to choose between procedural obstacles and `.bzw` files parsed by `parseBZWMap`. Add maps to `maps/` and update the config or admin panel message to switch.
