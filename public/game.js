@@ -650,8 +650,6 @@ function handleServerMessage(message) {
         const mobileText = (typeof isMobile !== 'undefined' && isMobile) ? 'Mobile' : 'Desktop';
         // Show in chat window
         const msg = `Connected as \"${myPlayerName}\"! (${w}x${h}, ${mobileText})`;
-        chatMessages.push(msg);
-        updateChatWindow();
         showMessage(msg);
       }
       // Clear any existing tanks from previous connections
@@ -877,6 +875,23 @@ function handleServerMessage(message) {
         showMessage('Unpaused');
       }
       removeShield(message.playerId);
+      break;
+
+    case 'chat':
+      // Format: { type: 'chat', from, to, text, id }
+      // Lookup names for from/to
+      function getPlayerName(id) {
+        if (id === 0) return 'ALL';
+        if (id === -1) return 'SERVER';
+        const tank = tanks.get(id);
+        return tank && tank.userData && tank.userData.playerState && tank.userData.playerState.name ? tank.userData.playerState.name : `Player ${id}`;
+    }
+      const fromName = getPlayerName(message.from);
+      const toName = getPlayerName(message.to);
+      let prefix = `${fromName} -> ${toName} `;
+      chatMessages.push(prefix + message.text);
+      if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
+      updateChatWindow();
       break;
 
     case 'nameChanged':
