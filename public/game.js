@@ -919,6 +919,9 @@ function handleServerMessage(message) {
         window.location.reload();
       }, 1000);
       break;
+    default:
+      console.warn('Unknown message type from server:', message);
+      break;
   }
 }
 
@@ -1573,27 +1576,26 @@ function handleInputEvents() {
         intendedY = 1;
         jumpTriggered = true;
       }
-    } else {
-      const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
-      let wasdPressed = false;
-      for (const code of wasdKeys) {
-        if (keys[code]) {
-          intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
-          intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
-          wasdPressed = true;
-        }
+    }
+    const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+    let wasdPressed = false;
+    for (const code of wasdKeys) {
+      if (keys[code]) {
+        intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
+        intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
+        wasdPressed = true;
       }
-      if (wasdPressed && mouseControlEnabled) {
-        toggleMouseMode();
-      }
-      if ((keys['Tab']) && !isInAir) {
-        intendedY = 1;
-        jumpTriggered = true;
-      }
-      if (mouseControlEnabled) {
-        if (typeof mouseY !== 'undefined') intendedForward = -mouseY;
-        if (typeof mouseX !== 'undefined') intendedRotation = -mouseX;
-      }
+    }
+    if (wasdPressed && mouseControlEnabled) {
+      toggleMouseMode();
+    }
+    if ((keys['Tab']) && !isInAir) {
+      intendedY = 1;
+      jumpTriggered = true;
+    }
+    if (mouseControlEnabled) {
+      if (typeof mouseY !== 'undefined') intendedForward = -mouseY;
+      if (typeof mouseX !== 'undefined') intendedRotation = -mouseX;
     }
   }
   intendedForward = Math.max(-1, Math.min(1, intendedForward));
