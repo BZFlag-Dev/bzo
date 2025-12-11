@@ -9,7 +9,11 @@ let chatActive = false;
 let virtualControlsEnabled = false;
 let latency = 0;
 let sentBps = 0;
+let sentBytes = 0;
+let lastSentBytesUpdate = performance.now();
 let receivedBps = 0;
+let receivedBytes = 0;
+let lastReceivedBytesUpdate = performance.now();
 
 import {
   setupInputHandlers,
@@ -41,6 +45,18 @@ function updateFps() {
     fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
     frameCount = 0;
     lastFpsUpdate = now;
+  }
+  // Update sentBps every second
+  if (now - lastSentBytesUpdate >= 1000) {
+    sentBps = Math.round(sentBytes / ((now - lastSentBytesUpdate) / 1000));
+    sentBytes = 0;
+    lastSentBytesUpdate = now;
+  }
+  // Update receivedBps every second
+  if (now - lastReceivedBytesUpdate >= 1000) {
+    receivedBps = Math.round(receivedBytes / ((now - lastReceivedBytesUpdate) / 1000));
+    receivedBytes = 0;
+    lastReceivedBytesUpdate = now;
   }
 }
 
@@ -532,7 +548,9 @@ function sendToServer(message) {
       const type = message.type || 'unknown';
       packetsSent.set(type, (packetsSent.get(type) || 0) + 1);
     }
-    ws.send(JSON.stringify(message));
+    const data = JSON.stringify(message);
+    ws.send(data);
+    sentBytes += data.length;
   }
 }
 
@@ -563,6 +581,7 @@ function connectToServer() {
   };
 
   ws.onmessage = (event) => {
+    receivedBytes += event.data.length;
     const message = JSON.parse(event.data);
 
     // Track received packets
