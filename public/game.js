@@ -1207,11 +1207,9 @@ function checkCollision(x, y, z, tankRadius = 2) {
   // Check map boundaries (always apply regardless of height)
   if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
       z - tankRadius < -halfMap || z + tankRadius > halfMap) {
-    return true;
+    return { type: 'boundary' };
   }
 
-  // Check obstacles - check vertical range
-  let collided = false;
   for (const obs of OBSTACLES) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
@@ -1236,15 +1234,16 @@ function checkCollision(x, y, z, tankRadius = 2) {
 
     if (obs.type === 'box' || !obs.type) {
       // Box collision: check closest point on box to tank center
-      const margin = tankRadius * 0.7;
       const closestX = Math.max(-halfW, Math.min(localX, halfW));
       const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
       const distX = localX - closestX;
       const distZ = localZ - closestZ;
       const distSquared = distX * distX + distZ * distZ;
       if (distSquared < tankRadius * tankRadius) {
-        collided = true;
-        break;
+        if (typeof sendToServer === 'function') {
+          sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+        }
+        return obs;
       }
     } else if (obs.type === 'pyramid') {
       // Pyramid collision: check if tank top is under the sloped surface
@@ -1263,27 +1262,26 @@ function checkCollision(x, y, z, tankRadius = 2) {
           const n = Math.max(nx, nz);
           const maxPyramidY = obs.h * (1 - n);
           if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
-            collided = true;
-            break;
+            if (typeof sendToServer === 'function') {
+              sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+            }
+            return obs;
           }
         }
       }
       // Also check the center point for completeness
-      if (!collided && Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
+      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
         const nx = Math.abs(localX) / halfW;
         const nz = Math.abs(localZ) / halfD;
         const n = Math.max(nx, nz);
         const maxPyramidY = obs.h * (1 - n);
         if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
-          collided = true;
+          if (typeof sendToServer === 'function') {
+            sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          }
+          return obs;
         }
       }
-    }
-    if (collided) {
-      if (typeof sendToServer === 'function') {
-        sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
-      }
-      return true;
     }
   }
   return false;
@@ -1306,8 +1304,9 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   }
 
   // Try full movement first
-  if (!checkCollision(newX, newY, newZ, tankRadius)) {
-    // Check for on obstacle
+  const collisionObj = checkCollision(newX, newY, newZ, tankRadius);
+  if (!collisionObj) {
+    // Check for on obstacle (landing logic unchanged)
     let obstacle = null;
     for (const obs of OBSTACLES) {
       const halfW = obs.w / 2;
@@ -1365,8 +1364,9 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const slideNewX = x + slideX;
     const slideNewZ = z + slideZ;
 
-    if (!checkCollision(slideNewX, newY, slideNewZ, tankRadius)) {
-      // Check for landing on obstacle
+    const slideCollisionObj = checkCollision(slideNewX, newY, slideNewZ, tankRadius);
+    if (!slideCollisionObj) {
+      // Check for landing on obstacle (landing logic unchanged)
       let obstacle = null;
       for (const obs of OBSTACLES) {
         const halfW = obs.w / 2;
@@ -1383,7 +1383,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
         const sin = Math.sin(rotation);
         const localX = dx * cos - dz * sin;
         const localZ = dx * sin + dz * cos;
-        const xyInBounds = Math.abs(localX) <= halfW + tankRadius * 0.7 && Math.abs(localZ) <= halfD + tankRadius * 0.7;
+        const xyInBounds = Math.abs(localX) <= halfW + tankRadius && Math.abs(localZ) <= halfD + tankRadius;
         // Only consider landing if tank is above obstacle base and below obstacle top
         if (xyInBounds && y !== null && y + tankHeight > obstacleBase + margin && y < obstacleTop - margin) {
           obstacle = obs;
@@ -1401,79 +1401,17 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     }
   }
 
-  // Fallback: try axis-aligned sliding
+  // Fallback: try axis-aligned sliding using full collision logic
   // Try sliding along X axis only
-  if (!checkCollision(newX, y, z, tankRadius)) {
-    let obstacle = null;
-    for (const obs of OBSTACLES) {
-      const halfW = obs.w / 2;
-      const halfD = obs.d / 2;
-      const rotation = obs.rotation || 0;
-      const obstacleBase = obs.baseY || 0;
-      const obstacleHeight = obs.h || 4;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
-        continue;
-      }
-      const dx = newX - obs.x;
-      const dz = z - obs.z;
-      const cos = Math.cos(rotation);
-      const sin = Math.sin(rotation);
-      const localX = dx * cos - dz * sin;
-      const localZ = dx * sin + dz * cos;
-      const margin = tankRadius * 0.7;
-      if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
-        obstacle = obs;
-        break;
-      }
-    }
-    if (obstacle) {
-      landedOn = obstacle;
-      landedType = 'obstacle';
-    } else if (y !== null && Math.abs(y) < 0.5) {
-      landedType = 'ground';
-    }
-    const actualDX = newX - x;
-    const actualDZ = 0;
-    const altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
-    return { x: newX, y: newY, z: z, moved: true, altered, landedOn, landedType };
+  const xSlideCollisionObj = checkCollision(newX, y, z, tankRadius);
+  if (!xSlideCollisionObj) {
+    return { x: newX, y: newY, z: z, moved: true, altered: true, landedOn: null, landedType: null };
   }
 
   // Try sliding along Z axis only
-  if (!checkCollision(x, y, newZ, tankRadius)) {
-    let obstacle = null;
-    for (const obs of OBSTACLES) {
-      const halfW = obs.w / 2;
-      const halfD = obs.d / 2;
-      const rotation = obs.rotation || 0;
-      const obstacleBase = obs.baseY || 0;
-      const obstacleHeight = obs.h || 4;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
-        continue;
-      }
-      const dx = x - obs.x;
-      const dz = newZ - obs.z;
-      const cos = Math.cos(rotation);
-      const sin = Math.sin(rotation);
-      const localX = dx * cos - dz * sin;
-      const localZ = dx * sin + dz * cos;
-      const margin = tankRadius * 0.7;
-      if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
-        obstacle = obs;
-        break;
-      }
-    }
-    if (obstacle) {
-      landedOn = obstacle;
-      landedType = 'obstacle';
-    } else if (y !== null && Math.abs(y) < 0.5) {
-      landedType = 'ground';
-    }
-    const actualDX = 0;
-    const actualDZ = newZ - z;
-    const altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
-    return { x: x, y: newY, z: newZ, moved: true, altered, landedOn, landedType };
+  const zSlideCollisionObj = checkCollision(x, y, newZ, tankRadius);
+  if (!zSlideCollisionObj) {
+    return { x: x, y: newY, z: newZ, moved: true, altered: true, landedOn: null, landedType: null };
   }
 
   // No movement possible

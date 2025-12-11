@@ -465,26 +465,26 @@ function clamp(value, min, max) {
 function checkCollision(x, y, z, tankRadius = 2) {
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
 
-  // Check map boundaries (always check regardless of height)
+  // Check map boundaries (always apply regardless of height)
   if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
       z - tankRadius < -halfMap || z + tankRadius > halfMap) {
     return { type: 'boundary' };
   }
 
-  // Check obstacles
   for (const obs of OBSTACLES) {
+    const obstacleHeight = obs.h || 4;
+    const obstacleBase = obs.baseY || 0;
+    const obstacleTop = obstacleBase + obstacleHeight;
+    const epsilon = 0.15;
     const tankHeight = 2;
-    const epsilon = 0.01;
-    // Allow passing under if tank top is below obstacle base
-    if (y + tankHeight <= obs.baseY + epsilon) continue;
-    // Allow passing over
-    if (y >= obs.baseY + obs.h - epsilon) continue;
+    // Only check if tank top is below obstacle top and tank base is above obstacle base
+    const tankTop = y + tankHeight;
+    if (tankTop <= obstacleBase + epsilon) continue;
+    if (y >= obstacleTop - epsilon) continue;
+
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const rotation = obs.rotation || 0;
-    const obstacleHeight = obs.h || 4;
-
-    // Transform tank position to obstacle's local space
     const dx = x - obs.x;
     const dz = z - obs.z;
     const cos = Math.cos(rotation);
@@ -493,36 +493,52 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const localZ = dx * sin + dz * cos;
 
     if (obs.type === 'box' || !obs.type) {
-      // Box collision (AABB + circle)
+      // Box collision: check closest point on box to tank center
       const closestX = Math.max(-halfW, Math.min(localX, halfW));
       const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
       const distX = localX - closestX;
       const distZ = localZ - closestZ;
       const distSquared = distX * distX + distZ * distZ;
       if (distSquared < tankRadius * tankRadius) {
-        const obstacleBase = obs.baseY || 0;
-        const obstacleTop = obstacleBase + obstacleHeight;
-        if (y >= obstacleBase + epsilon && y < obstacleTop - epsilon) {
-          log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)}, rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(5)}, y-top:${(y-obstacleTop).toFixed(5)}`);
-        }
+        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         return obs;
       }
     } else if (obs.type === 'pyramid') {
-      // Pyramid collision: check if tank is inside the pyramid's base, then check height at that (x,z)
-      // Pyramid apex is at (0, h/2, 0) in local space, base is at y = 0
-      // For simplicity, use bounding box for base, then check if tank is below pyramid surface
-      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
-        // Compute normalized distance from center (0,0)
+      // Pyramid collision: check if tank top is under the sloped surface
+      // Sample points around the tank's top circle (8 directions + center)
+      const sampleCount = 8;
+      const localY_top = tankTop - obstacleBase;
+      let collided = false;
+      for (let i = 0; i < sampleCount; i++) {
+        const angle = (Math.PI * 2 * i) / sampleCount;
+        const offsetX = Math.cos(angle) * tankRadius;
+        const offsetZ = Math.sin(angle) * tankRadius;
+        const sx = localX + offsetX;
+        const sz = localZ + offsetZ;
+        if (Math.abs(sx) <= halfW && Math.abs(sz) <= halfD) {
+          const nx = Math.abs(sx) / halfW;
+          const nz = Math.abs(sz) / halfD;
+          const n = Math.max(nx, nz);
+          const maxPyramidY = obs.h * (1 - n);
+          if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
+            collided = true;
+            break;
+          }
+        }
+      }
+      // Also check the center point for completeness
+      if (!collided && Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
         const nx = Math.abs(localX) / halfW;
         const nz = Math.abs(localZ) / halfD;
-        const n = Math.max(nx, nz); // For square pyramid
-        // Height at this (x,z) under the pyramid
-        const localY = y - obs.baseY;
-        const maxPyramidY = obs.h * (1 - n); // Linear slope from center to edge
-        if (localY >= epsilon && localY < maxPyramidY - epsilon) {
-          // Collides with pyramid slope
-          return obs;
+        const n = Math.max(nx, nz);
+        const maxPyramidY = obs.h * (1 - n);
+        if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
+          collided = true;
         }
+      }
+      if (collided) {
+        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        return obs;
       }
     }
   }
