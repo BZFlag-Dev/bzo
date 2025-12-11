@@ -684,56 +684,6 @@ function gameLoop() {
   const now = Date.now();
   const deltaTime = 0.016; // ~60fps
 
-  // Update player jump physics
-  players.forEach((player) => {
-    if (player.verticalVelocity !== 0 || player.y > 0) {
-      // Apply gravity
-      player.verticalVelocity -= GAME_CONFIG.GRAVITY * deltaTime;
-
-      // Update vertical position
-      player.y += player.verticalVelocity * deltaTime;
-
-      // Check for landing on ground or obstacle
-      const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
-
-      if (obstacleCheck.onObstacle && player.verticalVelocity <= 0) {
-        // Land on obstacle - only end jump when actually landing
-        player.y = obstacleCheck.obstacleHeight;
-        player.verticalVelocity = 0;
-        player.isJumping = false;
-        player.onObstacle = true;
-      } else if (player.y <= 0 && player.verticalVelocity <= 0) {
-        // Land on ground - only end jump when actually landing
-        player.y = 0;
-        player.verticalVelocity = 0;
-        player.isJumping = false;
-        player.onObstacle = false;
-      }
-      // Note: isJumping stays true throughout the jump arc (up, peak, down) until landing
-
-      // Broadcast position update for jumping players
-      if (player.ws && player.ws.readyState === 1) {
-        broadcastAll({
-          type: 'playerMoved',
-          id: player.id,
-          x: player.x,
-          y: player.y,
-          z: player.z,
-          rotation: player.rotation,
-          verticalVelocity: player.verticalVelocity,
-        });
-      }
-    } else if (player.onObstacle) {
-      // Player is standing on obstacle - check if they've moved off
-      const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
-      if (!obstacleCheck.onObstacle) {
-        // Moved off obstacle - start falling
-        player.verticalVelocity = -1;
-        player.onObstacle = false;
-      }
-    }
-  });
-
   // Update projectiles
   projectiles.forEach((proj, id) => {
     const deltaTime = (now - proj.createdAt) / 1000;
