@@ -5,43 +5,23 @@ size 100.0
 flagHeight 0.0
 end
 
-# top of the world
-#box
-#position 10.0 10.0 0.0
-#rotation 0.0
-#size     9.6568542495 4.0 16.0
-#end
-#box
-#position 10.0 10.0 0.0
-#rotation 45.0
-#size     9.6568542495 4.0 16.0
-#end
-#box
-#position 10.0 10.0 0.0
-#rotation 90.0
-#size     9.6568542495 4.0 16.0
-#end
-#box
-#position 10.0 10.00.0
-#rotation 135.0
-#size     9.6568542495 4.0 16.0
-#end
-
 # roof
 pyramid
-position 0.0 6.0 0.0
+position 0.0 12.0 0.0
 rotation 0.0
-size     18.0 3.0 -10.0
+size     18.0 9.0 -10.0
 end
+
 box
 position 0.0 0.0 0.0
 rotation 0.0
 size     36.0 3.0 10.0
 end
+
 pyramid
-position 0.0 -6.0 0.0
+position 0.0 -12.0 0.0
 rotation 0.0
-size     18.0 3.0 10.0
+size     18.0 9.0 10.0
 end
 
 #pyramid
