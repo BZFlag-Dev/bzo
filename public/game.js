@@ -184,6 +184,7 @@ const MAX_UPDATE_INTERVAL = 200; // Force send update at least every 200ms
 
 // Debug tracking
 let debugEnabled = false;
+renderManager.setDebugLabelsEnabled(debugEnabled);
 const packetsSent = new Map();
 const packetsReceived = new Map();
 let debugUpdateInterval = null;
@@ -214,7 +215,10 @@ initHudControls({
   toggleDebugHud,
   updateDebugDisplay,
   getDebugEnabled: () => debugEnabled,
-  setDebugEnabled: (value) => { debugEnabled = value; },
+  setDebugEnabled: (value) => {
+    debugEnabled = value;
+    renderManager.setDebugLabelsEnabled(debugEnabled);
+  },
   getDebugState,
   getCameraMode: () => cameraMode,
   setCameraMode: (mode) => { cameraMode = mode; },
@@ -822,17 +826,18 @@ function handleServerMessage(message) {
     case 'positionCorrection':
       // Server corrected our position - update dead reckoning state
       playerX = message.x;
+      playerY = message.y;
       playerZ = message.z;
-      playerRotation = message.rotation;
+      playerRotation = message.r;
       lastSentX = playerX;
       lastSentZ = playerZ;
       lastSentRotation = playerRotation;
       lastSentTime = performance.now();
       if (myTank) {
         const y = message.y !== undefined ? message.y : 0;
-        myTank.position.set(playerX, y, playerZ);
+        myTank.position.set(playerX, playerY, playerZ);
         myTank.rotation.y = playerRotation;
-        myTank.userData.verticalVelocity = message.verticalVelocity || 0;
+        myTank.userData.verticalVelocity = message.vv || 0;
       }
       break;
 

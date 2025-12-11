@@ -1,3 +1,17 @@
+/* Debug label styling for Three.js CSS2DObject */
+.three-label {
+  background: rgba(0,0,0,0.5);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #fff;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+  font-weight: bold;
+  pointer-events: none;
+  user-select: none;
+  text-shadow: 0 0 2px #000, 0 0 4px #000;
+  white-space: nowrap;
+}
 #operatorOverlay, #operatorOverlay * {
   pointer-events: auto !important;
 }

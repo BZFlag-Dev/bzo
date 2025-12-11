@@ -996,7 +996,7 @@ wss.on('connection', (ws, req) => {
           } else {
             // Send correction back to client
             ws.send(JSON.stringify({
-              t: 'positionCorrection',
+              type: 'positionCorrection',
               x: player.x,
               y: player.y,
               z: player.z,

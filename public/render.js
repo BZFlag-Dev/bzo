@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { createTextLabel } from './labelUtil.js';
 import {
   createShootBuffer,
   createExplosionBuffer,
@@ -36,6 +37,9 @@ class RenderManager {
     this.mountainMeshes = [];
     this.celestialMeshes = [];
     this.clouds = [];
+
+    this.debugLabels = [];
+    this.debugLabelsEnabled = true;
   }
 
   init({ container = document.body } = {}) {
@@ -190,10 +194,11 @@ class RenderManager {
     this.scene.add(this.gridHelper);
   }
 
+
   createMapBoundaries(mapSize = 100) {
     if (!this.scene) return;
 
-    // Remove old boundary meshes if present
+    // Remove old boundary meshes and debug labels if present
     if (!this.boundaryMeshes) this.boundaryMeshes = [];
     this.boundaryMeshes.forEach(mesh => {
       this.scene.remove(mesh);
@@ -205,6 +210,7 @@ class RenderManager {
       }
     });
     this.boundaryMeshes = [];
+    this._clearDebugLabels('boundary');
 
     const wallHeight = 5;
     const wallThickness = 1;
@@ -260,6 +266,7 @@ class RenderManager {
     // Create and track boundary meshes
     const boundaryMeshes = [];
 
+
     const northWall = new THREE.Mesh(
       new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
       nsWallMaterials,
@@ -267,9 +274,12 @@ class RenderManager {
     northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
     northWall.castShadow = true;
     northWall.receiveShadow = true;
+    northWall.name = 'North Wall';
     this.scene.add(northWall);
     boundaryMeshes.push(northWall);
     this._addCompassMarker('N', 0xB20000, new THREE.Vector3(0, wallHeight + 8, -mapSize / 2));
+    this._addDebugLabel(northWall, 'boundary');
+
 
     const southWall = new THREE.Mesh(
       new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
@@ -279,8 +289,11 @@ class RenderManager {
     southWall.castShadow = true;
     southWall.receiveShadow = true;
     this.scene.add(southWall);
+    southWall.name = 'South Wall';
     boundaryMeshes.push(southWall);
     this._addCompassMarker('S', 0x1976D2, new THREE.Vector3(0, wallHeight + 8, mapSize / 2));
+    this._addDebugLabel(southWall, 'boundary');
+
 
     const eastWall = new THREE.Mesh(
       new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
@@ -290,8 +303,11 @@ class RenderManager {
     eastWall.castShadow = true;
     eastWall.receiveShadow = true;
     this.scene.add(eastWall);
+    eastWall.name = 'East Wall';
     boundaryMeshes.push(eastWall);
     this._addCompassMarker('E', 0x388E3C, new THREE.Vector3(mapSize / 2, wallHeight + 8, 0));
+    this._addDebugLabel(eastWall, 'boundary');
+
 
     const westWall = new THREE.Mesh(
       new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
@@ -301,8 +317,10 @@ class RenderManager {
     westWall.castShadow = true;
     westWall.receiveShadow = true;
     this.scene.add(westWall);
+    westWall.name = 'West Wall';
     boundaryMeshes.push(westWall);
     this._addCompassMarker('W', 0xFBC02D, new THREE.Vector3(-mapSize / 2, wallHeight + 8, 0));
+    this._addDebugLabel(westWall, 'boundary');
 
     this.boundaryMeshes = boundaryMeshes;
   }
@@ -343,13 +361,13 @@ class RenderManager {
       }
     });
     this.obstacleMeshes = [];
+    this._clearDebugLabels('obstacle');
   }
 
   setObstacles(obstacles = []) {
     if (!this.scene) return;
     this.clearObstacles();
-
-    obstacles.forEach((obs) => {
+    obstacles.forEach((obs, i) => {
       const h = obs.h || 4;
       const baseY = obs.baseY || 0;
       let mesh = null;
@@ -393,7 +411,10 @@ class RenderManager {
         mesh.rotation.y = obs.rotation || 0;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        mesh.name = obs.name || `Pyramid ${i + 1}`;
+        if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         this.scene.add(mesh);
+        this._addDebugLabel(mesh, 'obstacle');
       } else {
         const concreteTexture = createObstacleTexture();
         concreteTexture.wrapS = THREE.RepeatWrapping;
@@ -430,11 +451,50 @@ class RenderManager {
         mesh.rotation.y = obs.rotation || 0;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        mesh.name = obs.name || `Box ${i + 1}`;
+        if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         this.scene.add(mesh);
+        this._addDebugLabel(mesh, 'obstacle');
       }
 
       if (mesh) {
         this.obstacleMeshes.push(mesh);
+      }
+    });
+  }
+
+  setDebugLabelsEnabled(enabled) {
+    this.debugLabelsEnabled = enabled;
+    this._updateDebugLabelsVisibility();
+  }
+
+  _addDebugLabel(object3D, type) {
+    if (!object3D) return;
+    if (!this.debugLabelsEnabled) return;
+    // Always use object3D.name for label text
+    const label = createTextLabel(object3D.name || '', '#fff', '14px', 'bold', true);
+    // Ensure boundingBox is computed for label placement
+    if (object3D.geometry && !object3D.geometry.boundingBox) object3D.geometry.computeBoundingBox();
+    const y = (object3D.geometry && object3D.geometry.boundingBox ? object3D.geometry.boundingBox.max.y : object3D.position.y) + 2;
+    label.position.set(0, y, 0);
+    object3D.add(label);
+    this.debugLabels.push({ label, object3D, type });
+  }
+
+  _clearDebugLabels(type = null) {
+    this.debugLabels = this.debugLabels.filter(({ label, object3D, type: t }) => {
+      if (!type || t === type) {
+        if (object3D && label) object3D.remove(label);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  _updateDebugLabelsVisibility() {
+    this.debugLabels.forEach(({ label }) => {
+      if (label && label.element) {
+        label.element.style.display = this.debugLabelsEnabled ? '' : 'none';
       }
     });
   }
