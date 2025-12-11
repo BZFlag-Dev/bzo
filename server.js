@@ -907,6 +907,7 @@ wss.on('connection', (ws, req) => {
         // Add more admin actions as needed
       }
 
+      // Only handle compact protocol types directly
       switch (message.type) {
 
         case 'chat': {
@@ -956,7 +957,7 @@ wss.on('connection', (ws, req) => {
           // If targetId is invalid, ignore
           break;
         }
-        case 'move':
+        case 'm': {
           const now = Date.now();
           // Calculate deltaTime based on server's last update time
           const deltaTime = (now - player.lastUpdate) / 1000;
@@ -965,64 +966,46 @@ wss.on('connection', (ws, req) => {
           // Clamp deltaTime to reasonable values (prevent abuse and handle reconnects)
           const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 0.5);
 
-          if (validateMovement(player, message.x, message.y, message.z, message.rotation, clampedDeltaTime)) {
-            player.x = message.x;
-            player.y = message.y;
-            player.z = message.z;
-            player.rotation = message.rotation;
-            player.forwardSpeed = message.forwardSpeed;
-            player.rotationSpeed = message.rotationSpeed;
-            if (message.verticalVelocity !== undefined) {
-              // Check if client is attempting to jump (sudden positive velocity)
-              const isJumpAttempt = message.verticalVelocity >= GAME_CONFIG.JUMP_VELOCITY * 0.9 &&
-                                     player.verticalVelocity < GAME_CONFIG.JUMP_VELOCITY * 0.5;
-
-              if (isJumpAttempt) {
-                // Validate jump - allow from ground or from top of any obstacle
-                const jumpTime = Date.now();
-                const timeSinceLastJump = jumpTime - player.lastJumpTime;
-
-                // Check if on ground or on top of an obstacle
-                const obstacleCheck = checkObstacleCollision(player.x, player.y, player.z);
-                const onValidSurface = player.y <= 0.5 ||
-                                      (obstacleCheck.onObstacle && Math.abs(player.y - obstacleCheck.obstacleHeight) < 0.5);
-
-                if (!player.isJumping && timeSinceLastJump >= GAME_CONFIG.JUMP_COOLDOWN && onValidSurface) {
-                  // Allow jump
-                  player.lastJumpTime = jumpTime;
-                  player.verticalVelocity = GAME_CONFIG.JUMP_VELOCITY;
-                  player.isJumping = true;
-                }
-                // Otherwise reject by keeping server's current velocity
-              } else {
-                // Accept velocity for falling/landing
-                player.verticalVelocity = message.verticalVelocity;
-              }
-            }
-
+          // Only accept new compact field names
+          const x = Number(message.x);
+          const y = Number(message.y);
+          const z = Number(message.z);
+          const r = Number(message.r);
+          const fs = Number(message.fs);
+          const rs = Number(message.rs);
+          const vv = Number(message.vv);
+          if (validateMovement(player, x, y, z, r, clampedDeltaTime)) {
+            player.x = x;
+            player.y = y;
+            player.z = z;
+            player.rotation = r;
+            player.forwardSpeed = fs;
+            player.rotationSpeed = rs;
+            player.verticalVelocity = vv;
             broadcast({
-              type: 'playerMoved',
+              type: 'pm',
               id: player.id,
-              x: player.x,
-              y: player.y,
-              z: player.z,
-              rotation: player.rotation,
-              forwardSpeed: player.forwardSpeed,
-              rotationSpeed: player.rotationSpeed,
-              verticalVelocity: player.verticalVelocity,
+              x,
+              y,
+              z,
+              r,
+              fs,
+              rs,
+              vv,
             }, ws);
           } else {
             // Send correction back to client
             ws.send(JSON.stringify({
-              type: 'positionCorrection',
+              t: 'pc',
               x: player.x,
               y: player.y,
               z: player.z,
-              rotation: player.rotation,
-              verticalVelocity: player.verticalVelocity,
+              r: player.rotation,
+              vv: player.verticalVelocity,
             }));
           }
           break;
+        }
 
         case 'shoot': {
           // message: { type: 'shot', x, y, z, dirX, dirZ }

@@ -780,21 +780,21 @@ function handleServerMessage(message) {
       removePlayer(message.id);
       break;
 
-    case 'playerMoved':
+    case 'pm':
+      // Compact playerMoved message
       const tank = tanks.get(message.id);
       if (tank && message.id !== myPlayerId) {
         const oldY = tank.position.y;
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
 
         tank.position.set(message.x, message.y, message.z);
-        tank.rotation.y = message.rotation;
-        // Store velocity for tread animation
-        tank.userData.forwardSpeed = message.forwardSpeed;
-        tank.userData.rotationSpeed = message.rotationSpeed;
-        tank.userData.verticalVelocity = message.verticalVelocity;
+        tank.rotation.y = message.r;
+        tank.userData.forwardSpeed = message.fs;
+        tank.userData.rotationSpeed = message.rs;
+        tank.userData.verticalVelocity = message.vv;
 
         // Detect jump (vertical velocity suddenly became positive and large)
-        if (oldVerticalVel < 10 && message.verticalVelocity >= 20) {
+        if (oldVerticalVel < 10 && message.vv >= 20) {
           const jumpSoundClone = renderManager.cloneJumpSound();
           if (jumpSoundClone) {
             try {
@@ -802,13 +802,12 @@ function handleServerMessage(message) {
               jumpSoundClone.setVolume(0.4);
               jumpSoundClone.play();
               setTimeout(() => tank.remove(jumpSoundClone), 200);
-            } catch (error) {
-            }
+            } catch (error) {}
           }
         }
 
         // Detect landing
-        if (oldVerticalVel < 0 && message.verticalVelocity === 0 && oldY > message.y) {
+        if (oldVerticalVel < 0 && message.vv === 0 && oldY > message.y) {
           const landSoundClone = renderManager.cloneLandSound();
           if (landSoundClone) {
             try {
@@ -816,8 +815,7 @@ function handleServerMessage(message) {
               landSoundClone.setVolume(0.5);
               landSoundClone.play();
               setTimeout(() => tank.remove(landSoundClone), 150);
-            } catch (error) {
-            }
+            } catch (error) {}
           }
         }
       }
@@ -1697,15 +1695,16 @@ function handleMotion(deltaTime) {
     const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
     const y = myTank ? myTank.position.y : 1;
     sendToServer({
-      type: 'move',
-      x: playerX,
-      y: playerY,
-      z: playerZ,
-      rotation: playerRotation,
-      deltaTime: deltaTime,
-      forwardSpeed: forwardSpeed,
-      rotationSpeed: rotationSpeed,
-      verticalVelocity: verticalVelocity,
+      type: 'm',
+      id: myPlayerId,
+      x: Number(playerX.toFixed(2)),
+      y: Number(playerY.toFixed(2)),
+      z: Number(playerZ.toFixed(2)),
+      r: Number(playerRotation.toFixed(2)),
+      fs: Number(forwardSpeed.toFixed(2)),
+      rs: Number(rotationSpeed.toFixed(2)),
+      vv: Number(verticalVelocity.toFixed(2)),
+      dt: Number(deltaTime.toFixed(3)),
     });
     lastSentX = playerX;
     lastSentZ = playerZ;
