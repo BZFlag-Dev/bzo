@@ -27,10 +27,11 @@ class RenderManager {
     this.renderer = null;
     this.labelRenderer = null;
     this.audioListener = null;
-    this.shootSound = null;
-    this.jumpSound = null;
-    this.landSound = null;
-    this.explosionSound = null;
+    // Shared audio buffers
+    this.shootBuffer = null;
+    this.explosionBuffer = null;
+    this.jumpBuffer = null;
+    this.landBuffer = null;
     this.container = null;
 
     this.ground = null;
@@ -92,22 +93,11 @@ class RenderManager {
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
     const audioContext = this.audioListener.context;
-
-    this.shootSound = new THREE.Audio(this.audioListener);
-    this.shootSound.setBuffer(createShootBuffer(audioContext));
-    this.shootSound.setVolume(0.5);
-
-    this.explosionSound = new THREE.Audio(this.audioListener);
-    this.explosionSound.setBuffer(createExplosionBuffer(audioContext));
-    this.explosionSound.setVolume(0.7);
-
-    this.jumpSound = new THREE.Audio(this.audioListener);
-    this.jumpSound.setBuffer(createJumpBuffer(audioContext));
-    this.jumpSound.setVolume(0.4);
-
-    this.landSound = new THREE.Audio(this.audioListener);
-    this.landSound.setBuffer(createLandBuffer(audioContext));
-    this.landSound.setVolume(0.5);
+    // Create and store shared buffers
+    this.shootBuffer = createShootBuffer(audioContext);
+    this.explosionBuffer = createExplosionBuffer(audioContext);
+    this.jumpBuffer = createJumpBuffer(audioContext);
+    this.landBuffer = createLandBuffer(audioContext);
 
     this._addDefaultLights();
 
@@ -1004,46 +994,53 @@ class RenderManager {
     if (shield.material) shield.material.dispose();
   }
 
-  playShootSound() {
-    if (!this.shootSound || !this.shootSound.buffer) return;
-    if (this.shootSound.isPlaying) {
-      try { this.shootSound.stop(); } catch (error) {}
-    }
-    try { this.shootSound.play(); } catch (error) {}
+  playShootSound(position) {
+    if (!this.shootBuffer) return;
+    const sound = new THREE.PositionalAudio(this.audioListener);
+    sound.setBuffer(this.shootBuffer);
+    sound.setRefDistance(10);
+    sound.setVolume(0.5);
+    if (position) sound.position.copy(position);
+    this.scene.add(sound);
+    sound.play();
+    // Remove from scene after playback
+    sound.source.onended = () => { this.scene.remove(sound); };
   }
 
-  playExplosionSound() {
-    if (!this.explosionSound || !this.explosionSound.buffer) return;
-    if (this.explosionSound.isPlaying) {
-      try { this.explosionSound.stop(); } catch (error) {}
-    }
-    try { this.explosionSound.play(); } catch (error) {}
+  playExplosionSound(position) {
+    if (!this.explosionBuffer) return;
+    const sound = new THREE.PositionalAudio(this.audioListener);
+    sound.setBuffer(this.explosionBuffer);
+    sound.setRefDistance(15);
+    sound.setVolume(0.7);
+    if (position) sound.position.copy(position);
+    this.scene.add(sound);
+    sound.play();
+    sound.source.onended = () => { this.scene.remove(sound); };
   }
 
-  playLocalJumpSound() {
-    if (!this.jumpSound) return;
-    if (this.jumpSound.isPlaying) {
-      try { this.jumpSound.stop(); } catch (error) {}
-    }
-    try { this.jumpSound.play(); } catch (error) {}
+  playLocalJumpSound(position) {
+    if (!this.jumpBuffer) return;
+    const sound = new THREE.PositionalAudio(this.audioListener);
+    sound.setBuffer(this.jumpBuffer);
+    sound.setRefDistance(8);
+    sound.setVolume(0.4);
+    if (position) sound.position.copy(position);
+    this.scene.add(sound);
+    sound.play();
+    sound.source.onended = () => { this.scene.remove(sound); };
   }
 
-  cloneJumpSound() {
-    if (!this.jumpSound) return null;
-    try {
-      return this.jumpSound.clone();
-    } catch (error) {
-      return null;
-    }
-  }
-
-  cloneLandSound() {
-    if (!this.landSound) return null;
-    try {
-      return this.landSound.clone();
-    } catch (error) {
-      return null;
-    }
+  playLandSound(position) {
+    if (!this.landBuffer) return;
+    const sound = new THREE.PositionalAudio(this.audioListener);
+    sound.setBuffer(this.landBuffer);
+    sound.setRefDistance(8);
+    sound.setVolume(0.5);
+    if (position) sound.position.copy(position);
+    this.scene.add(sound);
+    sound.play();
+    sound.source.onended = () => { this.scene.remove(sound); };
   }
 
   createProjectile(data) {
@@ -1057,7 +1054,7 @@ class RenderManager {
       dirZ: data.dirZ,
     };
     this.scene.add(projectile);
-    this.playShootSound();
+    this.playShootSound(projectile.position);
     return projectile;
   }
 
@@ -1070,7 +1067,7 @@ class RenderManager {
 
   createExplosion(position, tank) {
     if (!this.scene || !position) return;
-    this.playExplosionSound();
+    this.playExplosionSound(position);
 
     const geometry = new THREE.SphereGeometry(2, 16, 16);
     const material = new THREE.MeshBasicMaterial({ color: 0xff4500, transparent: true, opacity: 0.8 });

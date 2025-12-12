@@ -894,28 +894,12 @@ function handleServerMessage(message) {
 
         // Detect jump (vertical velocity suddenly became positive and large)
         if (oldVerticalVel < 10 && message.vv >= 20) {
-          const jumpSoundClone = renderManager.cloneJumpSound();
-          if (jumpSoundClone) {
-            try {
-              tank.add(jumpSoundClone);
-              jumpSoundClone.setVolume(0.4);
-              jumpSoundClone.play();
-              setTimeout(() => tank.remove(jumpSoundClone), 200);
-            } catch (error) {}
-          }
+          renderManager.playLocalJumpSound(tank.position);
         }
 
         // Detect landing
         if (oldVerticalVel < 0 && message.vv === 0 && oldY > message.y) {
-          const landSoundClone = renderManager.cloneLandSound();
-          if (landSoundClone) {
-            try {
-              tank.add(landSoundClone);
-              landSoundClone.setVolume(0.5);
-              landSoundClone.play();
-              setTimeout(() => tank.remove(landSoundClone), 150);
-            } catch (error) {}
-          }
+          renderManager.playLandSound(tank.position);
         }
       }
       break;
@@ -1743,7 +1727,7 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     jumpDirection = playerRotation; // Store jump direction at jump start
-    renderManager.playLocalJumpSound();
+    if (myTank) renderManager.playLocalJumpSound(myTank.position);
   }
 
   const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
