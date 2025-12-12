@@ -1559,6 +1559,7 @@ let intendedRotation = 0; // -1..1
 let intendedY = 0; // -1..1 (for jump/momentum)
 let jumpTriggered = false;
 let isInAir = false;
+let jumpDirection = null; // Stores the direction at jump start
 
 function handleInputEvents() {
   // Reset intended input each frame
@@ -1575,6 +1576,7 @@ function handleInputEvents() {
   if (onGround) {
     myTank.userData.verticalVelocity = 0;
     playerY = 0;
+    jumpDirection = null; // Reset jump direction when grounded
   } else {
     for (const obs of OBSTACLES) {
       const obstacleHeight = obs.h || 4;
@@ -1592,6 +1594,7 @@ function handleInputEvents() {
           onObstacle = true;
           myTank.userData.verticalVelocity = 0;
           playerY = obstacleTop;
+          jumpDirection = null; // Reset jump direction when landed on obstacle
           break;
         }
       }
@@ -1603,6 +1606,7 @@ function handleInputEvents() {
 
   // Gather intended input from controls
   if (isInAir) {
+    // In air: movement is fixed to jumpDirection, but allow visual rotation
     intendedForward = myTank.userData.forwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
@@ -1649,13 +1653,20 @@ function handleMotion(deltaTime) {
   const oldZ = playerZ;
   const oldRotation = playerRotation;
 
+
   // Step 3: Convert intended speed/rotation to deltas
   const speed = gameConfig.TANK_SPEED * deltaTime;
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED * deltaTime;
-  let intendedDeltaX = -Math.sin(playerRotation) * intendedForward * speed;
-  let intendedDeltaY = 0;
-  let intendedDeltaZ = -Math.cos(playerRotation) * intendedForward * speed;
-  let intendedDeltaRot = intendedRotation * rotSpeed;
+  let moveRotation = playerRotation;
+  let intendedDeltaX, intendedDeltaY = 0, intendedDeltaZ, intendedDeltaRot;
+
+  if (isInAir && jumpDirection !== null) {
+    moveRotation = jumpDirection;
+  }
+
+  intendedDeltaX = -Math.sin(moveRotation) * intendedForward * speed;
+  intendedDeltaZ = -Math.cos(moveRotation) * intendedForward * speed;
+  intendedDeltaRot = intendedRotation * rotSpeed;
   if (myTank.userData.verticalVelocity !== 0) {
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
   }
@@ -1672,6 +1683,7 @@ function handleMotion(deltaTime) {
   if (jumpTriggered && !isInAir) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
+    jumpDirection = playerRotation; // Store jump direction at jump start
     renderManager.playLocalJumpSound();
   }
 
@@ -1690,6 +1702,7 @@ function handleMotion(deltaTime) {
     playerX = result.x;
     playerY = result.y;
     playerZ = result.z;
+    // Always update playerRotation for visual tank rotation
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
