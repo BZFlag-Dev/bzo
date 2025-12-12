@@ -11,6 +11,7 @@ import {
   createExplosionBuffer,
   createJumpBuffer,
   createLandBuffer,
+  createProjectilePopBuffer,
 } from './audio.js';
 import {
   createPyramidTexture,
@@ -146,6 +147,7 @@ class RenderManager {
     this.explosionBuffer = createExplosionBuffer(audioContext);
     this.jumpBuffer = createJumpBuffer(audioContext);
     this.landBuffer = createLandBuffer(audioContext);
+    this.projectilePopBuffer = createProjectilePopBuffer(audioContext);
 
     this._initDynamicLights();
 
@@ -1132,6 +1134,21 @@ class RenderManager {
 
   removeProjectile(projectile) {
     if (!projectile || !this.scene) return;
+    // Play pop sound at projectile's last position
+    if (this.audioListener && this.projectilePopBuffer && projectile.position) {
+      const popSound = new THREE.PositionalAudio(this.audioListener);
+      popSound.setBuffer(this.projectilePopBuffer);
+      popSound.setRefDistance(8);
+      popSound.setVolume(0.7);
+      popSound.position.copy(projectile.position);
+      this.scene.add(popSound);
+      popSound.play();
+      // Remove sound from scene after it finishes
+      popSound.source.onended = () => {
+        this.scene.remove(popSound);
+        popSound.disconnect();
+      };
+    }
     // Remove point light from scene if present
     if (this.projectileLights && this.projectileLights.has(projectile)) {
       const light = this.projectileLights.get(projectile);

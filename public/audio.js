@@ -6,6 +6,24 @@
 // audio.js - Handles sound buffer creation and exposes buffers for positional audio
 import * as THREE from 'three';
 
+// Pop/Mini-explosion for projectile removal
+export function createProjectilePopBuffer(audioContext) {
+  const sampleRate = audioContext.sampleRate;
+  const duration = 0.08; // very brief
+  const length = Math.floor(sampleRate * duration);
+  const buffer = audioContext.createBuffer(1, length, sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i++) {
+    const t = i / sampleRate;
+    // Pop: sharp attack, quick decay
+    const pop = Math.sin(2 * Math.PI * 1200 * t) * Math.exp(-t * 40);
+    // Mini explosion: noise burst, quick decay
+    const noise = (Math.random() * 2 - 1) * Math.exp(-t * 30) * 0.5;
+    data[i] = (pop * 0.7 + noise * 0.6) * 0.5;
+  }
+  return buffer;
+}
+
 export function createShootBuffer(audioContext) {
   const sampleRate = audioContext.sampleRate;
   const duration = 0.2;
