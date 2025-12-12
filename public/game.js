@@ -915,7 +915,7 @@ function handleServerMessage(message) {
     case 'pm':
       // Compact playerMoved message
       const tank = tanks.get(message.id);
-      if (tank && message.id !== myPlayerId) {
+      if (tank) {
         const oldY = tank.position.y;
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
 
@@ -927,11 +927,13 @@ function handleServerMessage(message) {
 
         // Detect jump (vertical velocity suddenly became positive and large)
         if (oldVerticalVel < 10 && message.vv >= 20) {
+          console.log('Jump detected for player', message.id);
           renderManager.playLocalJumpSound(tank.position);
         }
 
         // Detect landing
         if (oldVerticalVel < 0 && message.vv === 0 && oldY > message.y) {
+          console.log('Landing detected for player', message.id);
           renderManager.playLandSound(tank.position);
         }
       }

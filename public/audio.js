@@ -9,17 +9,20 @@ import * as THREE from 'three';
 // Pop/Mini-explosion for projectile removal
 export function createProjectilePopBuffer(audioContext) {
   const sampleRate = audioContext.sampleRate;
-  const duration = 0.08; // very brief
+  const duration = 0.11; // still very brief, but a bit longer for impact
   const length = Math.floor(sampleRate * duration);
   const buffer = audioContext.createBuffer(1, length, sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < length; i++) {
     const t = i / sampleRate;
-    // Pop: sharp attack, quick decay
-    const pop = Math.sin(2 * Math.PI * 1200 * t) * Math.exp(-t * 40);
-    // Mini explosion: noise burst, quick decay
-    const noise = (Math.random() * 2 - 1) * Math.exp(-t * 30) * 0.5;
-    data[i] = (pop * 0.7 + noise * 0.6) * 0.5;
+    // Impact: burst of white noise with a sharp, fast decay
+    const decay = Math.exp(-t * 32);
+    const noise = (Math.random() * 2 - 1) * decay * 0.85;
+    // Add a low, quick thump for body
+    const thump = Math.sin(2 * Math.PI * 90 * t) * Math.exp(-t * 22) * 0.4;
+    // Add a little high-frequency crack for sharpness
+    const crack = Math.sin(2 * Math.PI * 1800 * t) * Math.exp(-t * 40) * 0.18;
+    data[i] = noise + thump + crack;
   }
   return buffer;
 }
