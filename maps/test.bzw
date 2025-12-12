@@ -27,24 +27,24 @@ rotation 0.0
 size     18.0 9.0 10.0
 end
 
-#pyramid
-#position -10.0 10.0 10.0
-#rotation 45.0
-#size     9.6568542495 4.0 5.0
-#end
-#pyramid
-#position -10.0 10.0 10.0
-#rotation 90.0
-#size     9.6568542495 4.0 5.0
-#end
-#pyramid
-#position -10.0 10.0 10.0
-#rotation 135.0
-#size     9.6568542495 4.0 5.0
-#end
 
-#pyramid
-#position 0.0 0.0 0.0
-#rotation 0.0
-#size     5.0 25.0 5.0
-#end
+pyramid
+name "base"
+position -10.0 -10.0 0.0
+rotation 0.0
+size     10.0 10.0 3.0
+end
+
+pyramid
+name "mid"
+position -10.0 -10.0 0.0
+rotation 0.0
+size     5.0 5.0 7.0
+end
+
+pyramid
+name "top"
+position -10.0 -10.0 0.0
+rotation 0.0
+size     2.0 2.0 12.0
+end
