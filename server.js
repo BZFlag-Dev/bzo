@@ -339,7 +339,8 @@ function getCelestialPositions() {
   // Sun rises at ~6am, sets at ~6pm, peaks at noon
   const sunAngle = ((timeOfDay - 6) / 12) * Math.PI; // 0 to PI across day
   const sunHeight = Math.sin(sunAngle) * 80; // Height in scene
-  const sunDistance = 150;
+  // Place sun/moon at least 20% beyond map edge
+  const sunDistance = GAME_CONFIG.MAP_SIZE * 0.6;
 
   const sunPosition = {
     x: Math.cos(sunAngle) * sunDistance,
