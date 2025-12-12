@@ -83,6 +83,22 @@ if (MAP_SOURCE !== 'random') {
   if (!fs.existsSync(mapPath)) {
     logError(`Map file not found: ${mapPath}. Reverting to random map.`);
     MAP_SOURCE = 'random';
+  } else {
+    // Watch the map file for changes and restart the server if it changes
+    try {
+      fs.watch(mapPath, (eventType, filename) => {
+        if (eventType === 'change') {
+          console.log(`\n📝 Map file changed: ${filename || mapPath}`);
+          console.log('🔄 Restarting server due to map file change...\n');
+          setTimeout(() => {
+            process.exit(0);
+          }, 1000);
+        }
+      });
+      // console.log(`  ✓ Watching map file: ${path.basename(mapPath)}`);
+    } catch (err) {
+      logError(`Failed to watch map file: ${mapPath}`, err);
+    }
   }
 }
 
