@@ -1,3 +1,18 @@
+// Helper to send the map list and current map to a given websocket
+function sendMapList(ws) {
+  fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
+    let maps = [];
+    if (!err && files) {
+      maps = files.filter(f => f.endsWith('.bzw'));
+      maps = ['random', ...maps];
+    }
+    ws.send(JSON.stringify({
+      type: 'mapList',
+      maps,
+      currentMap: MAP_SOURCE
+    }));
+  });
+}
 /*
  * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -1085,19 +1100,7 @@ wss.on('connection', (ws, req) => {
           break;
         case 'getMaps': {
           // Reply with all .bzw files in maps/ plus 'random', and indicate current map
-          fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
-            if (err) {
-              ws.send(JSON.stringify({ type: 'mapList', error: 'Failed to list maps', maps: [], currentMap: MAP_SOURCE }));
-              return;
-            }
-            let maps = files.filter(f => f.endsWith('.bzw'));
-            maps = ['random', ...maps];
-            ws.send(JSON.stringify({
-              type: 'mapList',
-              maps,
-              currentMap: MAP_SOURCE
-            }));
-          });
+          sendMapList(ws);
           break;
         }
         case 'setMap': {
@@ -1142,6 +1145,15 @@ wss.on('connection', (ws, req) => {
             }
             log(`Admin uploaded new map: ${mapName}`);
             ws.send(JSON.stringify({ success: true }));
+            // Send direct chat message to uploader
+            ws.send(JSON.stringify({
+              type: 'chat',
+              from: -1, // SERVER
+              to: player.id,
+              text: `Upload ${mapName} with ${Buffer.byteLength(mapContent, 'utf8')} bytes`
+            }));
+            // Send updated map list (mapList reply)
+            sendMapList(ws);
           });
           break;
         }

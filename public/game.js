@@ -268,6 +268,27 @@ function updateDebugLabelsButton() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+    // Add handler for Upload Map button
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadMap = document.getElementById('uploadMap');
+    if (uploadBtn && uploadMap) {
+      uploadBtn.addEventListener('click', () => {
+        const file = uploadMap.files && uploadMap.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          const content = e.target.result;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'uploadMap',
+              mapName: file.name,
+              mapContent: content
+            }));
+          }
+        };
+        reader.readAsText(file);
+      });
+    }
   const btn = document.getElementById('debugLabelsBtn');
   if (btn) {
     btn.addEventListener('click', () => {
