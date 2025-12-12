@@ -115,6 +115,11 @@ function parseBZWMap(filename) {
       current = { type: 'box' };
     } else if (line.startsWith('teleporter')) {
       current = { type: 'box' };
+    } else if (current && line.startsWith('name')) {
+      // name <string>
+      const [, ...nameParts] = line.split(/\s+/);
+      const name = nameParts.join(' ').replace(/"/g, '').trim();
+      if (name) current.name = name;
     } else if (current && line.startsWith('position')) {
       // position x y z (scale x and y by 0.5)
       const [, x, y, z] = line.split(/\s+/);
@@ -138,8 +143,10 @@ function parseBZWMap(filename) {
       const [, deg] = line.split(/\s+/);
       current.rotation = -(parseFloat(deg) || 0) * Math.PI / 180;
     } else if (current && line === 'end') {
-      // Assign a name for debugging
-      current.name = `${current.type[0].toUpperCase()}${obstacles.length}`;
+      // Use BZW name if present, otherwise assign a generated name
+      if (!current.name) {
+        current.name = `${current.type[0].toUpperCase()}${obstacles.length}`;
+      }
       obstacles.push(current);
       current = null;
     }

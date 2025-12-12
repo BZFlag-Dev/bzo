@@ -7,18 +7,21 @@ end
 
 # roof
 pyramid
+name "inverted"
 position 0.0 36.0 0.0
 rotation 0.0
 size     18.0 9.0 -10.0
 end
 
 box
+name "boxy"
 position 0.0 24.0 0.0
 rotation 0.0
 size     36.0 3.0 10.0
 end
 
 pyramid
+name "normal"
 position 0.0 12.0 0.0
 rotation 0.0
 size     18.0 9.0 10.0
