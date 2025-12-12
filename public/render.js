@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { AnaglyphEffect } from './anaglyph.js';
 import { createTextLabel } from './labelUtil.js';
 import {
   createShootBuffer,
@@ -41,6 +42,9 @@ class RenderManager {
 
     this.debugLabels = [];
     this.debugLabelsEnabled = true;
+
+    this.anaglyphEffect = null;
+    this.anaglyphEnabled = false;
   }
 
   init({ container = document.body } = {}) {
@@ -80,6 +84,10 @@ class RenderManager {
     this.labelRenderer.domElement.style.top = '0';
     this.labelRenderer.domElement.style.pointerEvents = 'none';
     container.appendChild(this.labelRenderer.domElement);
+
+    // Anaglyph effect setup (not enabled by default)
+    this.anaglyphEffect = new AnaglyphEffect(this.renderer);
+    this.anaglyphEffect.setSize(window.innerWidth, window.innerHeight);
 
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
@@ -150,12 +158,27 @@ class RenderManager {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    if (this.anaglyphEffect) {
+      this.anaglyphEffect.setSize(window.innerWidth, window.innerHeight);
+    }
   }
 
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
-    this.renderer.render(this.scene, this.camera);
+    if (this.anaglyphEnabled && this.anaglyphEffect) {
+      this.anaglyphEffect.render(this.scene, this.camera);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
     this.labelRenderer.render(this.scene, this.camera);
+  }
+
+  setAnaglyphEnabled(enabled) {
+    this.anaglyphEnabled = !!enabled;
+  }
+
+  getAnaglyphEnabled() {
+    return this.anaglyphEnabled;
   }
 
   clearGround() {

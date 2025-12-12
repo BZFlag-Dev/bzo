@@ -268,6 +268,19 @@ function updateDebugLabelsButton() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+      // Anaglyph 3D toggle button
+      const anaglyphBtn = document.getElementById('anaglyphBtn');
+      if (anaglyphBtn) {
+        anaglyphBtn.addEventListener('click', () => {
+          const enabled = !renderManager.getAnaglyphEnabled();
+          renderManager.setAnaglyphEnabled(enabled);
+          anaglyphBtn.classList.toggle('active', enabled);
+          anaglyphBtn.title = enabled ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+        });
+        // Set initial state
+        anaglyphBtn.classList.toggle('active', renderManager.getAnaglyphEnabled());
+        anaglyphBtn.title = renderManager.getAnaglyphEnabled() ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+      }
     // Add handler for Upload Map button
     const uploadBtn = document.getElementById('uploadBtn');
     const uploadMap = document.getElementById('uploadMap');
