@@ -3,6 +3,61 @@
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
  */
 
+// Blue marble texture for BZFlag-style pyramid sides
+export function createPyramidTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+
+  // Base blue fill
+  ctx.fillStyle = '#2a3a6e';
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Marble veins: white and light blue squiggles
+  for (let i = 0; i < 18; i++) {
+    ctx.save();
+    ctx.globalAlpha = 0.18 + Math.random() * 0.12;
+    ctx.strokeStyle = Math.random() < 0.5 ? '#b8d0ff' : '#e0e8ff';
+    ctx.lineWidth = 2 + Math.random() * 2;
+    ctx.beginPath();
+    let x = Math.random() * 256;
+    let y = Math.random() * 256;
+    ctx.moveTo(x, y);
+    for (let j = 0; j < 7 + Math.random() * 6; j++) {
+      x += (Math.random() - 0.5) * 32;
+      y += (Math.random() - 0.5) * 32;
+      ctx.lineTo(Math.max(0, Math.min(255, x)), Math.max(0, Math.min(255, y)));
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Subtle blue/white cloudy blobs
+  for (let i = 0; i < 30; i++) {
+    const cx = Math.random() * 256;
+    const cy = Math.random() * 256;
+    const r = 18 + Math.random() * 28;
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
+    grad.addColorStop(0, 'rgba(180,200,255,0.18)');
+    grad.addColorStop(1, 'rgba(42,58,110,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+/*
+ * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
 import * as THREE from 'three';
 
 export function createCobblestoneTexture() {

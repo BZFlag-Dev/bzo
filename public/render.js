@@ -12,6 +12,7 @@ import {
   createLandBuffer,
 } from './audio.js';
 import {
+  createPyramidTexture,
   createCobblestoneTexture,
   createGroundTexture,
   createWallTexture,
@@ -386,6 +387,12 @@ class RenderManager {
           geometry.rotateX(Math.PI);
         }
 
+        // Use new blue marble pyramid texture
+        const pyramidTexture = createPyramidTexture();
+        pyramidTexture.wrapS = THREE.RepeatWrapping;
+        pyramidTexture.wrapT = THREE.RepeatWrapping;
+        pyramidTexture.repeat.set(obs.w, obs.h);
+
         const concreteTexture = createObstacleTexture();
         concreteTexture.wrapS = THREE.RepeatWrapping;
         concreteTexture.wrapT = THREE.RepeatWrapping;
@@ -394,11 +401,6 @@ class RenderManager {
           concreteTexture.rotation = Math.PI;
           concreteTexture.center.set(0.5, 0.5);
         }
-
-        const pyramidTexture = this._createPyramidTexture();
-        pyramidTexture.wrapS = THREE.RepeatWrapping;
-        pyramidTexture.wrapT = THREE.RepeatWrapping;
-        pyramidTexture.repeat.set(obs.w, obs.h);
 
         mesh = new THREE.Mesh(
           geometry,
@@ -497,36 +499,6 @@ class RenderManager {
           label.visible = this.debugLabelsEnabled;
         }
     });
-  }
-
-  _createPyramidTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-
-    ctx.fillStyle = '#3a5fa9';
-    ctx.fillRect(0, 0, 128, 128);
-
-    for (let i = 0; i < 4000; i += 1) {
-      const x = Math.random() * 128;
-      const y = Math.random() * 128;
-      const alpha = Math.random() * 0.15 + 0.05;
-      ctx.fillStyle = `rgba(58, 95, 169, ${alpha.toFixed(2)})`;
-      ctx.fillRect(x, y, 1, 1);
-    }
-
-    ctx.globalAlpha = 0.08;
-    ctx.strokeStyle = '#7faaff';
-    for (let y = 0; y < 128; y += 8) {
-      ctx.beginPath();
-      ctx.moveTo(0, y + Math.random() * 2);
-      ctx.lineTo(128, y + Math.random() * 2);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1.0;
-
-    return new THREE.CanvasTexture(canvas);
   }
 
   clearMountains() {
