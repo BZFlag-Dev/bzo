@@ -1871,10 +1871,11 @@ function shoot() {
   });
 }
 
-function updateProjectiles() {
+function updateProjectiles(deltaTime) {
+  const projectileSpeed = 18; // units per second (adjust as needed)
   projectiles.forEach((projectile, id) => {
-    projectile.position.x += projectile.userData.dirX * 0.3;
-    projectile.position.z += projectile.userData.dirZ * 0.3;
+    projectile.position.x += projectile.userData.dirX * projectileSpeed * deltaTime;
+    projectile.position.z += projectile.userData.dirZ * projectileSpeed * deltaTime;
   });
 }
 
@@ -2167,7 +2168,7 @@ function animate() {
   requestAnimationFrame(animate);
   handleInputEvents();
   handleMotion(deltaTime);
-  updateProjectiles();
+  updateProjectiles(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
   if (gameConfig) {
