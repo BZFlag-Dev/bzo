@@ -42,8 +42,6 @@ app.get('/admin', (req, res) => {
 });
 // --- Admin API Endpoints ---
 
-// List available maps
-
 const server = app.listen(PORT, '::', () => {
   log(`Server running on http://[::]:${PORT}`);
 });
@@ -891,62 +889,6 @@ wss.on('connection', (ws, req) => {
     try {
       const message = JSON.parse(data);
 
-      // --- Admin overlay WebSocket API ---
-      if (message.type === 'admin' && message.action) {
-        const sendAdminResp = (resp) => {
-          ws.send(JSON.stringify({ ...resp, adminReqId: message.adminReqId }));
-        };
-        if (message.action === 'getMaps') {
-          fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
-            if (err) return sendAdminResp({ error: 'Failed to list maps' });
-            const maps = files.filter(f => f.endsWith('.bzw'));
-            sendAdminResp({ maps });
-          });
-          return;
-        }
-        if (message.action === 'setMap') {
-          const mapFile = message.mapFile;
-          if (!mapFile || (mapFile !== 'random' && !mapFile.endsWith('.bzw'))) {
-            return sendAdminResp({ error: 'Invalid map file' });
-          }
-          if (mapFile !== 'random') {
-            const mapPath = path.join(__dirname, 'maps', mapFile);
-            if (!fs.existsSync(mapPath)) {
-              return sendAdminResp({ error: 'Map file not found' });
-            }
-          }
-          try {
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            config.mapFile = mapFile;
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-            sendAdminResp({ success: true });
-            log(`Admin set map to ${mapFile}. Server restart required.`);
-            process.exit(0);
-          } catch (e) {
-            sendAdminResp({ error: 'Failed to update config' });
-          }
-          return;
-        }
-        if (message.action === 'uploadMap') {
-          const { mapName, mapContent } = message;
-          if (!mapName || !mapName.endsWith('.bzw') || !mapContent) {
-            return sendAdminResp({ error: 'Invalid map upload' });
-          }
-          const mapPath = path.join(__dirname, 'maps', mapName);
-          fs.writeFile(mapPath, mapContent, err => {
-            if (err) {
-              logError('Map upload failed:', err);
-              return sendAdminResp({ error: 'Failed to save map' });
-            }
-            log(`Admin uploaded new map: ${mapName}`);
-            sendAdminResp({ success: true });
-          });
-          return;
-        }
-        // Add more admin actions as needed
-      }
-
-      // Only handle compact protocol types directly
       switch (message.type) {
 
         case 'chat': {
@@ -1141,18 +1083,68 @@ wss.on('connection', (ws, req) => {
             });
           }
           break;
-        case 'getMaps':
+        case 'getMaps': {
+          // Reply with all .bzw files in maps/ plus 'random', and indicate current map
           fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
-            if (err) return sendAdminResp({ error: 'Failed to list maps' });
+            if (err) {
+              ws.send(JSON.stringify({ type: 'mapList', error: 'Failed to list maps', maps: [], currentMap: MAP_SOURCE }));
+              return;
+            }
             let maps = files.filter(f => f.endsWith('.bzw'));
-            maps = ['random', ...maps.filter(m => m !== 'random')];
-            sendToPlayer(ws, {
-              type: 'mapsList',
-              currentMap: serverConfig.mapFile || 'random',
+            maps = ['random', ...maps];
+            ws.send(JSON.stringify({
+              type: 'mapList',
               maps,
-            });
+              currentMap: MAP_SOURCE
+            }));
           });
           break;
+        }
+        case 'setMap': {
+          // Admin: set map
+          const mapFile = message.mapFile;
+          if (!mapFile || (mapFile !== 'random' && !mapFile.endsWith('.bzw'))) {
+            ws.send(JSON.stringify({ error: 'Invalid map file' }));
+            break;
+          }
+          if (mapFile !== 'random') {
+            const mapPath = path.join(__dirname, 'maps', mapFile);
+            if (!fs.existsSync(mapPath)) {
+              ws.send(JSON.stringify({ error: 'Map file not found' }));
+              break;
+            }
+          }
+          try {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            config.mapFile = mapFile;
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+            ws.send(JSON.stringify({ success: true }));
+            log(`Admin set map to ${mapFile}. Server restart required.`);
+            process.exit(0);
+          } catch (e) {
+            ws.send(JSON.stringify({ error: 'Failed to update config' }));
+          }
+          break;
+        }
+        case 'uploadMap': {
+          // Admin: upload map
+          const { mapName, mapContent } = message;
+          if (!mapName || !mapName.endsWith('.bzw') || !mapContent) {
+            ws.send(JSON.stringify({ error: 'Invalid map upload' }));
+            break;
+          }
+          const mapPath = path.join(__dirname, 'maps', mapName);
+          fs.writeFile(mapPath, mapContent, err => {
+            if (err) {
+              logError('Map upload failed:', err);
+              ws.send(JSON.stringify({ error: 'Failed to save map' }));
+              return;
+            }
+            log(`Admin uploaded new map: ${mapName}`);
+            ws.send(JSON.stringify({ success: true }));
+          });
+          break;
+        }
       }
     } catch (err) {
       logError('Error handling message:', err.message);

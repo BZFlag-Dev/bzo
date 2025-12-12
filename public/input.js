@@ -437,7 +437,7 @@ export function toggleOperatorPanel() {
     domRefs.operatorOverlay.style.setProperty('display', 'block');
     hudContext.showMessage('Operator Panel: Shown');
     const requestId = Math.floor(Math.random() * 1e9);
-    hudContext.sendToServer({ type: 'operatorGetMaps', requestId });
+    hudContext.sendToServer({ type: 'getMaps', requestId });
     window._operatorMapReqId = requestId;
   }
   updateOperatorBtn();

@@ -80,7 +80,7 @@ let radarCanvas, radarCtx;
 // Input state
 let lastShotTime = 0;
 
-// Operator Panel Toggle
+// Entry Dialog
 function toggleEntryDialog(name = '') {
   const entryDialog = document.getElementById('entryDialog');
   const entryInput = document.getElementById('entryInput');
@@ -292,6 +292,18 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
     updateDebugLabelsButton();
+  }
+
+  // Add handler for Restart with Map button
+  const restartBtn = document.getElementById('restartBtn');
+  const mapList = document.getElementById('mapList');
+  if (restartBtn && mapList) {
+    restartBtn.addEventListener('click', () => {
+      const selectedMap = mapList.value;
+      if (ws && ws.readyState === WebSocket.OPEN && selectedMap) {
+        ws.send(JSON.stringify({ type: 'setMap', mapFile: selectedMap }));
+      }
+    });
   }
 });
 
@@ -677,11 +689,6 @@ function connectToServer() {
 }
 
 function handleServerMessage(message) {
-  // Intercept admin responses for operator panel
-  //if (message.adminReqId && (message.maps || message.success || message.error)) {
-  //  handleAdminResponse(message);
-  //  return;
-  //}
   switch (message.type) {
     case 'newPlayer':
       // Add player to scoreboard as dead, but do not create tank in scene
@@ -985,9 +992,27 @@ function handleServerMessage(message) {
       updateScoreboard();
       break;
 
-    case 'mapsList':
+    case 'mapList':
       handleMapsList(message);
       break;
+  // Operator panel: request map list when shown
+  const operatorOverlay = document.getElementById('operatorOverlay');
+  const mapList = document.getElementById('mapList');
+  if (operatorOverlay && mapList) {
+    // Observe display changes to operatorOverlay
+    let lastDisplay = operatorOverlay.style.display;
+    const observer = new MutationObserver(() => {
+      const currentDisplay = operatorOverlay.style.display;
+      if (currentDisplay === 'block' && lastDisplay !== 'block') {
+        // Panel just opened: request map list
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'listMaps' }));
+        }
+      }
+      lastDisplay = currentDisplay;
+    });
+    observer.observe(operatorOverlay, { attributes: true, attributeFilter: ['style'] });
+  }
 
     case 'reload':
       showMessage('Server updated - reloading...', 'death');
