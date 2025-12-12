@@ -470,7 +470,6 @@ class RenderManager {
 
   _addDebugLabel(object3D, type) {
     if (!object3D) return;
-    if (!this.debugLabelsEnabled) return;
     // Always use object3D.name for label text
     const label = createTextLabel(object3D.name || '', '#fff', '14px', 'bold', true);
     // Ensure boundingBox is computed for label placement
@@ -478,6 +477,7 @@ class RenderManager {
     const y = (object3D.geometry && object3D.geometry.boundingBox ? object3D.geometry.boundingBox.max.y : object3D.position.y) + 2;
     label.position.set(0, y, 0);
     object3D.add(label);
+      label.visible = this.debugLabelsEnabled;
     this.debugLabels.push({ label, object3D, type });
   }
 
@@ -493,9 +493,9 @@ class RenderManager {
 
   _updateDebugLabelsVisibility() {
     this.debugLabels.forEach(({ label }) => {
-      if (label && label.element) {
-        label.element.style.display = this.debugLabelsEnabled ? '' : 'none';
-      }
+        if (label) {
+          label.visible = this.debugLabelsEnabled;
+        }
     });
   }
 

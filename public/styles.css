@@ -11,6 +11,7 @@
   user-select: none;
   text-shadow: 0 0 2px #000, 0 0 4px #000;
   white-space: nowrap;
+  position: absolute;
 }
 #operatorOverlay, #operatorOverlay * {
   pointer-events: auto !important;

@@ -1,3 +1,10 @@
+// Toggle debug labels over objects
+export function toggleDebugLabels({ debugLabelsEnabled, setDebugLabelsEnabled, updateHudButtons, showMessage }) {
+  setDebugLabelsEnabled(!debugLabelsEnabled);
+  localStorage.setItem('debugLabelsEnabled', (!debugLabelsEnabled).toString());
+  updateHudButtons();
+  showMessage(`Debug Labels: ${!debugLabelsEnabled ? 'ON' : 'OFF'}`);
+}
 // Set button active/inactive and update title
 export function setActive(btn, active, activeTitle, inactiveTitle) {
   if (!btn) return;

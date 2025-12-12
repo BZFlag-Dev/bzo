@@ -29,7 +29,8 @@ import {
 import {
   updateDebugDisplay,
   updateHudButtons,
-  toggleDebugHud
+  toggleDebugHud,
+  toggleDebugLabels
 } from './hud.js';
 import { renderManager } from './render.js';
 
@@ -184,7 +185,13 @@ const MAX_UPDATE_INTERVAL = 200; // Force send update at least every 200ms
 
 // Debug tracking
 let debugEnabled = false;
-renderManager.setDebugLabelsEnabled(debugEnabled);
+let debugLabelsEnabled = true;
+// Restore debugLabelsEnabled from localStorage if present
+const savedDebugLabels = localStorage.getItem('debugLabelsEnabled');
+if (savedDebugLabels !== null) {
+  debugLabelsEnabled = savedDebugLabels === 'true';
+}
+renderManager.setDebugLabelsEnabled(debugLabelsEnabled);
 const packetsSent = new Map();
 const packetsReceived = new Map();
 let debugUpdateInterval = null;
@@ -213,11 +220,19 @@ initHudControls({
   showMessage,
   updateHudButtons,
   toggleDebugHud,
+  toggleDebugLabels,
   updateDebugDisplay,
   getDebugEnabled: () => debugEnabled,
   setDebugEnabled: (value) => {
     debugEnabled = value;
-    renderManager.setDebugLabelsEnabled(debugEnabled);
+    // Only toggles debug HUD, not debug labels
+  },
+  getDebugLabelsEnabled: () => debugLabelsEnabled,
+  setDebugLabelsEnabled: (value) => {
+    debugLabelsEnabled = value;
+    renderManager.setDebugLabelsEnabled(debugLabelsEnabled);
+    localStorage.setItem('debugLabelsEnabled', debugLabelsEnabled.toString());
+    updateDebugLabelsButton();
   },
   getDebugState,
   getCameraMode: () => cameraMode,
@@ -237,6 +252,47 @@ initHudControls({
   getScene: () => scene,
   toggleEntryDialog: (name) => toggleEntryDialog(name),
   getChatInput: () => chatInput,
+});
+
+// --- Debug Labels Button Wiring ---
+function updateDebugLabelsButton() {
+  const btn = document.getElementById('debugLabelsBtn');
+  if (!btn) return;
+  if (debugLabelsEnabled) {
+    btn.classList.add('active');
+    btn.title = 'Hide Debug Labels';
+  } else {
+    btn.classList.remove('active');
+    btn.title = 'Show Debug Labels';
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('debugLabelsBtn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      toggleDebugLabels({
+        debugLabelsEnabled,
+        setDebugLabelsEnabled: (v) => {
+          debugLabelsEnabled = v;
+          renderManager.setDebugLabelsEnabled(debugLabelsEnabled);
+          localStorage.setItem('debugLabelsEnabled', debugLabelsEnabled.toString());
+          updateDebugLabelsButton();
+        },
+        updateHudButtons: () => updateHudButtons({
+          mouseBtn: document.getElementById('mouseBtn'),
+          mouseControlEnabled,
+          debugBtn: document.getElementById('debugBtn'),
+          debugEnabled,
+          fullscreenBtn: document.getElementById('fullscreenBtn'),
+          cameraBtn: document.getElementById('cameraBtn'),
+          cameraMode
+        }),
+        showMessage
+      });
+    });
+    updateDebugLabelsButton();
+  }
 });
 
 // Initialize Three.js
