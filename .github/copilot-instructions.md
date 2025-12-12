@@ -1,3 +1,11 @@
+## Copilot Memory Policy
+
+- When the user asks to remember something, always store a note in `.github/copilot-instructions.md` so that other sessions and contributors will also remember it. This ensures persistent, project-wide memory for important conventions and preferences.
+
+## Coding Conventions
+
+- **Always prefer code reuse over duplication.** When implementing new features or refactoring, extract and reuse shared logic instead of copying code. This ensures maintainability and consistency across the project.
+
 ## Repo Snapshot
 - Real-time BZFlag-inspired arena: Node/Express/WS server in `server.js`, browser-side Three.js client under `public/`.
 - All front-end modules are plain ES modules loaded directly by the browser; no bundler. Update the `<script type="importmap">` block in `public/index.html` when adding new external modules.
