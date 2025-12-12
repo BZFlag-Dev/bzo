@@ -21,6 +21,51 @@ import {
 } from './texture.js';
 
 class RenderManager {
+    // Set world time (0-23999, like Minecraft)
+    setWorldTime(worldTime) {
+      this._worldTime = worldTime;
+      if (!this.dynamicLightingEnabled) return;
+      // Compute sun/moon positions
+      // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
+      // We'll use a circle in the X/Y plane for sun/moon
+      const MAP_SIZE = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
+      const sunDistance = MAP_SIZE * 0.6;
+      const moonDistance = sunDistance;
+      const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
+      const moonAngle = sunAngle + Math.PI;
+      // Sun position
+      const sunX = Math.cos(sunAngle) * sunDistance;
+      const sunY = Math.sin(sunAngle) * sunDistance * 0.8; // Lower arc for realism
+      const sunZ = 0;
+      // Moon position
+      const moonX = Math.cos(moonAngle) * moonDistance;
+      const moonY = Math.sin(moonAngle) * moonDistance * 0.8;
+      const moonZ = 0;
+      // Update sun light
+      if (this.sunLight) {
+        this.sunLight.position.set(sunX, sunY, sunZ);
+        this.sunLight.target.position.set(0, 0, 0);
+        this.scene.add(this.sunLight.target);
+        // Lighting intensity
+        const sunUp = sunY > 0;
+        const sunIntensity = sunUp ? 0.7 : 0.10;
+        const ambientIntensity = sunUp ? 0.22 : 0.12;
+        this.sunLight.intensity = sunIntensity;
+        this.ambientLight.intensity = ambientIntensity;
+        this.ambientLight.color.set(0x222233);
+        // Fog and background color: interpolate between day and night
+        // Day: #87ceeb (light blue), Night: #23264a (brighter blue-gray)
+        const dayColor = new THREE.Color(0x87ceeb);
+        const nightColor = new THREE.Color(0x23264a);
+        // Use sunY in [-max, max] to get t in [0,1] (0=night, 1=day)
+        const t = Math.max(0, Math.min(1, sunY / (sunDistance * 0.8)));
+        const fogColor = nightColor.clone().lerp(dayColor, t);
+        this.scene.fog.color.copy(fogColor);
+        this.scene.background.copy(fogColor);
+      }
+      // Optionally: add/update sun/moon meshes for visuals (not just lighting)
+      // ...
+    }
   constructor() {
     this.scene = null;
     this.camera = null;
@@ -46,6 +91,9 @@ class RenderManager {
 
     this.anaglyphEffect = null;
     this.anaglyphEnabled = false;
+
+    // Dynamic lighting toggle (default true)
+    this.dynamicLightingEnabled = true;
   }
 
   init({ container = document.body } = {}) {
@@ -99,7 +147,7 @@ class RenderManager {
     this.jumpBuffer = createJumpBuffer(audioContext);
     this.landBuffer = createLandBuffer(audioContext);
 
-    this._addDefaultLights();
+    this._initDynamicLights();
 
     return {
       scene: this.scene,
@@ -109,21 +157,25 @@ class RenderManager {
     };
   }
 
-  _addDefaultLights() {
+  _initDynamicLights() {
     if (!this.scene) return;
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    this.scene.add(ambientLight);
+    // Ambient and sun light will be updated dynamically
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Start dimmer
+    this.scene.add(this.ambientLight);
+    this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    this.sunLight.castShadow = true;
+    this.sunLight.shadow.mapSize.width = 2048;
+    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.camera.left = -120;
+    this.sunLight.shadow.camera.right = 120;
+    this.sunLight.shadow.camera.top = 120;
+    this.sunLight.shadow.camera.bottom = -120;
+    this.scene.add(this.sunLight);
+  }
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(50, 50, 50);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.camera.left = -60;
-    dirLight.shadow.camera.right = 60;
-    dirLight.shadow.camera.top = 60;
-    dirLight.shadow.camera.bottom = -60;
-    this.scene.add(dirLight);
+  updateSunLighting(celestial) {
+    // Deprecated: use setWorldTime instead
+    return;
   }
 
   getScene() {
@@ -155,6 +207,13 @@ class RenderManager {
 
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
+    if (this.projectileLights) {
+      for (const [projectile, light] of this.projectileLights.entries()) {
+        if (projectile && light) {
+          light.position.copy(projectile.position);
+        }
+      }
+    }
     if (this.anaglyphEnabled && this.anaglyphEffect) {
       this.anaglyphEffect.render(this.scene, this.camera);
     } else {
@@ -194,9 +253,11 @@ class RenderManager {
     groundTexture.wrapT = THREE.RepeatWrapping;
     groundTexture.repeat.set(20, 20);
 
-    const groundMaterial = new THREE.MeshLambertMaterial({
+    const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundTexture,
       side: THREE.DoubleSide,
+      roughness: 0.8,
+      metalness: 0.1,
     });
 
     this.ground = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -591,6 +652,7 @@ class RenderManager {
   createCelestialBodies(celestialData) {
     if (!this.scene || !celestialData) return;
     this.clearCelestialBodies();
+    this.updateSunLighting(celestialData);
 
     if (celestialData.sun && celestialData.sun.visible) {
       const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
@@ -1053,6 +1115,16 @@ class RenderManager {
       dirX: data.dirX,
       dirZ: data.dirZ,
     };
+    // Only add a point light if dynamic lighting is enabled
+    if (this.dynamicLightingEnabled) {
+      const shotLight = new THREE.PointLight(0xffee88, 1.5, 12, 2);
+      shotLight.position.copy(projectile.position);
+      this.scene.add(shotLight);
+      projectile.userData.shotLight = shotLight;
+      // Track for update/removal
+      if (!this.projectileLights) this.projectileLights = new Map();
+      this.projectileLights.set(projectile, shotLight);
+    }
     this.scene.add(projectile);
     this.playShootSound(projectile.position);
     return projectile;
@@ -1060,6 +1132,12 @@ class RenderManager {
 
   removeProjectile(projectile) {
     if (!projectile || !this.scene) return;
+    // Remove point light from scene if present
+    if (this.projectileLights && this.projectileLights.has(projectile)) {
+      const light = this.projectileLights.get(projectile);
+      this.scene.remove(light);
+      this.projectileLights.delete(projectile);
+    }
     this.scene.remove(projectile);
     if (projectile.geometry) projectile.geometry.dispose();
     if (projectile.material) projectile.material.dispose();

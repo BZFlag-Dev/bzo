@@ -325,48 +325,12 @@ function generateClouds() {
   return clouds;
 }
 
-// Calculate sun and moon positions based on time and estimated location
-function getCelestialPositions() {
-  const now = new Date();
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
-  const timeOfDay = hours + minutes / 60;
-
-  // Estimate location (US Eastern timezone based on typical usage)
-  const latitude = 40; // ~New York area
-
-  // Simple sun path calculation
-  // Sun rises at ~6am, sets at ~6pm, peaks at noon
-  const sunAngle = ((timeOfDay - 6) / 12) * Math.PI; // 0 to PI across day
-  const sunHeight = Math.sin(sunAngle) * 80; // Height in scene
-  // Place sun/moon at least 20% beyond map edge
-  const sunDistance = GAME_CONFIG.MAP_SIZE * 0.6;
-
-  const sunPosition = {
-    x: Math.cos(sunAngle) * sunDistance,
-    y: Math.max(sunHeight, -20),
-    z: 0,
-    visible: sunHeight > -5
-  };
-
-  // Moon opposite side of sun
-  const moonAngle = sunAngle + Math.PI;
-  const moonHeight = Math.sin(moonAngle) * 80;
-
-  const moonPosition = {
-    x: Math.cos(moonAngle) * sunDistance,
-    y: Math.max(moonHeight, -20),
-    z: 0,
-    visible: moonHeight > -5
-  };
-
-  return { sun: sunPosition, moon: moonPosition };
-}
-
 // Game state
 const players = new Map();
 const projectiles = new Map();
 let projectileIdCounter = 0;
+// Minecraft-style world time (0-23999, 20 min per day, 20 ticks/sec)
+let worldTime = Math.floor(Math.random() * 24000); // randomize start
 
 // Get next available player number
 function getNextPlayerNumber() {
@@ -734,8 +698,15 @@ function checkObstacleCollision(x, y, z) {
 
 // Game loop - update projectiles and check collisions
 function gameLoop() {
+
+  // Advance world time (20 ticks/sec, 24000 ticks/day)
+  worldTime = (worldTime + 1) % 24000;
   const now = Date.now();
   const deltaTime = 0.016; // ~60fps
+  // Periodically broadcast worldTime to all players (every 1s)
+  if (worldTime % 20 === 0) {
+    broadcastAll({ type: 'worldTime', worldTime });
+  }
 
   // Update projectiles
   projectiles.forEach((proj, id) => {
@@ -751,6 +722,7 @@ function gameLoop() {
     if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > 10 || distTraveled > GAME_CONFIG.SHOT_DISTANCE) {
       projectiles.delete(id);
       broadcastAll({ type: 'projectileRemoved', id });
+      log(`Projectile ${id} removed (out of bounds ${distTraveled} or expired)`);
       return;
     }
 
@@ -884,7 +856,6 @@ wss.on('connection', (ws, req) => {
 
   // Send initial server state in init message
   // Send initial state to new player (do not add to players map or broadcast yet)
-  const celestialPositions = getCelestialPositions();
   const clouds = generateClouds();
 
   ws.send(JSON.stringify({
@@ -893,7 +864,7 @@ wss.on('connection', (ws, req) => {
     players: Array.from(players.values()).map(p => p.getState()),
     config: GAME_CONFIG,
     obstacles: OBSTACLES,
-    celestial: celestialPositions,
+    worldTime,
     clouds: clouds,
     serverName: serverConfig.serverName || '',
     description: serverConfig.description || '',

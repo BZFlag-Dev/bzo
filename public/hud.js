@@ -95,7 +95,8 @@ export function updateDebugDisplay({
   cameraMode,
   OBSTACLES,
   clouds,
-  latestOrientation
+  latestOrientation,
+  worldTime
 }) {
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
@@ -118,6 +119,9 @@ export function updateDebugDisplay({
   }
   html += `<div><span class="label">Camera:</span><span class="value">${cameraMode ?? ''}</span></div>`;
   html += `<div><span class="label">Obstacles:</span><span class="value">${OBSTACLES?.length ?? ''}</span></div>`;
+  if (typeof worldTime !== 'undefined') {
+    html += `<div><span class="label">World Time:</span><span class="value">${worldTime} (${formatWorldTime(worldTime)})</span></div>`;
+  }
   html += `<div><span class="label">Clouds:</span><span class="value">${clouds?.length ?? ''}</span></div>`;
   if (latestOrientation && latestOrientation.status) {
     html += `<div><span class="label">Orientation Status:</span><span class="value">${latestOrientation.status}</span></div>`;
@@ -143,6 +147,18 @@ export function updateDebugDisplay({
     });
   }
   debugContent.innerHTML = html;
+
+  // Helper to format world time as HH:MM
+  function formatWorldTime(worldTime) {
+    if (typeof worldTime !== 'number') return '';
+    // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
+    let ticks = worldTime % 24000;
+    let totalMinutes = Math.floor((ticks / 1000) * 60); // 1000 ticks = 1 hour
+    let hours = Math.floor(totalMinutes / 60) + 6; // 0 ticks = 6:00
+    if (hours >= 24) hours -= 24;
+    let minutes = totalMinutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  }
 }
 
 // Add more HUD-related exports as needed (scoreboard, chat, etc.)

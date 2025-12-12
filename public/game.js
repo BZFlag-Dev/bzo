@@ -179,6 +179,7 @@ let lastSentX = 0;
 let lastSentZ = 0;
 let lastSentRotation = 0;
 let lastSentTime = 0;
+let worldTime = 0;
 const POSITION_THRESHOLD = 0.5; // Send update if position differs by more than 0.5 units
 const ROTATION_THRESHOLD = 0.1; // Send update if rotation differs by more than 0.1 radians (~6 degrees)
 const MAX_UPDATE_INTERVAL = 200; // Force send update at least every 200ms
@@ -268,6 +269,27 @@ function updateDebugLabelsButton() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+        // Dynamic Lighting toggle button
+        const dynamicLightingBtn = document.getElementById('dynamicLightingBtn');
+        // Default: enabled
+        let dynamicLightingEnabled = true;
+        const savedDynamicLighting = localStorage.getItem('dynamicLightingEnabled');
+        if (savedDynamicLighting !== null) {
+          dynamicLightingEnabled = savedDynamicLighting === 'true';
+        }
+        renderManager.dynamicLightingEnabled = dynamicLightingEnabled;
+        if (dynamicLightingBtn) {
+          const updateBtn = () => {
+            dynamicLightingBtn.classList.toggle('active', renderManager.dynamicLightingEnabled);
+            dynamicLightingBtn.title = renderManager.dynamicLightingEnabled ? 'Disable Dynamic Lighting' : 'Enable Dynamic Lighting';
+          };
+          dynamicLightingBtn.addEventListener('click', () => {
+            renderManager.dynamicLightingEnabled = !renderManager.dynamicLightingEnabled;
+            localStorage.setItem('dynamicLightingEnabled', renderManager.dynamicLightingEnabled.toString());
+            updateBtn();
+          });
+          updateBtn();
+        }
       // Anaglyph 3D toggle button
       const anaglyphBtn = document.getElementById('anaglyphBtn');
       if (anaglyphBtn) {
@@ -724,6 +746,7 @@ function connectToServer() {
 
 function handleServerMessage(message) {
   switch (message.type) {
+    // ...existing code...
     case 'newPlayer':
       // Add player to scoreboard as dead, but do not create tank in scene
       if (message.player) {
@@ -732,6 +755,8 @@ function handleServerMessage(message) {
       }
       break;
     case 'init':
+      worldTime = message.worldTime || 0;
+      // ...existing code...
       // Show server info in entryDialog
       const serverNameEl = document.getElementById('serverName');
       const serverDescriptionEl = document.getElementById('serverDescription');
@@ -814,11 +839,18 @@ function handleServerMessage(message) {
 
       // Create environmental features
       renderManager.createMountains(gameConfig.MAP_SIZE);
-      if (message.celestial) {
-        renderManager.createCelestialBodies(message.celestial);
+      if (renderManager.dynamicLightingEnabled) {
+        renderManager.setWorldTime(message.worldTime || 0);
       } else {
         renderManager.clearCelestialBodies();
       }
+          case 'worldTime':
+            worldTime = message.worldTime;
+            break;
+            if (renderManager.dynamicLightingEnabled) {
+              renderManager.setWorldTime(message.worldTime);
+            }
+            break;
       if (message.clouds) {
         renderManager.createClouds(message.clouds);
       } else {
@@ -829,6 +861,7 @@ function handleServerMessage(message) {
           addPlayer(player);
         }
       });
+      break;
       updateScoreboard();
       break;
 
