@@ -40,5 +40,51 @@
 - Maps in `maps/*.bzw` use scaled BZFlag coordinates (X/Z halved); ensure new parsers respect the scaling so collisions remain accurate.
 
 ## Conventions & Testing
+
 - No automated tests are present; manual play sessions via the browser are the de-facto regression check.
 - When adding network messages, document them in both server switch statements and client handlers, and update debug HUD counters if needed.
+
+# Player Join/Entry/Scoreboard Flow (Persistent Project Memory)
+
+## Player Connection and Entry Flow
+
+1. **Player connects to server**
+	- Server adds them to the player list, but they have not yet joined the game (not spawned).
+	- Server includes them in the `init` message to all clients, with `health = 0` and a placeholder position (e.g., `x: 0, y: 0, z: 0`).
+	- Server broadcasts a `playerJoined` message to all clients with `health = 0` and position (0,0,0).
+
+2. **Client receives `init` or `playerJoined` with `health = 0`**
+	- Adds the player to the scoreboard.
+	- Creates their tank in the world, but sets `tank.visible = false`.
+	- Shows their name and stats in the scoreboard, but does not show their tank in the 3D world.
+
+3. **Player sends `joinGame` (with their name)**
+	- Server updates their player object with name, position, and `health > 0`.
+	- Server broadcasts a new `playerJoined` message for that player, with `health > 0` and their spawn position.
+
+4. **Client receives `playerJoined` with `health > 0`**
+	- Updates the player's tank: sets `tank.visible = true`, updates position, name, and stats.
+	- Scoreboard is already correct, but update if needed.
+
+5. **Player leaves before joining**
+	- Server sends a `playerLeft` message to all clients.
+	- Client removes the player from the scoreboard and world.
+
+## Summary Table
+
+| Event                | Scoreboard | Tank in World | Tank Visible | Notes                        |
+|----------------------|------------|---------------|--------------|------------------------------|
+| Connect (not joined) | Yes        | Yes           | No           | health = 0                   |
+| JoinGame             | Yes        | Yes           | Yes          | health > 0, set position     |
+| Leave (not joined)   | No         | No            | N/A          | Remove from all              |
+
+## Notes
+- This protocol ensures all connected players are always visible in the scoreboard, even if not yet joined.
+- Tanks for unjoined players exist in the scene but are invisible.
+- When a player joins, their tank becomes visible and is placed at the correct position.
+- No need to remove/re-add tanks or scoreboard entries—just update visibility and state.
+- When a player leaves before joining, remove them from scoreboard and world.
+
+---
+
+**This flow is project memory and should be followed for all future join/entry/scoreboard logic.**
