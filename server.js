@@ -366,6 +366,26 @@ class Player {
     this.lastJumpTime = 0;
     this.onObstacle = false;
     this.connectDate = new Date();
+    // Assign a random color for the tank (as a hex int)
+    this.color = Player.pickRandomColor();
+  }
+
+  // Pick a random color suitable for tanks (avoid too dark/light)
+  static pickRandomColor() {
+    // Use HSL to pick vibrant, distinct colors
+    const hue = Math.floor(Math.random() * 360);
+    const sat = 60 + Math.random() * 30; // 60-90%
+    const light = 35 + Math.random() * 25; // 35-60%
+    // Convert HSL to RGB
+    function hslToRgb(h, s, l) {
+      s /= 100; l /= 100;
+      const k = n => (n + h / 30) % 12;
+      const a = s * Math.min(l, 1 - l);
+      const f = n => l - a * Math.max(-1, Math.min(Math.min(k(n) - 3, 9 - k(n)), 1));
+      return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
+    }
+    const [r, g, b] = hslToRgb(hue, sat, light);
+    return (r << 16) | (g << 8) | b;
   }
 
   respawn() {
@@ -394,6 +414,7 @@ class Player {
       paused: this.paused,
       verticalVelocity: this.verticalVelocity,
       connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
+      color: this.color,
     };
   }
 }

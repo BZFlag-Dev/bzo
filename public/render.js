@@ -732,7 +732,7 @@ class RenderManager {
       sprite.scale.set(2, 0.5, 1);
       tankGroup.add(sprite);
       tankGroup.userData.nameLabel = sprite;
-      this.updateSpriteLabel(sprite, name);
+      this.updateSpriteLabel(sprite, name, color);
     }
 
     const bodyTexture = this._createTankTexture(color);
@@ -879,7 +879,7 @@ class RenderManager {
     return tankGroup;
   }
 
-  updateSpriteLabel(sprite, name) {
+  updateSpriteLabel(sprite, name, color = '#4CAF50') {
     if (!sprite) return;
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
@@ -888,7 +888,7 @@ class RenderManager {
     context.fillStyle = 'rgba(0, 0, 0, 0.7)';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.font = 'bold 36px Arial';
-    context.fillStyle = '#4CAF50';
+    context.fillStyle = color;
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(name, canvas.width / 2, canvas.height / 2);

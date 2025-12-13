@@ -996,7 +996,9 @@ function addPlayer(player) {
   console.log('Adding/updating player:', player);
   let tank = tanks.get(player.id);
   if (!tank) {
-    tank = renderManager.createTank(0xFF5722, player.name);
+    // Use player.color if present, else fallback to green
+    const tankColor = (typeof player.color === 'number') ? player.color : 0x4caf50;
+    tank = renderManager.createTank(tankColor, player.name);
     scene.add(tank);
     tanks.set(player.id, tank);
   }
