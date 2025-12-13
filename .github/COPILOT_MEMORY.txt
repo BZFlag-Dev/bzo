@@ -1,0 +1,7 @@
+Player join/entry/scoreboard flow:
+- On connect, server adds player to player list, includes them in `init` and broadcasts `playerJoined` with health=0 and position (0,0,0).
+- Client adds all players in `init`/`playerJoined` to scoreboard and world, but sets tank.visible = false if health=0.
+- When player sends `joinGame`, server updates player and broadcasts `playerJoined` with health>0 and spawn position.
+- Client sets tank.visible = true and updates position on `playerJoined` with health>0.
+- If player leaves before joining, server sends `playerLeft` and client removes them from scoreboard and world.
+- This ensures scoreboard always shows all connected players, tanks are only visible if joined, and state is always consistent.
