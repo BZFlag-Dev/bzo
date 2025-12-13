@@ -74,9 +74,6 @@ let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
 
-// Removed duplicate setActive, updateHudButtons, toggleDebugHud, toggleSettingsHud, toggleHelpPanel definitions (now imported from hud.js)
-
-
 // Input state
 let lastShotTime = 0;
 
@@ -251,8 +248,8 @@ initHudControls({
   updateChatWindow: () => updateChatWindow(),
   sendToServer: (payload) => sendToServer(payload),
   getScene: () => scene,
-  toggleEntryDialog: (name) => toggleEntryDialog(name),
   getChatInput: () => chatInput,
+  toggleEntryDialog,
 });
 
 // --- Debug Labels Button Wiring ---
@@ -479,8 +476,8 @@ function init() {
       return;
     }
 
-    // Activate chat with / or t, but NOT if name dialog is open
-    if (!chatActive && !isentryDialogOpen && (e.key === '/' || e.key === 't' || e.key === 'T')) {
+    // Activate chat with n, but NOT if name dialog is open
+    if (!chatActive && !isentryDialogOpen && (e.key === 'n' || e.key === 'N')) {
       chatInput.value = '';
       chatInput.focus();
       e.preventDefault();
@@ -601,14 +598,8 @@ function init() {
   let isentryDialogOpen = false;
   if (savedName && savedName.trim().length > 0) {
     const trimmed = savedName.trim();
-    // Show dialog if name is 'Player' or 'Player n'
-    if (trimmed === 'Player' || /^Player \d+$/.test(trimmed)) {
-      toggleEntryDialog(savedName);
-    } else {
-      myPlayerName = savedName;
-    }
-  } else {
-    toggleEntryDialog();
+    myPlayerName = trimmed;
+    entryInput.value = trimmed;
   }
 
   // Add click handler for name change
@@ -746,14 +737,6 @@ function connectToServer() {
 
 function handleServerMessage(message) {
   switch (message.type) {
-    // ...existing code...
-    case 'newPlayer':
-      // Add player to scoreboard as dead, but do not create tank in scene
-      if (message.player) {
-        addPlayer(message.player);
-        updateScoreboard();
-      }
-      break;
     case 'init':
       worldTime = message.worldTime || 0;
       // ...existing code...
@@ -764,20 +747,6 @@ function handleServerMessage(message) {
       if (serverNameEl) serverNameEl.textContent = 'Server: ' + (message.serverName || '');
       if (serverDescriptionEl) serverDescriptionEl.textContent = message.description || '';
       if (serverMotdEl) serverMotdEl.textContent = message.motd || '';
-      // Update player name at the top of the scoreboard and set myPlayerName to the name field
-      if (message.player && message.player.name) {
-        myPlayerName = message.player.name;
-        const playerNameEl = document.getElementById('playerName');
-        if (playerNameEl) playerNameEl.textContent = myPlayerName;
-        // Gather screen info
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        // Use isMobile from isMobileBrowser() defined in connectToServer scope
-        const mobileText = (typeof isMobile !== 'undefined' && isMobile) ? 'Mobile' : 'Desktop';
-        // Show in chat window
-        const msg = `Connected as \"${myPlayerName}\"! (${w}x${h}, ${mobileText})`;
-        showMessage(msg);
-      }
       // Clear any existing tanks from previous connections
       tanks.forEach((tank, id) => {
         scene.remove(tank);
@@ -805,17 +774,16 @@ function handleServerMessage(message) {
       playerZ = message.player.z;
       playerRotation = message.player.rotation;
 
-      // If a default name is provided, use it for the join dialog
-      if (message.player && message.player.defaultName) {
-        const entryInput = document.getElementById('entryInput');
-        const entryDialog = document.getElementById('entryDialog');
-        if (entryInput && entryDialog) {
-          entryInput.value = message.player.defaultName;
-          entryDialog.style.display = 'block';
-          isPaused = true;
-          entryInput.focus();
-          entryInput.select();
-        }
+      if (myPlayerName !== 'Player' && !/^Player \d+$/.test(myPlayerName)) {
+        sendToServer({
+          type: 'joinGame',
+          name: myPlayerName,
+          isMobile,
+        });
+      } else {
+        // Show name entry dialog
+        myPlayerName = message.player.name;
+        toggleEntryDialog(myPlayerName);
       }
       // Only set up world, not join yet
       // Build world geometry
@@ -844,30 +812,22 @@ function handleServerMessage(message) {
       } else {
         renderManager.clearCelestialBodies();
       }
-          case 'worldTime':
-            worldTime = message.worldTime;
-            break;
-            if (renderManager.dynamicLightingEnabled) {
-              renderManager.setWorldTime(message.worldTime);
-            }
-            break;
       if (message.clouds) {
         renderManager.createClouds(message.clouds);
       } else {
         renderManager.clearClouds();
       }
       message.players.forEach(player => {
-        if (player.health > 0) {
-          addPlayer(player);
-        }
+        addPlayer(player);
       });
-      break;
+      // Ensure myTank is set for the local player after all tanks are created
+      myTank = tanks.get(myPlayerId);
       updateScoreboard();
       break;
 
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
-        // This is our join confirmation, now create our tank and finish join
+        // This is our join confirmation, update our tank and finish join
         myPlayerName = message.player.name;
         playerX = message.player.x;
         playerY = message.player.y;
@@ -880,17 +840,17 @@ function handleServerMessage(message) {
         // Update player name display
         document.getElementById('playerName').textContent = myPlayerName;
 
-        // Create my tank
-        myTank = renderManager.createTank(0x2196F3, myPlayerName);
-        myTank.position.set(playerX, playerY, playerZ);
-        myTank.rotation.y = playerRotation;
-        myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
-        myTank.userData.playerState = message.player;
-        myTank.userData.forwardSpeed = message.player.forwardSpeed || 0;
-        myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
-        scene.add(myTank);
-        tanks.set(myPlayerId, myTank);
-
+        // Reuse and update my tank
+        myTank = tanks.get(myPlayerId);
+        if (myTank) {
+          myTank.position.set(playerX, playerY, playerZ);
+          myTank.rotation.y = playerRotation;
+          myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
+          myTank.userData.playerState = message.player;
+          myTank.userData.forwardSpeed = message.player.forwardSpeed || 0;
+          myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
+          myTank.visible = true;
+        }
         updateStats(message.player);
         updateScoreboard();
       } else {
@@ -1015,64 +975,17 @@ function handleServerMessage(message) {
       updateChatWindow();
       break;
 
-    case 'nameChanged':
-      if (message.playerId === myPlayerId) {
-        myPlayerName = message.name;
-        document.getElementById('playerName').textContent = myPlayerName;
-
-        // Save to localStorage
-        localStorage.setItem('playerName', message.name);
-
-        // Update tank name label
-        if (myTank && myTank.userData.nameLabel) {
-          renderManager.updateSpriteLabel(myTank.userData.nameLabel, message.name);
-        }
-
-        showMessage(`Name changed to: ${message.name}`);
-      } else {
-        // Update other player's name label and state
-        const tank = tanks.get(message.playerId);
-        if (tank) {
-          if (tank.userData.nameLabel) {
-            renderManager.updateSpriteLabel(tank.userData.nameLabel, message.name);
-          }
-          if (tank.userData.playerState) {
-            tank.userData.playerState.name = message.name;
-          }
-        }
-        showMessage(`${message.name} joined`);
-      }
-      updateScoreboard();
-      break;
-
     case 'mapList':
       handleMapsList(message);
       break;
-  // Operator panel: request map list when shown
-  const operatorOverlay = document.getElementById('operatorOverlay');
-  const mapList = document.getElementById('mapList');
-  if (operatorOverlay && mapList) {
-    // Observe display changes to operatorOverlay
-    let lastDisplay = operatorOverlay.style.display;
-    const observer = new MutationObserver(() => {
-      const currentDisplay = operatorOverlay.style.display;
-      if (currentDisplay === 'block' && lastDisplay !== 'block') {
-        // Panel just opened: request map list
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'listMaps' }));
-        }
-      }
-      lastDisplay = currentDisplay;
-    });
-    observer.observe(operatorOverlay, { attributes: true, attributeFilter: ['style'] });
-  }
 
-    case 'reload':
+      case 'reload':
       showMessage('Server updated - reloading...', 'death');
       setTimeout(() => {
         window.location.reload();
       }, 1000);
       break;
+
     default:
       console.warn('Unknown message type from server:', message);
       break;
@@ -1080,15 +993,19 @@ function handleServerMessage(message) {
 }
 
 function addPlayer(player) {
-  if (tanks.has(player.id)) return;
-
-  const tank = renderManager.createTank(0xFF5722, player.name);
+  console.log('Adding/updating player:', player);
+  let tank = tanks.get(player.id);
+  if (!tank) {
+    tank = renderManager.createTank(0xFF5722, player.name);
+    scene.add(tank);
+    tanks.set(player.id, tank);
+  }
+  // Always update tank state
   tank.position.set(player.x, player.y, player.z);
   tank.rotation.y = player.rotation;
   tank.userData.playerState = player; // Store player state for scoreboard
   tank.userData.verticalVelocity = player.verticalVelocity;
-  scene.add(tank);
-  tanks.set(player.id, tank);
+  tank.visible = player.health > 0;
   updateScoreboard();
 }
 

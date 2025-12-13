@@ -50,7 +50,7 @@ class RenderManager {
         // Lighting intensity
         const sunUp = sunY > 0;
         const sunIntensity = sunUp ? 0.7 : 0.10;
-        const ambientIntensity = sunUp ? 0.22 : 0.12;
+        const ambientIntensity = sunUp ? 0.90 : 0.90;
         this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
         this.ambientLight.color.set(0x222233);
@@ -658,14 +658,14 @@ class RenderManager {
 
     if (celestialData.sun && celestialData.sun.visible) {
       const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
-      const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+      const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, fog: false });
       const sun = new THREE.Mesh(sunGeometry, sunMaterial);
       sun.position.set(celestialData.sun.x, celestialData.sun.y, celestialData.sun.z);
       this.scene.add(sun);
       this.celestialMeshes.push(sun);
 
       const glowGeometry = new THREE.SphereGeometry(12, 32, 32);
-      const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.3 });
+      const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.3, fog: false });
       const glow = new THREE.Mesh(glowGeometry, glowMaterial);
       glow.position.copy(sun.position);
       this.scene.add(glow);
@@ -674,7 +674,7 @@ class RenderManager {
 
     if (celestialData.moon && celestialData.moon.visible) {
       const moonGeometry = new THREE.SphereGeometry(6, 32, 32);
-      const moonMaterial = new THREE.MeshLambertMaterial({ color: 0xcccccc });
+      const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, fog: false });
       const moon = new THREE.Mesh(moonGeometry, moonMaterial);
       moon.position.set(celestialData.moon.x, celestialData.moon.y, celestialData.moon.z);
       this.scene.add(moon);

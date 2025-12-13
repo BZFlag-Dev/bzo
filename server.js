@@ -703,10 +703,7 @@ function gameLoop() {
   worldTime = (worldTime + 1) % 24000;
   const now = Date.now();
   const deltaTime = 0.016; // ~60fps
-  // Periodically broadcast worldTime to all players (every 1s)
-  if (worldTime % 20 === 0) {
-    broadcastAll({ type: 'worldTime', worldTime });
-  }
+  // No need to broadcast worldTime periodically; clients track it locally at 20 ticks/sec.
 
   // Update projectiles
   projectiles.forEach((proj, id) => {
@@ -828,15 +825,18 @@ function forceClientReload() {
 // WebSocket connection handler
 // When a new player connects, assign a default name and number
 wss.on('connection', (ws, req) => {
+
   let player = new Player(ws);
   players.set(player.id, player);
 
-  // Broadcast newPlayer to all clients (player is dead until they join)
+  // Set player as not yet joined (health = 0)
   player.health = 0;
-  broadcastAll({
-    type: 'newPlayer',
+
+  // Notify all existing players (except the new one) about the new player (so they add to scoreboard/world, invisible)
+  broadcast({
+    type: 'playerJoined',
     player: player.getState(),
-  });
+  }, ws);
 
   // Get client IP and port
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -855,9 +855,7 @@ wss.on('connection', (ws, req) => {
   //log(`Player ${player.playerNumber} user agent: ${userAgent}`);
 
   // Send initial server state in init message
-  // Send initial state to new player (do not add to players map or broadcast yet)
   const clouds = generateClouds();
-
   ws.send(JSON.stringify({
     type: 'init',
     player: player.getState(),
