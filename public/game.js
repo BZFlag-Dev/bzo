@@ -1195,7 +1195,10 @@ function updateScoreboard() {
   playerData.forEach(player => {
     const entry = document.createElement('div');
     entry.className = 'scoreboardEntry' + (player.isCurrent ? ' current' : '');
-
+    if (typeof player.color === 'number') {
+      entry.style.color = '#' + color.toString(16).padStart(6, '0');
+    }
+    
     const nameSpan = document.createElement('span');
     nameSpan.className = 'scoreboardName';
     nameSpan.textContent = player.name;

@@ -885,10 +885,14 @@ class RenderManager {
     const context = canvas.getContext('2d');
     canvas.width = 256;
     canvas.height = 64;
-    context.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.clearRect(0, 0, canvas.width, canvas.height);
     context.font = 'bold 36px Arial';
-    context.fillStyle = color;
+    // Convert numeric color to hex string if needed
+    let cssColor = color;
+    if (typeof color === 'number') {
+      cssColor = '#' + color.toString(16).padStart(6, '0');
+    }
+    context.fillStyle = cssColor;
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(name, canvas.width / 2, canvas.height / 2);
