@@ -1,0 +1,756 @@
+options
+  -a 45 38
+  -ms 2
+  +r
+  -mp 0,15,15,0,0,20
+  -c
+  -set _wallHeight 1
+end
+
+material
+name wall
+texture wall.png
+color 0.9 0.4 0.4 1
+end
+
+meshbox
+matref wall
+position 400 0 0
+size 0.1 250 8
+drivethrough
+end
+
+meshbox
+matref wall
+position 400 -300 0
+size 0.1 100 8
+drivethrough
+end
+
+meshbox
+matref wall
+position -400 0 0
+size 0.1 250 8
+drivethrough
+end
+
+meshbox
+matref wall
+position -400 300 0
+size 0.1 100 8
+drivethrough
+end
+
+meshbox
+matref wall
+position 0 -400 0
+size 250 0.1 8
+drivethrough
+end
+
+meshbox
+matref wall
+position 300 -400 0
+size 100 0.1 8
+drivethrough
+end
+
+meshbox
+matref wall
+position 0 400 0
+size 250 0.1 8
+drivethrough
+end
+
+meshbox
+matref wall
+position -300 400 0
+size 100 0.1 8
+drivethrough
+end
+
+
+
+define pillbox
+box
+	position -360.5 37 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+name Box
+	position 360.5 12 0
+	rotation 45
+	size 10 10 10
+end
+
+
+
+box
+name Box
+	position 311 36.5 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+	position -311 11.5 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+name Box
+	position 259.5 11.5 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+name Box
+	position -259.5 36.5 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+name Box
+	position 162 11 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+name Box
+	position 63 13.5 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+	position -63 37 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+	position -112 13 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+	position -162 37 0
+	rotation 45
+	size 10 10 10
+end
+box
+name Box
+	position 210 35 0
+	rotation 45
+	size 10 10 10
+end
+
+
+box
+name Box
+	position 112 37 0
+	rotation 45
+	size 10 10 10
+end
+box
+	position -210 12.5 0
+	rotation 45
+	size 10 10 10
+end
+
+box
+name Box
+	position 0 24.5 0
+	rotation 45
+	size 1 50 10
+end
+box
+name Box
+	position 0.5 23.5 0
+	rotation 135
+	size 1 50 10
+end
+enddef
+group pillbox
+rotation 315
+position -16.5 -16.5 0
+end
+
+define oldmap
+
+
+
+#-----------------------
+
+material 
+name box
+texture boxwall.png
+end
+material 
+name box2
+texture mesh.png
+end
+base
+  position 300 300 0
+  size 25 25 0
+  rotation 0
+  color 1
+end
+pyramid
+position 285 265 0
+size 10 10 10
+end
+pyramid
+position 265 285 0
+size 10 10 10
+end
+pyramid
+position -285 -265 0
+size 10 10 10
+end
+pyramid
+position -265 -285 0
+size 10 10 10
+end
+base
+  position -300 -300 0
+  size 25 25 0
+  rotation 0
+  color 2
+end
+zone
+  position 399 399 0
+  size 1 1 0
+  rotation 0
+  safety 1
+end
+
+zone
+  position -399 -399 0
+  size 1 1 0
+  rotation 0
+  safety 2
+end
+enddef
+group oldmap
+
+end
+define norico
+box
+position 0 0 0
+size 5.1 5.1 10.1
+shootthrough
+end
+mesh
+   vertex 5 5 0.01 #0
+   vertex 5 -5 0.01 #1
+   vertex -5 -5 0.01 #2
+   vertex -5 5 0.01 #3
+   vertex -5 5 10.01 #4
+   vertex -5 -5 10.01 #5
+   vertex 5 -5 10.01 #6
+   vertex 5 5 10.01 #7
+       matref box
+   face #south
+       vertices 3 2 1 0
+	   shootthrough
+	   matref box2
+   endface
+   face #east
+       vertices 3 2 5 4
+	   shootthrough
+   endface
+   face #north
+       vertices 0 3 4 7
+	   shootthrough
+   endface
+   face #west
+       vertices 7 6 1 0
+	   shootthrough
+   endface
+   face #bottom
+       vertices 2 1 6 5
+	   shootthrough
+   endface
+   face #top
+       vertices 7 6 5 4
+	   shootthrough
+	   matref box2
+   endface
+   
+  #Inside of Box
+  
+     face #south
+       vertices 0 1 2 3
+	   matref box2
+   endface
+   face #east
+       vertices 4 5 2 3
+   endface
+   face #north
+       vertices 7 4 3 0
+   endface
+   face #west
+       vertices 0 1 6 7
+   endface
+   face #bottom
+       vertices 5 6 1 2
+   endface
+   face #top
+       vertices 4 5 6 7
+	   matref box2
+   endface
+end
+enddef
+
+define pyr1
+mesh
+   inside 2.5 2.5 5
+   vertex 5 5 0.01 #0
+   vertex 5 -5 0.01 #1
+   vertex -5 -5 0.01 #2
+   vertex -5 5 0.01 #3
+   vertex -5 5 10.01 #4
+   vertex -5 -5 10.01 #5
+   vertex 5 -5 10.01 #6
+   vertex 5 5 10.01 #7
+       matref box
+   face #south
+       vertices 3 2 1 0
+	   shootthrough
+	   matref box2
+   endface
+   face #east
+       vertices 3 2 5 4
+	   shootthrough
+   endface
+   face #north
+       vertices 0 3 4 7
+	   shootthrough
+   endface
+   face #west
+       vertices 7 6 1 0
+	   shootthrough
+   endface
+   face #bottom
+       vertices 2 1 6 5
+	   shootthrough
+   endface
+   face #top
+       vertices 7 6 5 4
+	   shootthrough
+	   matref box2
+   endface
+   
+  #Inside of Box
+  
+     face #south
+       vertices 0 1 2 3
+	   matref box2
+   endface
+   face #east
+       vertices 4 5 2 3
+   endface
+   face #north
+       vertices 7 4 3 0
+   endface
+   face #west
+       vertices 0 1 6 7
+   endface
+   face #bottom
+       vertices 5 6 1 2
+   endface
+   face #top
+       vertices 4 5 6 7
+	   matref box2
+   endface
+end
+pyramid
+position 0 0 1.55
+size 5 5 5
+end
+enddef
+
+
+
+
+
+
+define norico1y
+
+
+group norico
+	position 355.5 295.5 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 711 591 0
+end
+
+
+
+group norico
+	position 306 296 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 612 592 0
+end
+
+
+
+
+
+
+group norico
+	position 380.5 295.5 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 761 591 0
+end
+
+
+
+group norico
+	position 330.5 295 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 661 590 0
+end
+enddef
+
+#############################Ones going along X Axis BELOW
+define norico1x
+group norico
+	position 295 306.5 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 590 613 0
+end
+group norico
+	position 295.5 381 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 591 762 0
+end
+group norico
+	position 295 356 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 590 712 0
+end
+
+
+group norico
+	position 294 332 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position 588 664 0
+end
+
+enddef
+
+
+define norico2x
+
+
+
+
+
+
+#############################Ones going along X Axis
+
+
+group norico
+	position -295 -306.5 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -590 -613 0
+end
+group norico
+	position -295 -356 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -590 -712 0
+end
+
+
+group norico
+	position -294 -332 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -588 -664 0
+end
+
+
+group norico
+	position -295.5 -381 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -591 -762 0
+end
+
+enddef
+
+#################################Ones going along Y Axis
+define norico2y
+group norico
+	position -355.5 -295.5 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -711 -591 0
+end
+
+group norico
+	position -380.5 -295.5 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -761 -591 0
+end
+
+
+
+
+group norico
+	position -330.5 -295 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -661 -590 0
+end
+
+
+group norico
+	position -306 -296 0
+end
+group pyr1
+scale 0.5 0.5 0.95
+position -612 -592 0
+end
+
+
+
+
+enddef
+
+
+
+
+
+
+group norico1x
+position -50 -25 0
+end
+group norico1y
+position -25 -50 0
+end
+group norico2x
+position 50 25 0
+end
+group norico2y
+position 25 50 0
+end
+
+
+
+#---Green's side
+
+
+
+#-------------------
+
+
+#----------DUCATI
+
+define ducati1
+
+box
+position 136 244 0
+size 30 30 10
+rotation 66
+end
+box
+position -136 -244 0
+size 30 30 10
+rotation 66
+end
+box
+position -179 172 0
+size 30 30 17
+rotation 74
+end
+box
+position 179 -172 0
+size 30 30 17
+rotation 74
+end
+
+box
+position 2 178 0
+size 30 30 15
+rotation 225
+end
+box
+position -2 -178 0
+size 30 30 15
+rotation 225
+end
+box
+position -116 189 0
+size 30 30 14
+rotation 83
+end
+box
+position 116 -189 0
+size 30 30 14
+rotation 83
+end
+
+
+
+box
+position 136 244 0
+size 30 30 10
+rotation 66
+end
+box
+position -136 -244 0
+size 30 30 10
+rotation 66
+end
+box
+position -179 172 0
+size 30 30 17
+rotation 74
+end
+box
+position 179 -172 0
+size 30 30 17
+rotation 74
+end
+
+box
+position 2 178 0
+size 30 30 15
+rotation 225
+end
+box
+position -2 -178 0
+size 30 30 15
+rotation 225
+end
+box
+position -116 189 0
+size 30 30 14
+rotation 83
+end
+box
+position 116 -189 0
+size 30 30 14
+rotation 83
+end
+
+pyramid
+position 63 196 0
+size 8.2 8.2 10
+rotation 328
+end
+pyramid
+position -63 -196 0
+size 8.2 8.2 10
+rotation 328
+end
+pyramid
+position -91 279 0
+size 8.2 8.2 23
+rotation 230
+end
+pyramid
+position 91 -279 0
+size 8.2 8.2 23
+rotation 230
+end
+pyramid
+position 245 143 0
+size 8.2 8.2 20
+rotation 285
+end
+pyramid
+position -245 -143 0
+size 8.2 8.2 20
+rotation 285
+end
+pyramid
+position -89 293 0
+size 8.2 8.2 13
+rotation 225
+end
+pyramid
+position 89 -293 0
+size 8.2 8.2 13
+rotation 225
+end
+pyramid
+position 44 77 0
+size 8.2 8.2 16
+rotation 347
+end
+pyramid
+position -44 -77 0
+size 8.2 8.2 16
+rotation 347
+end
+pyramid
+position -2 101 0
+size 8.2 8.2 16
+rotation 261
+end
+pyramid
+position 2 -101 0
+size 8.2 8.2 16
+rotation 261
+end
+pyramid
+position 306 120 0
+size 8.2 8.2 21
+rotation 312
+end
+pyramid
+position -306 -120 0
+size 8.2 8.2 21
+rotation 312
+end
+pyramid
+position -304 128 0
+size 8.2 8.2 10
+rotation 248
+end
+pyramid
+position 304 -128 0
+size 8.2 8.2 10
+rotation 248
+end
+enddef
+
+group ducati1
+position 0 0 0
+end
