@@ -2028,6 +2028,10 @@ function animate() {
   const deltaTime = (now - lastTime) / 1000;
   lastTime = now;
 
+  // Advance worldTime so 24000 ticks = 20 minutes (1200 seconds)
+  // 24000 / 1200 = 20 ticks per second
+  worldTime = (worldTime + 20 * deltaTime) % 24000;
+
   updateFps();
   updateChatWindow();
   requestAnimationFrame(animate);
