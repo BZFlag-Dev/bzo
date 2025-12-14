@@ -177,9 +177,12 @@ export function updateScoreboard({
   const scoreboardList = document.getElementById('scoreboardList');
   if (!scoreboardList) return;
   scoreboardList.innerHTML = '';
+  // Fix: declare playerData array
+  const playerData = [];
 
   // Collect all player data
-  const playerData = [];
+    // Align degreeBar bottom exactly to controlBox top (avoid rounding gap)
+    degreeBar.style.top = (controlBox.getBoundingClientRect().top - degreeBar.height + 1) + 'px';
 
   // Add current player
   if (myPlayerId && myTank && myTank.userData.playerState) {
@@ -245,16 +248,17 @@ export function updateDegreeBar({ myTank, playerRotation }) {
   const degreeBar = document.getElementById('degreeBar');
   const controlBox = document.getElementById('controlBox');
   if (!degreeBar || !controlBox || !myTank) return;
-  // Match width to controlBox
-  degreeBar.width = controlBox.offsetWidth;
-  degreeBar.height = 32;
-  degreeBar.style.position = 'fixed';
-  degreeBar.style.left = controlBox.style.left || '';
-  degreeBar.style.top = (controlBox.offsetTop - 32) + 'px';
-  degreeBar.style.zIndex = 51;
-  degreeBar.style.pointerEvents = 'none';
+  // Responsive: let CSS control size, set canvas size for HiDPI
+  const barRect = degreeBar.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  degreeBar.width = Math.round(barRect.width * dpr);
+  degreeBar.height = Math.round(barRect.height * dpr);
+  // Align bottom of degreeBar to top of controlBox
+  degreeBar.style.top = (controlBox.getBoundingClientRect().top - barRect.height + 1) + 'px';
+  // Optionally, align left if needed: degreeBar.style.left = ...
   const ctx = degreeBar.getContext('2d');
-  ctx.clearRect(0, 0, degreeBar.width, degreeBar.height);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
+  ctx.clearRect(0, 0, barRect.width, barRect.height);
 
   // Get controlBox border color for bar/labels
   let barColor = '#4CAF50';
@@ -272,30 +276,39 @@ export function updateDegreeBar({ myTank, playerRotation }) {
 
   // Bar spans 45 degrees, centered on playerRotation (in radians)
   const degSpan = 45;
-  const degPerPx = degSpan / degreeBar.width;
   const centerDeg = ((playerRotation || 0) * 180 / Math.PI) % 360;
-  // Draw ticks every 5 deg, labels every 10 deg
+  // Reverse direction: as player turns right, bar moves left
+  const startDeg = centerDeg + degSpan / 2;
+  const endDeg = centerDeg - degSpan / 2;
+  const pxPerDeg = barRect.width / degSpan;
+
   ctx.save();
   ctx.strokeStyle = barColor;
   ctx.lineWidth = 2;
   ctx.font = '13px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  for (let px = 0; px < degreeBar.width; px++) {
-    const deg = (centerDeg - degSpan/2) + px * degPerPx;
+
+  // Draw ticks and labels for every 5 degrees in the visible span
+  // Ticks connect to controlBox top edge responsively
+  const barBottom = barRect.height - 4;
+  for (let deg = Math.ceil(startDeg / 5) * 5; deg >= endDeg; deg -= 5) {
     let normDeg = ((deg % 360) + 360) % 360;
-    if (normDeg % 5 === 0) {
-      const isMajor = normDeg % 10 === 0;
-      const y1 = 0;
-      const y2 = isMajor ? 18 : 12;
-      ctx.beginPath();
-      ctx.moveTo(px, y1);
-      ctx.lineTo(px, y2);
-      ctx.stroke();
-      if (isMajor) {
-        ctx.fillStyle = labelColor;
-        ctx.fillText(normDeg.toFixed(0), px, y2 + 1);
-      }
+    const px = (startDeg - deg) * pxPerDeg;
+    const isMajor = normDeg % 10 === 0;
+    // Shorter ticks, like altimeter
+    const y1 = barBottom;
+    const y2 = isMajor ? barBottom - barRect.height * 0.45 : barBottom - barRect.height * 0.35;
+    ctx.beginPath();
+    ctx.moveTo(px, y1);
+    ctx.lineTo(px, y2);
+    ctx.stroke();
+    if (isMajor) {
+      ctx.fillStyle = labelColor;
+      // Place number above the tick
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(normDeg.toFixed(0), px, y2 - 2);
+      ctx.textBaseline = 'top'; // restore for safety
     }
   }
   ctx.restore();
@@ -306,22 +319,27 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
   const altimeter = document.getElementById('altimeter');
   if (!altimeter || !myTank) return;
   const ctx = altimeter.getContext('2d');
-  const width = altimeter.width = altimeter.offsetWidth;
-  const height = altimeter.height = altimeter.offsetHeight;
+  // Responsive: let CSS control size, set canvas size for HiDPI
+  const controlBox = document.getElementById('controlBox');
+  const boxRect = controlBox ? controlBox.getBoundingClientRect() : null;
+  const altRect = altimeter.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  altimeter.width = Math.round(altRect.width * dpr);
+  altimeter.height = Math.round(altRect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
   // Clear the canvas to transparent (no background fill)
-  ctx.clearRect(0, 0, width, height);
+  ctx.clearRect(0, 0, altRect.width, altRect.height);
   // Do not fill any background; keep fully transparent
 
   // Show 30 units from top to bottom
   const unitsVisible = 30;
-  const pixelsPerUnit = height / unitsVisible;
+  const pixelsPerUnit = altRect.height / unitsVisible;
   const tankY = myTank.position.y;
-  const centerY = height / 2;
+  const centerY = altRect.height / 2;
 
   // Get controlBox border color for altimeter lines/numbers
   let tickColor = '#4CAF50'; // fallback to green
   let numberColor = '#4CAF50';
-  const controlBox = document.getElementById('controlBox');
   if (controlBox) {
     const style = window.getComputedStyle(controlBox);
     const borderColor = style.borderColor;
@@ -341,10 +359,22 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
 
-  // Tick line length and offset (short, left-aligned)
-  const tickStart = 0;
-  const tickEnd = width * 0.35;
-  const numberOffset = tickEnd + 4;
+  // Ticks start at the left edge of the altimeter, which should abut the controlBox
+  let tickStart = 0;
+  let tickEnd = Math.max(8, altRect.width * 0.28); // short, responsive
+  let numberOffset = tickEnd + 4;
+  // If controlBox is present, align tickStart to the edge closest to controlBox
+  if (boxRect && altRect) {
+    // If altimeter is to the right of controlBox, align left edge
+    if (altRect.left > boxRect.right - 5) {
+      tickStart = 0;
+    } else if (altRect.right < boxRect.left + 5) {
+      // If altimeter is to the left, align right edge
+      tickStart = altRect.width;
+      tickEnd = altRect.width - Math.max(8, altRect.width * 0.28);
+      numberOffset = tickEnd - 4;
+    }
+  }
 
   // Find the first tick below the current Y (may be fractional)
   const firstTick = Math.floor((tankY - unitsVisible / 2) / tickSpacing) * tickSpacing;
@@ -371,7 +401,7 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
   ctx.lineWidth = 3;
   // Make the yellow line even shorter than the tick lines
   const centerLineStart = 0;
-  const centerLineEnd = width * 0.22; // shorter than tickEnd
+  const centerLineEnd = altRect.width * 0.22; // shorter than tickEnd
   ctx.beginPath();
   ctx.moveTo(centerLineStart, centerY);
   ctx.lineTo(centerLineEnd, centerY);
