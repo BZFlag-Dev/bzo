@@ -1104,7 +1104,7 @@ class RenderManager {
     const sound = new THREE.PositionalAudio(this.audioListener);
     sound.setBuffer(this.landBuffer);
     sound.setRefDistance(8);
-    sound.setVolume(0.5);
+    sound.setVolume(0.9);
     if (position) sound.position.copy(position);
     this.scene.add(sound);
     sound.play();
@@ -1216,6 +1216,7 @@ class RenderManager {
 
       if (tank.userData.body) {
         const part = tank.userData.body.clone();
+        if (part.material) part.material = Array.isArray(part.material) ? part.material.map(m => m.clone()) : part.material.clone();
         part.position.copy(tankWorldPos);
         part.position.y = tank.userData.body.position.y;
         part.rotation.y = tankRotation;
@@ -1223,6 +1224,7 @@ class RenderManager {
       }
       if (tank.userData.turret) {
         const part = tank.userData.turret.clone();
+        if (part.material) part.material = Array.isArray(part.material) ? part.material.map(m => m.clone()) : part.material.clone();
         part.position.copy(tankWorldPos);
         part.position.y = tank.userData.turret.position.y;
         part.rotation.y = tankRotation;
@@ -1230,6 +1232,7 @@ class RenderManager {
       }
       if (tank.userData.barrel) {
         const part = tank.userData.barrel.clone();
+        if (part.material) part.material = Array.isArray(part.material) ? part.material.map(m => m.clone()) : part.material.clone();
         part.position.copy(tankWorldPos);
         part.position.y = tank.userData.barrel.position.y;
         part.position.z += 1.5 * Math.cos(tankRotation);
@@ -1241,6 +1244,11 @@ class RenderManager {
       tank.children.forEach((child) => {
         if (child instanceof THREE.Group && child.children.length > 0) {
           const treadGroup = child.clone();
+          treadGroup.traverse((mesh) => {
+            if (mesh.isMesh && mesh.material) {
+              mesh.material = Array.isArray(mesh.material) ? mesh.material.map(m => m.clone()) : mesh.material.clone();
+            }
+          });
           treadGroup.position.copy(tankWorldPos);
           treadGroup.position.x += child.position.x * Math.cos(tankRotation);
           treadGroup.position.z += child.position.x * Math.sin(tankRotation);
