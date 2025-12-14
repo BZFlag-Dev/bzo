@@ -1,3 +1,22 @@
+/*
+ * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
+:root {
+  --color-bg: #000;
+  --color-fg: #fff;
+  --color-accent: #4CAF50;
+  --color-accent-light: #66bb6a;
+  --color-btn-bg: rgba(76,175,80,0.15);
+  --color-btn-bg-active: #4CAF50;
+  --color-btn-bg-hover: rgba(76,175,80,0.35);
+  --color-btn-bg-focus: #81c784;
+  --color-btn-bg-shadow: #4CAF5088;
+  --color-panel-bg: rgba(0,0,0,0.5);
+  --color-panel-bg-solid: rgba(0,0,0,0.8);
+}
+
 #degreeBar {
   position: fixed;
   left: 50%;
@@ -25,24 +44,6 @@
 }
 #operatorOverlay, #operatorOverlay * {
   pointer-events: auto !important;
-}
-/*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
- */
-
-:root {
-  --color-bg: #000;
-  --color-fg: #fff;
-  --color-accent: #4CAF50;
-  --color-accent-light: #66bb6a;
-  --color-btn-bg: rgba(76,175,80,0.15);
-  --color-btn-bg-active: #4CAF50;
-  --color-btn-bg-hover: rgba(76,175,80,0.35);
-  --color-btn-bg-focus: #81c784;
-  --color-btn-bg-shadow: #4CAF5088;
-  --color-panel-bg: rgba(0,0,0,0.5);
-  --color-panel-bg-solid: rgba(0,0,0,0.8);
 }
 
 /* Chat window responsive wrapping and scrolling */
