@@ -50,10 +50,10 @@ class RenderManager {
         // Lighting intensity
         const sunUp = sunY > 0;
         const sunIntensity = sunUp ? 0.7 : 0.10;
-        const ambientIntensity = sunUp ? 0.90 : 0.90;
+        const ambientIntensity = sunUp ? 1.00 : 0.50;
         this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
-        this.ambientLight.color.set(0x222233);
+        this.ambientLight.color.set(0x828293);
         // Fog and background color: interpolate between day and night
         // Day: #87ceeb (light blue), Night: #23264a (brighter blue-gray)
         const dayColor = new THREE.Color(0x87ceeb);
