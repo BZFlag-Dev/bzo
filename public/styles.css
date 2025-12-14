@@ -558,6 +558,8 @@ body {
   font-size: 12px;
   box-sizing: border-box;
   overflow-x: auto;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 @media (max-width: 600px) {
