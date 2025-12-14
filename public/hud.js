@@ -1,3 +1,18 @@
+/*
+ * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
+// hud.js - Handles HUD and debug display logic
+
+// Converts a color int or string to a CSS color string
+export function colorToCSS(color) {
+  if (typeof color === 'string') return color;
+  if (typeof color === 'number') return `#${color.toString(16).padStart(6, '0')}`;
+  if (color && typeof color.getHexString === 'function') return `#${color.getHexString()}`;
+  return '#888';
+}
+
 // Toggle debug labels over objects
 export function toggleDebugLabels({ debugLabelsEnabled, setDebugLabelsEnabled, updateHudButtons, showMessage }) {
   setDebugLabelsEnabled(!debugLabelsEnabled);
@@ -72,12 +87,6 @@ export function toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn
   }
   updateHelpBtn();
 }
-/*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
- */
-
-// hud.js - Handles HUD and debug display logic
 
 // Updates the debug HUD with current stats
 export function updateDebugDisplay({
@@ -158,4 +167,75 @@ export function updateDebugDisplay({
   }
 }
 
-// Add more HUD-related exports as needed (scoreboard, chat, etc.)
+// Updates the scoreboard with current player stats
+export function updateScoreboard({
+  myPlayerId,
+  myPlayerName,
+  myTank,
+  tanks
+}) {
+  const scoreboardList = document.getElementById('scoreboardList');
+  if (!scoreboardList) return;
+  scoreboardList.innerHTML = '';
+
+  // Collect all player data
+  const playerData = [];
+
+  // Add current player
+  if (myPlayerId && myTank && myTank.userData.playerState) {
+    playerData.push({
+      id: myPlayerId,
+      name: myPlayerName,
+      kills: myTank.userData.playerState.kills || 0,
+      deaths: myTank.userData.playerState.deaths || 0,
+      connectDate: myTank.userData.playerState.connectDate ? new Date(myTank.userData.playerState.connectDate) : new Date(0),
+      color: myTank.userData.playerState.color,
+      isCurrent: true
+    });
+  }
+
+  // Add other players from server state
+  tanks.forEach((tank, id) => {
+    if (id !== myPlayerId && tank.userData.playerState) {
+      playerData.push({
+        id: id,
+        name: tank.userData.playerState.name || 'Player',
+        kills: tank.userData.playerState.kills || 0,
+        deaths: tank.userData.playerState.deaths || 0,
+        connectDate: tank.userData.playerState.connectDate ? new Date(tank.userData.playerState.connectDate) : new Date(0),
+        color: tank.userData.playerState.color,
+        isCurrent: false
+      });
+    }
+  });
+
+  // Sort by (kills - deaths) descending, then kills descending, then deaths ascending, then connectDate ascending (oldest first)
+  playerData.sort((a, b) => {
+    const aScore = (a.kills || 0) - (a.deaths || 0);
+    const bScore = (b.kills || 0) - (b.deaths || 0);
+    if (bScore !== aScore) return bScore - aScore;
+    if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
+    if ((a.deaths || 0) !== (b.deaths || 0)) return (a.deaths || 0) - (b.deaths || 0);
+    return a.connectDate - b.connectDate;
+  });
+
+  // Create scoreboard entries
+  playerData.forEach(player => {
+    const entry = document.createElement('div');
+    entry.className = 'scoreboardEntry' + (player.isCurrent ? ' current' : '');
+    if (player.color) {
+      entry.style.color = colorToCSS(player.color);
+    }
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'scoreboardName';
+    nameSpan.textContent = player.name;
+
+    const statsSpan = document.createElement('span');
+    statsSpan.className = 'scoreboardStats';
+    statsSpan.textContent = `${player.kills} / ${player.deaths}`;
+
+    entry.appendChild(nameSpan);
+    entry.appendChild(statsSpan);
+    scoreboardList.appendChild(entry);
+  });
+}

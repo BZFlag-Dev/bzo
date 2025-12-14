@@ -30,7 +30,8 @@ import {
   updateDebugDisplay,
   updateHudButtons,
   toggleDebugHud,
-  toggleDebugLabels
+  toggleDebugLabels,
+  updateScoreboard
 } from './hud.js';
 import { renderManager } from './render.js';
 
@@ -211,6 +212,7 @@ function getDebugState() {
     OBSTACLES,
     clouds: renderManager.getClouds(),
     latestOrientation,
+    worldTime
   };
 }
 
@@ -738,8 +740,6 @@ function connectToServer() {
 function handleServerMessage(message) {
   switch (message.type) {
     case 'init':
-      worldTime = message.worldTime || 0;
-      // ...existing code...
       // Show server info in entryDialog
       const serverNameEl = document.getElementById('serverName');
       const serverDescriptionEl = document.getElementById('serverDescription');
@@ -747,6 +747,7 @@ function handleServerMessage(message) {
       if (serverNameEl) serverNameEl.textContent = 'Server: ' + (message.serverName || '');
       if (serverDescriptionEl) serverDescriptionEl.textContent = message.description || '';
       if (serverMotdEl) serverMotdEl.textContent = message.motd || '';
+      worldTime = message.worldTime;
       // Clear any existing tanks from previous connections
       tanks.forEach((tank, id) => {
         scene.remove(tank);
@@ -822,7 +823,7 @@ function handleServerMessage(message) {
       });
       // Ensure myTank is set for the local player after all tanks are created
       myTank = tanks.get(myPlayerId);
-      updateScoreboard();
+      callUpdateScoreboard();
       break;
 
     case 'playerJoined':
@@ -851,12 +852,11 @@ function handleServerMessage(message) {
           myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
           myTank.visible = true;
         }
-        updateStats(message.player);
-        updateScoreboard();
+        callUpdateScoreboard();
       } else {
         // Another player joined: update their info and create their tank if needed
         addPlayer(message.player);
-        updateScoreboard();
+        callUpdateScoreboard();
         showMessage(`${message.player.name} joined the game`);
       }
       break;
@@ -1008,7 +1008,7 @@ function addPlayer(player) {
   tank.userData.playerState = player; // Store player state for scoreboard
   tank.userData.verticalVelocity = player.verticalVelocity;
   tank.visible = player.health > 0;
-  updateScoreboard();
+  callUpdateScoreboard();
 }
 
 function removePlayer(playerId) {
@@ -1016,7 +1016,7 @@ function removePlayer(playerId) {
   if (tank) {
     scene.remove(tank);
     tanks.delete(playerId);
-    updateScoreboard();
+    callUpdateScoreboard();
   }
   removeShield(playerId);
 }
@@ -1088,7 +1088,7 @@ function handlePlayerHit(message) {
   if (victimTank && victimTank.userData.playerState) {
     victimTank.userData.playerState.deaths = (victimTank.userData.playerState.deaths || 0) + 1;
   }
-  updateScoreboard();
+  callUpdateScoreboard();
 
   // Remove the projectile
   removeProjectile(message.projectileId);
@@ -1124,6 +1124,11 @@ function handlePlayerRespawn(message) {
     if (crosshair) crosshair.style.display = '';
   }
 }
+// Helper to call updateScoreboard with all required parameters
+function callUpdateScoreboard() {
+  updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks });
+}
+
 function handleMapsList(message) {
   const mapList = document.getElementById('mapList');
   if (!mapList) return;
@@ -1145,72 +1150,7 @@ function handleMapsList(message) {
 }
 
 function updateStats(player) {
-  updateScoreboard();
-}
-
-function updateScoreboard() {
-  const scoreboardList = document.getElementById('scoreboardList');
-  scoreboardList.innerHTML = '';
-
-  // Collect all player data
-  const playerData = [];
-
-  // Add current player
-  if (myPlayerId && myTank && myTank.userData.playerState) {
-    playerData.push({
-      id: myPlayerId,
-      name: myPlayerName,
-      kills: myTank.userData.playerState.kills || 0,
-      deaths: myTank.userData.playerState.deaths || 0,
-      connectDate: myTank.userData.playerState.connectDate ? new Date(myTank.userData.playerState.connectDate) : new Date(0),
-      isCurrent: true
-    });
-  }
-
-  // Add other players from server state
-  tanks.forEach((tank, id) => {
-    if (id !== myPlayerId && tank.userData.playerState) {
-      playerData.push({
-        id: id,
-        name: tank.userData.playerState.name || 'Player',
-        kills: tank.userData.playerState.kills || 0,
-        deaths: tank.userData.playerState.deaths || 0,
-        connectDate: tank.userData.playerState.connectDate ? new Date(tank.userData.playerState.connectDate) : new Date(0),
-        isCurrent: false
-      });
-    }
-  });
-
-  // Sort by (kills - deaths) descending, then kills descending, then deaths ascending, then connectDate ascending (oldest first)
-  playerData.sort((a, b) => {
-    const aScore = (a.kills || 0) - (a.deaths || 0);
-    const bScore = (b.kills || 0) - (b.deaths || 0);
-    if (bScore !== aScore) return bScore - aScore;
-    if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
-    if ((a.deaths || 0) !== (b.deaths || 0)) return (a.deaths || 0) - (b.deaths || 0);
-    return a.connectDate - b.connectDate;
-  });
-
-  // Create scoreboard entries
-  playerData.forEach(player => {
-    const entry = document.createElement('div');
-    entry.className = 'scoreboardEntry' + (player.isCurrent ? ' current' : '');
-    if (typeof player.color === 'number') {
-      entry.style.color = '#' + color.toString(16).padStart(6, '0');
-    }
-    
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'scoreboardName';
-    nameSpan.textContent = player.name;
-
-    const statsSpan = document.createElement('span');
-    statsSpan.className = 'scoreboardStats';
-    statsSpan.textContent = `${player.kills} / ${player.deaths}`;
-
-    entry.appendChild(nameSpan);
-    entry.appendChild(statsSpan);
-    scoreboardList.appendChild(entry);
-  });
+  callUpdateScoreboard();
 }
 
 function showMessage(text, type = '') {
@@ -1939,6 +1879,7 @@ function updateRadar() {
       const dz = proj.position.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
       // Use same transform as tanks/obstacles
+     
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
