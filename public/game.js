@@ -31,7 +31,9 @@ import {
   updateHudButtons,
   toggleDebugHud,
   toggleDebugLabels,
-  updateScoreboard
+  updateScoreboard,
+  updateAltimeter,
+  updateDegreeBar
 } from './hud.js';
 import { renderManager } from './render.js';
 
@@ -993,7 +995,6 @@ function handleServerMessage(message) {
 }
 
 function addPlayer(player) {
-  console.log('Adding/updating player:', player);
   let tank = tanks.get(player.id);
   if (!tank) {
     // Use player.color if present, else fallback to green
@@ -1878,8 +1879,6 @@ function updateRadar() {
       const dx = proj.position.x - px;
       const dz = proj.position.z - pz;
       if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      // Use same transform as tanks/obstacles
-     
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
@@ -2034,6 +2033,8 @@ function animate() {
 
   updateFps();
   updateChatWindow();
+  updateAltimeter({ myTank });
+  updateDegreeBar({ myTank, playerRotation });
   requestAnimationFrame(animate);
   handleInputEvents();
   handleMotion(deltaTime);

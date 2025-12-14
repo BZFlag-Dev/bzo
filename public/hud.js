@@ -239,3 +239,142 @@ export function updateScoreboard({
     scoreboardList.appendChild(entry);
   });
 }
+
+// Draws a degree bar above the control box
+export function updateDegreeBar({ myTank, playerRotation }) {
+  const degreeBar = document.getElementById('degreeBar');
+  const controlBox = document.getElementById('controlBox');
+  if (!degreeBar || !controlBox || !myTank) return;
+  // Match width to controlBox
+  degreeBar.width = controlBox.offsetWidth;
+  degreeBar.height = 32;
+  degreeBar.style.position = 'fixed';
+  degreeBar.style.left = controlBox.style.left || '';
+  degreeBar.style.top = (controlBox.offsetTop - 32) + 'px';
+  degreeBar.style.zIndex = 51;
+  degreeBar.style.pointerEvents = 'none';
+  const ctx = degreeBar.getContext('2d');
+  ctx.clearRect(0, 0, degreeBar.width, degreeBar.height);
+
+  // Get controlBox border color for bar/labels
+  let barColor = '#4CAF50';
+  let labelColor = '#4CAF50';
+  if (controlBox) {
+    const style = window.getComputedStyle(controlBox);
+    const borderColor = style.borderColor;
+    barColor = borderColor;
+    labelColor = borderColor;
+    if (controlBox.classList.contains('keyboard-mode')) {
+      barColor = 'rgba(255, 152, 0, 0.6)';
+      labelColor = 'rgba(255, 152, 0, 0.9)';
+    }
+  }
+
+  // Bar spans 45 degrees, centered on playerRotation (in radians)
+  const degSpan = 45;
+  const degPerPx = degSpan / degreeBar.width;
+  const centerDeg = ((playerRotation || 0) * 180 / Math.PI) % 360;
+  // Draw ticks every 5 deg, labels every 10 deg
+  ctx.save();
+  ctx.strokeStyle = barColor;
+  ctx.lineWidth = 2;
+  ctx.font = '13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let px = 0; px < degreeBar.width; px++) {
+    const deg = (centerDeg - degSpan/2) + px * degPerPx;
+    let normDeg = ((deg % 360) + 360) % 360;
+    if (normDeg % 5 === 0) {
+      const isMajor = normDeg % 10 === 0;
+      const y1 = 0;
+      const y2 = isMajor ? 18 : 12;
+      ctx.beginPath();
+      ctx.moveTo(px, y1);
+      ctx.lineTo(px, y2);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = labelColor;
+        ctx.fillText(normDeg.toFixed(0), px, y2 + 1);
+      }
+    }
+  }
+  ctx.restore();
+}
+
+// Draws on the right side of the control box
+export function updateAltimeter({ myTank, tickSpacing = 5 }) {
+  const altimeter = document.getElementById('altimeter');
+  if (!altimeter || !myTank) return;
+  const ctx = altimeter.getContext('2d');
+  const width = altimeter.width = altimeter.offsetWidth;
+  const height = altimeter.height = altimeter.offsetHeight;
+  // Clear the canvas to transparent (no background fill)
+  ctx.clearRect(0, 0, width, height);
+  // Do not fill any background; keep fully transparent
+
+  // Show 30 units from top to bottom
+  const unitsVisible = 30;
+  const pixelsPerUnit = height / unitsVisible;
+  const tankY = myTank.position.y;
+  const centerY = height / 2;
+
+  // Get controlBox border color for altimeter lines/numbers
+  let tickColor = '#4CAF50'; // fallback to green
+  let numberColor = '#4CAF50';
+  const controlBox = document.getElementById('controlBox');
+  if (controlBox) {
+    const style = window.getComputedStyle(controlBox);
+    const borderColor = style.borderColor;
+    tickColor = borderColor;
+    numberColor = borderColor;
+    if (controlBox.classList.contains('keyboard-mode')) {
+      tickColor = 'rgba(255, 152, 0, 0.6)';
+      numberColor = 'rgba(255, 152, 0, 0.9)';
+    }
+  }
+
+  // Draw ticks and numbers relative to tankY at center, with smooth scrolling
+  ctx.save();
+  ctx.strokeStyle = tickColor;
+  ctx.lineWidth = 2;
+  ctx.font = '12px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  // Tick line length and offset (short, left-aligned)
+  const tickStart = 0;
+  const tickEnd = width * 0.35;
+  const numberOffset = tickEnd + 4;
+
+  // Find the first tick below the current Y (may be fractional)
+  const firstTick = Math.floor((tankY - unitsVisible / 2) / tickSpacing) * tickSpacing;
+  const lastTick = Math.ceil((tankY + unitsVisible / 2) / tickSpacing) * tickSpacing;
+
+  for (let alt = firstTick; alt <= lastTick; alt += tickSpacing) {
+    if (alt < 0) continue;
+    // Compute y position with smooth scrolling
+    const y = centerY - (alt - tankY) * pixelsPerUnit;
+    ctx.beginPath();
+    ctx.moveTo(tickStart, y);
+    ctx.lineTo(tickEnd, y);
+    ctx.stroke();
+    if ((alt / tickSpacing) % 2 === 0) {
+      ctx.fillStyle = numberColor;
+      ctx.fillText(alt.toString(), numberOffset, y);
+    }
+  }
+  ctx.restore();
+
+  // Draw current altitude indicator (shorter center line)
+  ctx.save();
+  ctx.strokeStyle = '#ff0';
+  ctx.lineWidth = 3;
+  // Make the yellow line even shorter than the tick lines
+  const centerLineStart = 0;
+  const centerLineEnd = width * 0.22; // shorter than tickEnd
+  ctx.beginPath();
+  ctx.moveTo(centerLineStart, centerY);
+  ctx.lineTo(centerLineEnd, centerY);
+  ctx.stroke();
+  ctx.restore();
+}

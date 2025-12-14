@@ -1,3 +1,13 @@
+#degreeBar {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 32px;
+  width: 50vmin;
+  z-index: 51;
+  pointer-events: none;
+  background: transparent;
+}
 /* Debug label styling for Three.js CSS2DObject */
 .three-label {
   background: rgba(0,0,0,0.5);
@@ -813,4 +823,15 @@ canvas {
     min-height: 40px;
     font-size: 1em;
   }
+}
+
+#altimeter {
+  position: fixed;
+  top: 50%;
+  right: calc(50% - 25vmin - 40px); /* right of controlBox, adjust as needed */
+  transform: translateY(-50%);
+  width: 2em;
+  height: 50vmin;
+  z-index: 50;
+  pointer-events: none;
 }
