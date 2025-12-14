@@ -1168,6 +1168,27 @@ class RenderManager {
     if (!this.scene || !position) return;
     this.playExplosionSound(position);
 
+    // Dynamic lighting flash
+    let explosionLight = null;
+    if (this.dynamicLightingEnabled && typeof THREE !== 'undefined') {
+      explosionLight = new THREE.PointLight(0xffe066, 3, 40, 2.5);
+      explosionLight.position.copy(position);
+      this.scene.add(explosionLight);
+      // Animate light fade out
+      let lightIntensity = 500.0;
+      const lightFade = () => {
+        lightIntensity *= 0.85;
+        explosionLight.intensity = lightIntensity;
+        if (lightIntensity > 0.05) {
+          requestAnimationFrame(lightFade);
+        } else {
+          this.scene.remove(explosionLight);
+          explosionLight.dispose && explosionLight.dispose();
+        }
+      };
+      lightFade();
+    }
+
     const geometry = new THREE.SphereGeometry(2, 16, 16);
     const material = new THREE.MeshBasicMaterial({ color: 0xff4500, transparent: true, opacity: 0.8 });
     const explosion = new THREE.Mesh(geometry, material);
