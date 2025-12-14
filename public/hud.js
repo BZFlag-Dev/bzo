@@ -102,15 +102,12 @@ export function updateDebugDisplay({
   if (!debugContent) return;
 
   let html = '<div style="margin-bottom: 10px; font-weight: bold;">PLAYER STATUS:</div>';
-  html += `<div><span class="label">FPS:</span><span class="value">${fps?.toFixed(1) ?? ''}</span></div>`;
-  html += `<div><span class=\"label\">Bytes Sent/s:</span><span class=\"value\">${sentBps ?? ''}</span></div>`;
-  html += `<div><span class=\"label\">Bytes Recv/s:</span><span class=\"value\">${receivedBps ?? ''}</span></div>`;
   if (typeof latency !== 'undefined') {
-    html += `<div><span class="label">Ping:</span><span class="value">${Math.round(latency)} ms</span></div>`;
+    html += `<div><span class="label">FPS/Ping:</span><span class="value">${fps?.toFixed(1) ?? ''}/${Math.round(latency)} ms</span></div>`;
   }
+  html += `<div><span class=\"label\">Bytes Sent/Recv/s:</span><span class=\"value\">${sentBps ?? ''}/${receivedBps ?? ''}</span></div>`;
   if (myTank && myTank.userData) {
-    html += `<div><span class="label">Speed:</span><span class="value">${myTank.userData.forwardSpeed?.toFixed(2) ?? '0'} u/s</span></div>`;
-    html += `<div><span class="label">Angular:</span><span class="value">${myTank.userData.rotationSpeed?.toFixed(2) ?? '0'} rad/s</span></div>`;
+    html += `<div><span class="label">Linear/Angular:</span><span class="value">${myTank.userData.forwardSpeed?.toFixed(2) ?? '0'}u/${myTank.userData.rotationSpeed?.toFixed(2) ?? '0'}rad</span></div>`;
     if (myTank.userData.verticalSpeed !== undefined) {
       html += `<div><span class="label">Vertical:</span><span class="value">${myTank.userData.verticalSpeed.toFixed(2)} u/s</span></div>`;
     }
@@ -118,11 +115,11 @@ export function updateDebugDisplay({
     html += `<div><span class="label">Rotation:</span><span class="value">${playerRotation?.toFixed(2) ?? ''} rad</span></div>`;
   }
   html += `<div><span class="label">Camera:</span><span class="value">${cameraMode ?? ''}</span></div>`;
-  html += `<div><span class="label">Obstacles:</span><span class="value">${OBSTACLES?.length ?? ''}</span></div>`;
+  html += `<div><span class="label">Obs/Clouds:</span><span class="value">${OBSTACLES?.length ?? ''}/${clouds?.length ?? ''}</span></div>`;
   if (typeof worldTime !== 'undefined') {
     html += `<div><span class="label">World Time:</span><span class="value">${worldTime} (${formatWorldTime(worldTime)})</span></div>`;
   }
-  html += `<div><span class="label">Clouds:</span><span class="value">${clouds?.length ?? ''}</span></div>`;
+  
   if (latestOrientation && latestOrientation.status) {
     html += `<div><span class="label">Orientation Status:</span><span class="value">${latestOrientation.status}</span></div>`;
     if (latestOrientation.alpha !== null && latestOrientation.beta !== null && latestOrientation.gamma !== null) {
