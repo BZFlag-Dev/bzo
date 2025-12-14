@@ -126,7 +126,7 @@ export function updateDebugDisplay({
   html += `<div><span class="label">Camera:</span><span class="value">${cameraMode ?? ''}</span></div>`;
   html += `<div><span class="label">Obs/Clouds:</span><span class="value">${OBSTACLES?.length ?? ''}/${clouds?.length ?? ''}</span></div>`;
   if (typeof worldTime !== 'undefined') {
-    html += `<div><span class="label">World Time:</span><span class="value">${worldTime} (${formatWorldTime(worldTime)})</span></div>`;
+    html += `<div><span class="label">World Time:</span><span class="value">${worldTime.toFixed(1)} (${formatWorldTime(worldTime)})</span></div>`;
   }
   
   if (latestOrientation && latestOrientation.status) {
