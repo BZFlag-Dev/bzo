@@ -940,6 +940,7 @@ function handleServerMessage(message) {
         tank.userData.forwardSpeed = message.fs;
         tank.userData.rotationSpeed = message.rs;
         tank.userData.verticalVelocity = message.vv;
+        tank.userData.slideDirection = message.d; // Optional slide direction (undefined if not sliding)
 
         // Detect jump start (record jump direction)
         if (oldVerticalVel <= 0 && message.vv > 10) {
@@ -1830,20 +1831,55 @@ function handleMotion(deltaTime) {
     myTank.rotation.y = playerRotation;
   }
 
+  // Calculate actual movement direction for slide detection (BEFORE using it in forwardSpeed calc)
+  let slideDirection = null;
+  if (result.moved && result.altered) {
+    // Slide occurred - calculate actual movement direction
+    const actualDeltaX = playerX - oldX;
+    const actualDeltaZ = playerZ - oldZ;
+    const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
+    
+    if (actualDistance > 0.001) {
+      // Calculate direction from movement vector
+      const actualDirection = Math.atan2(-actualDeltaX, -actualDeltaZ);
+      
+      // Determine expected direction (r on ground, jumpDirection in air)
+      const expectedDirection = isInAir && jumpDirection !== null ? jumpDirection : playerRotation;
+      
+      // Normalize angle difference to -PI to PI
+      const angleDiff = Math.abs(((actualDirection - expectedDirection + Math.PI) % (Math.PI * 2)) - Math.PI);
+      
+      // If actual direction differs from expected by more than 0.01 radians, include it
+      if (angleDiff > 0.01) {
+        slideDirection = actualDirection;
+      }
+    }
+  }
+
   if (deltaTime > 0) {
     // Only recalculate forwardSpeed when on ground
     // In air, keep using the last calculated value (from userData)
     if (!isInAir) {
       const actualDeltaX = playerX - oldX;
       const actualDeltaZ = playerZ - oldZ;
-      const forwardX = -Math.sin(playerRotation);
-      const forwardZ = -Math.cos(playerRotation);
       const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
+      
       if (actualDistance > 0.001) {
-        const dot = (actualDeltaX * forwardX + actualDeltaZ * forwardZ) / actualDistance;
         const actualSpeed = actualDistance / deltaTime;
         const tankSpeed = gameConfig.TANK_SPEED;
-        forwardSpeed = (dot * actualSpeed) / tankSpeed;
+        
+        // When sliding (slideDirection set), use actual speed in that direction
+        // Otherwise, use dot product with rotation direction
+        if (slideDirection !== null) {
+          // Sliding: use actual speed magnitude (already moving in slideDirection)
+          forwardSpeed = actualSpeed / tankSpeed;
+        } else {
+          // Normal: project onto rotation direction
+          const forwardX = -Math.sin(playerRotation);
+          const forwardZ = -Math.cos(playerRotation);
+          const dot = (actualDeltaX * forwardX + actualDeltaZ * forwardZ) / actualDistance;
+          forwardSpeed = (dot * actualSpeed) / tankSpeed;
+        }
         forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
       }
     } else {
@@ -1902,7 +1938,7 @@ function handleMotion(deltaTime) {
     const sentRS = Number(rotationSpeed.toFixed(2));
     const sentVV = Number(verticalVelocity.toFixed(2));
 
-    sendToServer({
+    const movePacket = {
       type: 'm',
       id: myPlayerId,
       x: Number(playerX.toFixed(2)),
@@ -1913,7 +1949,14 @@ function handleMotion(deltaTime) {
       rs: sentRS,
       vv: sentVV,
       dt: Number(deltaTime.toFixed(3)),
-    });
+    };
+    
+    // Add optional direction field if sliding
+    if (slideDirection !== null) {
+      movePacket.d = Number(slideDirection.toFixed(2));
+    }
+
+    sendToServer(movePacket);
     // Store the ROUNDED values we actually sent to prevent rounding-induced deltas
     lastSentForwardSpeed = sentFS;
     lastSentRotationSpeed = sentRS;
@@ -2258,7 +2301,7 @@ function updateChatWindow() {
 function extrapolatePosition(player, dt) {
   if (!player || !gameConfig) return player;
   
-  const { x, y, z, r, forwardSpeed, rotationSpeed, verticalVelocity, jumpDirection } = player;
+  const { x, y, z, r, forwardSpeed, rotationSpeed, verticalVelocity, jumpDirection, slideDirection } = player;
   
   // Apply rotation
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED || 1.5;
@@ -2290,10 +2333,13 @@ function extrapolatePosition(player, dt) {
     const rs = rotationSpeed || 0;
     const fs = forwardSpeed || 0;
     
+    // Use slide direction if present, otherwise use rotation
+    const moveDirection = slideDirection !== undefined ? slideDirection : r;
+    
     if (Math.abs(rs) < 0.001) {
-      // Straight line motion
-      const dx = -Math.sin(r) * fs * speed * dt;
-      const dz = -Math.cos(r) * fs * speed * dt;
+      // Straight line motion (or sliding)
+      const dx = -Math.sin(moveDirection) * fs * speed * dt;
+      const dz = -Math.cos(moveDirection) * fs * speed * dt;
       return { x: x + dx, y: y, z: z + dz, r: newR };
     } else {
       // Circular arc motion
@@ -2366,7 +2412,8 @@ function animate() {
         forwardSpeed: tank.userData.forwardSpeed || 0,
         rotationSpeed: tank.userData.rotationSpeed || 0,
         verticalVelocity: tank.userData.verticalVelocity || 0,
-        jumpDirection: tank.userData.jumpDirection
+        jumpDirection: tank.userData.jumpDirection,
+        slideDirection: tank.userData.slideDirection
       }, timeSinceUpdate);
       
       // Update tank's rendered position smoothly

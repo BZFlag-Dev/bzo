@@ -470,10 +470,13 @@ class Player {
     const rs = this.rotationSpeed || 0;
     const fs = this.forwardSpeed || 0;
     
+    // Use slide direction if present, otherwise use rotation
+    const moveDirection = this.slideDirection !== undefined ? this.slideDirection : this.rotation;
+    
     if (Math.abs(rs) < 0.001) {
-      // Straight line motion
-      const dx = -Math.sin(this.rotation) * fs * speed * dt;
-      const dz = -Math.cos(this.rotation) * fs * speed * dt;
+      // Straight line motion (or sliding)
+      const dx = -Math.sin(moveDirection) * fs * speed * dt;
+      const dz = -Math.cos(moveDirection) * fs * speed * dt;
       return { x: this.x + dx, y: this.y, z: this.z + dz, r: newR };
     } else {
       // Circular arc motion
@@ -1073,6 +1076,7 @@ wss.on('connection', (ws, req) => {
           const fs = Number(message.fs);
           const rs = Number(message.rs);
           const vv = Number(message.vv);
+          const d = message.d !== undefined ? Number(message.d) : undefined; // Optional slide direction
           
           // Track jump direction for extrapolation
           const oldVV = player.verticalVelocity || 0;
@@ -1103,7 +1107,8 @@ wss.on('connection', (ws, req) => {
           const fsChanged = Math.abs(fs - (player.forwardSpeed || 0)) > 0.1;
           const rsChanged = Math.abs(rs - (player.rotationSpeed || 0)) > 0.1;
           const vvChanged = Math.abs(vv - (player.verticalVelocity || 0)) > 0.5;
-          const velocityChanged = fsChanged || rsChanged || vvChanged;
+          const isSliding = d !== undefined; // Use loose validation whenever sliding (extrapolation may not match)
+          const velocityChanged = fsChanged || rsChanged || vvChanged || isSliding;
           
           // Use actual deltaTime for validation since we compare to extrapolated position
           // The extrapolated position accounts for the full time interval using OLD velocities
@@ -1125,8 +1130,10 @@ wss.on('connection', (ws, req) => {
             player.forwardSpeed = fs;
             player.rotationSpeed = rs;
             player.verticalVelocity = vv;
+            player.slideDirection = d; // Store slide direction (undefined if not sliding)
             player.lastUpdate = now; // Update timestamp AFTER accepting the move
-            broadcast({
+            
+            const pmPacket = {
               type: 'pm',
               id: player.id,
               x,
@@ -1136,7 +1143,14 @@ wss.on('connection', (ws, req) => {
               fs,
               rs,
               vv,
-            }, ws);
+            };
+            
+            // Include optional slide direction if present
+            if (d !== undefined) {
+              pmPacket.d = d;
+            }
+            
+            broadcast(pmPacket, ws);
           } else {
             // Validation failed - jumpDirection unchanged (no update needed)
             // Send correction back to client

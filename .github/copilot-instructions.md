@@ -88,3 +88,57 @@
 ---
 
 **This flow is project memory and should be followed for all future join/entry/scoreboard logic.**
+
+# Movement Direction Vector (Planned Feature)
+
+## Problem
+When sliding along obstacles or boundaries, the player's actual movement direction differs from their rotation, but no packet is sent because `fs` and `rs` don't change. This causes:
+- Server has stale position (incorrect hit detection)
+- Other clients extrapolate in wrong direction (ghost through obstacles)
+- Especially noticeable when sliding along walls or jumping diagonally into obstacles
+
+## Solution: Optional Direction Field (`d`)
+Add optional `d` (direction) field to `move` messages when actual movement direction differs from expected direction.
+
+### When to send `d`:
+- `validateMove()` returns `altered: true` (slide occurred)
+- Calculate actual movement direction from `(newX - oldX, newZ - oldZ)`
+- If `abs(actualDirection - expectedDirection) > 0.01 radians`, include `d` in packet
+- Expected direction:
+  - On ground: `r` (rotation)
+  - In air (jump/fall): `jumpDirection` (frozen direction)
+
+### Packet structure:
+```javascript
+// Normal movement (no slide):
+{ type: 'move', x, y, z, r, fs, rs, vv }
+
+// Sliding movement:
+{ type: 'move', x, y, z, r, fs, rs, vv, d: actualDirection }
+```
+
+### Server handling:
+- If `d` present, use it for extrapolation instead of `r`
+- Validate `d` is reasonable (perpendicular to collision normal if near obstacles)
+- Store as `player.slideDirection` for extrapolation
+- Broadcast `d` in `pm` message
+
+### Client extrapolation:
+```javascript
+const moveDirection = player.slideDirection !== undefined 
+  ? player.slideDirection 
+  : (player.jumpDirection !== null ? player.jumpDirection : player.r);
+const dx = -Math.sin(moveDirection) * fs * speed * dt;
+const dz = -Math.cos(moveDirection) * fs * speed * dt;
+```
+
+### Benefits:
+- Minimal bandwidth: Only 4 extra bytes when sliding
+- No extra client compute: Sliding player already calculated direction
+- Accurate extrapolation: Other clients see correct movement
+- Better hit detection: Server has accurate position
+
+### Implementation status:
+**IMPLEMENTED** - Direction vector feature is now active.
+
+---
