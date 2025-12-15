@@ -1445,6 +1445,25 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
 
   // Try full movement first
   const collisionObj = checkCollision(newX, newY, newZ, tankRadius);
+  
+  // If we hit a collision while moving upward (jumping into obstacle bottom), start falling
+  if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY > 0) {
+    // Hit obstacle bottom while jumping - immediately start falling
+    // Keep horizontal position at current location, start falling from current height
+    return { 
+      x: x, 
+      y: y, 
+      z: z, 
+      moved: false, 
+      altered: false, 
+      landedOn: null, 
+      landedType: null, 
+      startedFalling: false, 
+      fallingFromObstacle: null,
+      hitObstacleBottom: true  // Signal to reverse vertical velocity
+    };
+  }
+  
   if (!collisionObj || collisionObj.type === 'ontop') {
     // If we're on top of an obstacle, that's the landing
     if (collisionObj && collisionObj.type === 'ontop') {
@@ -1751,7 +1770,12 @@ function handleMotion(deltaTime) {
 
   const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
 
-  if (result.startedFalling) {
+  if (result.hitObstacleBottom) {
+    // Hit obstacle bottom while jumping upward - reverse to falling
+    myTank.userData.verticalVelocity = -Math.abs(myTank.userData.verticalVelocity) * 0.5; // Bounce with 50% energy loss
+    // Keep jumpDirection frozen (still in air), but now falling
+    // Don't change position this frame - just reverse velocity
+  } else if (result.startedFalling) {
     // Set small negative velocity so server knows we're falling (not on ground with vv=0)
     myTank.userData.verticalVelocity = -0.1;
     forceMoveSend = true; // Immediately notify server we're falling
