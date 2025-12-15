@@ -1796,7 +1796,8 @@ function handleMotion(deltaTime) {
       // In air: use last known forwardSpeed from userData
       forwardSpeed = myTank.userData.forwardSpeed || 0;
     }
-    if (!(myTank.position.y > 0)) {
+    // Calculate rotation speed when not in air (on ground or obstacle)
+    if (!isInAir) {
       const actualDeltaRot = playerRotation - oldRotation;
       const actualRotSpeed = actualDeltaRot / deltaTime;
       const tankRotSpeed = gameConfig.TANK_ROTATION_SPEED;
