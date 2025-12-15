@@ -778,6 +778,11 @@ function handleServerMessage(message) {
       worldTime = message.worldTime;
       // Clear any existing tanks from previous connections
       tanks.forEach((tank, id) => {
+        // Remove ghost mesh if it exists
+        if (tank.userData.ghostMesh) {
+          scene.remove(tank.userData.ghostMesh);
+          tank.userData.ghostMesh = null;
+        }
         scene.remove(tank);
       });
       tanks.clear();
