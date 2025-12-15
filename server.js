@@ -442,16 +442,12 @@ class Player {
     const rotSpeed = GAME_CONFIG.TANK_ROTATION_SPEED || 1.5;
     const newR = this.rotation + this.rotationSpeed * rotSpeed * dt;
     
-    // Debug logging for extrapolation
-    if (dt > 1.0) {
-      log(`[EXTRAP] dt=${dt.toFixed(2)}s, pos=(${this.x.toFixed(2)},${this.z.toFixed(2)}), r=${this.rotation.toFixed(2)}, fs=${this.forwardSpeed.toFixed(2)}, rs=${this.rotationSpeed.toFixed(2)}, jumpDir=${this.jumpDirection !== null ? this.jumpDirection.toFixed(2) : 'null'}`);
-    }
-    
     // Determine if player is in air based on jumpDirection
     const isInAir = this.jumpDirection !== null && this.jumpDirection !== undefined;
     
     if (isInAir) {
-      // In air: straight-line motion in frozen jumpDirection
+      // In air: ALWAYS straight-line motion in frozen jumpDirection
+      // Rotation continues to change (newR), but linear motion is frozen
       const speed = GAME_CONFIG.TANK_SPEED || 15;
       const dx = -Math.sin(this.jumpDirection) * this.forwardSpeed * speed * dt;
       const dz = -Math.cos(this.jumpDirection) * this.forwardSpeed * speed * dt;
@@ -467,56 +463,48 @@ class Player {
         z: this.z + dz,
         r: newR
       };
+    }
+    
+    // On ground: check for circular vs straight motion
+    const speed = GAME_CONFIG.TANK_SPEED || 15;
+    const rs = this.rotationSpeed || 0;
+    const fs = this.forwardSpeed || 0;
+    
+    if (Math.abs(rs) < 0.001) {
+      // Straight line motion
+      const dx = -Math.sin(this.rotation) * fs * speed * dt;
+      const dz = -Math.cos(this.rotation) * fs * speed * dt;
+      return { x: this.x + dx, y: this.y, z: this.z + dz, r: newR };
     } else {
-      // On ground: circular arc or straight line
-      const speed = GAME_CONFIG.TANK_SPEED || 15;
-      const rs = this.rotationSpeed || 0;
-      const fs = this.forwardSpeed || 0;
+      // Circular arc motion
+      // Radius of curvature: R = |linear_velocity / angular_velocity|
+      const R = Math.abs((fs * speed) / (rs * rotSpeed));
       
-      if (Math.abs(rs) < 0.001) {
-        // Straight line motion
-        const dx = -Math.sin(this.rotation) * fs * speed * dt;
-        const dz = -Math.cos(this.rotation) * fs * speed * dt;
-        const result = { x: this.x + dx, y: this.y, z: this.z + dz, r: newR };
-        if (dt > 1.0) {
-          log(`[EXTRAP] Straight line: dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)}, result=(${result.x.toFixed(2)},${result.z.toFixed(2)})`);
-        }
-        return result;
-      } else {
-        // Circular arc motion
-        // Radius of curvature: R = |linear_velocity / angular_velocity|
-        const R = Math.abs((fs * speed) / (rs * rotSpeed));
-        
-        // Arc angle traveled
-        const theta = rs * rotSpeed * dt;
-        
-        // Center of circle in world space
-        // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2  
-        const perpAngle = this.rotation - Math.PI / 2;
-        const centerSign = -(rs * fs); // Negated to match correct circular motion
-        const cx = this.x + Math.sign(centerSign) * R * (-Math.sin(perpAngle));
-        const cz = this.z + Math.sign(centerSign) * R * (-Math.cos(perpAngle));
-        
-        // New position rotated around center
-        // Negate theta for clockwise rotation (rs > 0 means turn right = clockwise)
-        const dx = this.x - cx;
-        const dz = this.z - cz;
-        const cosTheta = Math.cos(-theta);
-        const sinTheta = Math.sin(-theta);
-        const newDx = dx * cosTheta - dz * sinTheta;
-        const newDz = dx * sinTheta + dz * cosTheta;
-        
-        const result = {
-          x: cx + newDx,
-          y: this.y,
-          z: cz + newDz,
-          r: this.rotation + theta
-        };
-        if (dt > 1.0) {
-          log(`[EXTRAP] Circular arc: R=${R.toFixed(2)}, theta=${theta.toFixed(2)}, center=(${cx.toFixed(2)},${cz.toFixed(2)}), result=(${result.x.toFixed(2)},${result.z.toFixed(2)})`);
-        }
-        return result;
-      }
+      // Arc angle traveled
+      const theta = rs * rotSpeed * dt;
+      
+      // Center of circle in world space
+      // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2  
+      const perpAngle = this.rotation - Math.PI / 2;
+      const centerSign = -(rs * fs); // Negated to match correct circular motion
+      const cx = this.x + Math.sign(centerSign) * R * (-Math.sin(perpAngle));
+      const cz = this.z + Math.sign(centerSign) * R * (-Math.cos(perpAngle));
+      
+      // New position rotated around center
+      // Negate theta for clockwise rotation (rs > 0 means turn right = clockwise)
+      const dx = this.x - cx;
+      const dz = this.z - cz;
+      const cosTheta = Math.cos(-theta);
+      const sinTheta = Math.sin(-theta);
+      const newDx = dx * cosTheta - dz * sinTheta;
+      const newDz = dx * sinTheta + dz * cosTheta;
+      
+      return {
+        x: cx + newDx,
+        y: this.y,
+        z: cz + newDz,
+        r: this.rotation + theta
+      };
     }
   }
 }
@@ -758,13 +746,17 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
 function validateShot(player, shotX, shotY, shotZ) {
   // Shot originates from barrel end, which is ~3 units from tank center
   const barrelLength = 3.0;
-  const dist = distance(player.x, player.z, shotX, shotZ);
+  const now = Date.now();
+  
+  // Use extrapolated position, not stored position
+  const extrapolated = player.getExtrapolatedPosition(now);
+  const dist = distance(extrapolated.x, extrapolated.z, shotX, shotZ);
+  
   if (dist > barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE) {
-    log(`Player "${player.name}" shot from invalid position: ${dist} units away`);
+    log(`Player "${player.name}" shot from invalid position: ${dist.toFixed(2)} units away (extrapolated: ${extrapolated.x.toFixed(2)}, ${extrapolated.z.toFixed(2)}, shot: ${shotX.toFixed(2)}, ${shotZ.toFixed(2)})`);
     return false;
   }
 
-  const now = Date.now();
   if (now - player.lastShot < GAME_CONFIG.SHOT_COOLDOWN) {
     log(`Player "${player.name}" shot too quickly`);
     return false;
@@ -1087,14 +1079,21 @@ wss.on('connection', (ws, req) => {
           const isJumpStart = oldVV <= 0 && vv > 10; // Transition from ground/falling to jumping
           const isLanding = player.jumpDirection !== null && vv === 0; // Transition from air to ground
           
-          // Save old jumpDirection in case validation fails
-          const oldJumpDirection = player.jumpDirection;
-          
-          // Update jumpDirection BEFORE validation so extrapolation uses correct physics
+          // Log jump/land events but DON'T update jumpDirection yet - must validate first
           if (isJumpStart) {
-            player.jumpDirection = r; // Store rotation at jump start
+            // Calculate expected landing position (assuming ~2 second flight)
+            const jumpTime = 2.05; // Approximate jump duration
+            const speed = GAME_CONFIG.TANK_SPEED || 15;
+            const rotSpeed = GAME_CONFIG.TANK_ROTATION_SPEED || 1.5;
+            const dx = -Math.sin(r) * fs * speed * jumpTime;
+            const dz = -Math.cos(r) * fs * speed * jumpTime;
+            const expectedLandX = x + dx;
+            const expectedLandZ = z + dz;
+            const expectedLandR = r + rs * rotSpeed * jumpTime;
+            log(`[JUMP] Player "${player.name}" jumped: pos=(${x.toFixed(2)},${z.toFixed(2)}), r=${r.toFixed(2)}, fs=${fs.toFixed(2)}, rs=${rs.toFixed(2)}, vv=${vv.toFixed(2)}`);
+            log(`[JUMP] Expected landing: pos=(${expectedLandX.toFixed(2)},${expectedLandZ.toFixed(2)}), r=${expectedLandR.toFixed(2)}`);
           } else if (isLanding) {
-            player.jumpDirection = null; // Clear jump direction on landing
+            log(`[LAND] Player "${player.name}" landed: pos=(${x.toFixed(2)},${z.toFixed(2)}), r=${r.toFixed(2)}, fs=${fs.toFixed(2)}, rs=${rs.toFixed(2)}, vv=${vv.toFixed(2)}`);
           }
           
           // Check if velocities changed significantly - if so, use looser validation
@@ -1106,6 +1105,13 @@ wss.on('connection', (ws, req) => {
           // Use actual deltaTime for validation since we compare to extrapolated position
           // The extrapolated position accounts for the full time interval using OLD velocities
           if (validateMovement(player, x, y, z, r, deltaTime, velocityChanged)) {
+            // Validation passed - now update jumpDirection
+            if (isJumpStart) {
+              player.jumpDirection = r; // Store rotation at jump start
+            } else if (isLanding) {
+              player.jumpDirection = null; // Clear jump direction on landing
+            }
+            
             // Update position/rotation AND velocities for next extrapolation
             player.x = x;
             player.y = y;
@@ -1127,8 +1133,7 @@ wss.on('connection', (ws, req) => {
               vv,
             }, ws);
           } else {
-            // Validation failed - restore old jumpDirection
-            player.jumpDirection = oldJumpDirection;
+            // Validation failed - jumpDirection unchanged (no update needed)
             // Send correction back to client
             // Reset velocities and timestamp so next extrapolation starts from corrected state
             player.forwardSpeed = 0;

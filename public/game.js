@@ -1606,9 +1606,8 @@ function handleInputEvents() {
   const onGround = myTank.position.y < 0.1;
   let onObstacle = false;
   if (onGround) {
-    myTank.userData.verticalVelocity = 0;
+    // Don't clear verticalVelocity here - let handleMotion() detect landing first
     playerY = 0;
-    jumpDirection = null; // Reset jump direction when grounded
   } else {
     for (const obs of OBSTACLES) {
       const obstacleHeight = obs.h || 4;
@@ -1624,9 +1623,8 @@ function handleInputEvents() {
         const margin = 2 * 0.7;
         if (Math.abs(localX) <= obs.w / 2 + margin && Math.abs(localZ) <= obs.d / 2 + margin) {
           onObstacle = true;
-          myTank.userData.verticalVelocity = 0;
+          // Don't clear verticalVelocity here - let handleMotion() detect landing first
           playerY = obstacleTop;
-          jumpDirection = null; // Reset jump direction when landed on obstacle
           break;
         }
       }
@@ -1638,14 +1636,14 @@ function handleInputEvents() {
 
   // Gather intended input from controls
   if (isInAir) {
-    // In air: movement is fixed to jumpDirection, but allow visual rotation
-    intendedForward = myTank.userData.forwardSpeed || 0;
+    // In air: use stored jump values to match what we send in packets
+    intendedForward = myTank.userData.jumpForwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
     if (virtualControlsEnabled) {
       intendedForward = virtualInput.forward;
       intendedRotation = virtualInput.turn;
-      if (!isInAir && virtualInput.jump) {
+      if (jumpDirection === null && virtualInput.jump) {
         intendedY = 1;
         jumpTriggered = true;
       }
@@ -1662,7 +1660,7 @@ function handleInputEvents() {
     if (wasdPressed && mouseControlEnabled) {
       toggleMouseMode();
     }
-    if ((keys['Tab']) && !isInAir) {
+    if ((keys['Tab']) && jumpDirection === null) {
       intendedY = 1;
       jumpTriggered = true;
     }
@@ -1679,6 +1677,10 @@ function handleInputEvents() {
 function handleMotion(deltaTime) {
   if (!myTank || !gameConfig) return;
   if (isPaused || pauseCountdownStart > 0) return;
+
+  // Track air state before this frame's updates for landing detection
+  const wasInAir = jumpDirection !== null;
+  const hadVerticalVelocity = myTank.userData.verticalVelocity !== 0;
 
   let moved = false;
   const oldX = playerX;
@@ -1713,14 +1715,15 @@ function handleMotion(deltaTime) {
   }
 
   let forceMoveSend = false; // Track if we need to force a move packet
+  let jumpStarted = false; // Track if jump was just triggered this frame
   
-  if (jumpTriggered && !isInAir) {
+  // Only allow jump if not currently in a jump (jumpDirection is null)
+  if (jumpTriggered && jumpDirection === null) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
-    jumpDirection = playerRotation; // Store jump direction at jump start
-    myJumpDirection = jumpDirection; // Track our own jump direction
-    // Freeze forwardSpeed at jump time so it doesn't decrease during circular jumps
-    myTank.userData.frozenForwardSpeed = myTank.userData.forwardSpeed || 0;
+    jumpStarted = true; // Mark that jump started this frame
+    // Store intendedForward at jump time for use in jump packet
+    myTank.userData.jumpForwardSpeed = intendedForward;
     forceMoveSend = true; // Force send on jump
     if (myTank) renderManager.playLocalJumpSound(myTank.position);
   }
@@ -1731,12 +1734,6 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity = -0.01;
   } else if (result.landedOn) {
     myTank.userData.verticalVelocity = 0;
-    // Check if we just landed (transition from air to ground)
-    if (isInAir && jumpDirection !== null) {
-      forceMoveSend = true; // Force send on landing
-      myJumpDirection = null; // Clear our jump direction on land
-      myTank.userData.frozenForwardSpeed = undefined; // Clear frozen forwardSpeed
-    }
   }
 
   let forwardSpeed = 0;
@@ -1750,10 +1747,17 @@ function handleMotion(deltaTime) {
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
+    
+    // Store jumpDirection AFTER rotation update so it matches packet r value
+    if (jumpStarted) {
+      jumpDirection = playerRotation;
+      myJumpDirection = jumpDirection;
+    }
   }
 
   if (deltaTime > 0) {
     // Only recalculate forwardSpeed when on ground
+    // In air, keep using the last calculated value (from userData)
     if (!isInAir) {
       const actualDeltaX = playerX - oldX;
       const actualDeltaZ = playerZ - oldZ;
@@ -1768,10 +1772,8 @@ function handleMotion(deltaTime) {
         forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
       }
     } else {
-      // In air: use frozen forwardSpeed from jump start
-      if (myTank.userData.frozenForwardSpeed !== undefined) {
-        forwardSpeed = myTank.userData.frozenForwardSpeed;
-      }
+      // In air: use last known forwardSpeed from userData
+      forwardSpeed = myTank.userData.forwardSpeed || 0;
     }
     if (!(myTank.position.y > 0)) {
       const actualDeltaRot = playerRotation - oldRotation;
@@ -1783,6 +1785,16 @@ function handleMotion(deltaTime) {
   }
   myTank.userData.forwardSpeed = forwardSpeed;
   myTank.userData.rotationSpeed = rotationSpeed;
+
+  // Detect landing after all position/velocity updates
+  const nowHasVerticalVelocity = myTank.userData.verticalVelocity !== 0;
+  if (wasInAir && hadVerticalVelocity && !nowHasVerticalVelocity) {
+    // Just landed - force send packet
+    forceMoveSend = true;
+    jumpDirection = null;
+    myJumpDirection = null;
+    myTank.userData.jumpForwardSpeed = undefined;
+  }
 
   const now = performance.now();
   const timeSinceLastSend = now - lastSentTime;
@@ -1816,10 +1828,11 @@ function handleMotion(deltaTime) {
     ));
   
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
-    if (debugEnabled) console.log(`[CLIENT] Sending 'm': ${reasons.join(', ')}`);
+    if (debugEnabled) console.log(`[CLIENT] Sending dw: ${reasons.join(', ')}`);
     
     // Round velocities to the precision we send to match server expectations
-    const sentFS = Number(forwardSpeed.toFixed(2));
+    // For jump packets, send the intendedForward value used for movement, not calculated forwardSpeed
+    const sentFS = jumpStarted ? Number((myTank.userData.jumpForwardSpeed || 0).toFixed(2)) : Number(forwardSpeed.toFixed(2));
     const sentRS = Number(rotationSpeed.toFixed(2));
     const sentVV = Number(verticalVelocity.toFixed(2));
 
@@ -2281,10 +2294,6 @@ function animate() {
       
       // Update tank's rendered position smoothly
       if (extrapolated) {
-        // Debug: log if rotating
-        if (debugEnabled && tank.userData.rotationSpeed && Math.abs(tank.userData.rotationSpeed) > 0.1 && timeSinceUpdate > 0.1) {
-          console.log(`[EXTRAP] dt=${timeSinceUpdate.toFixed(2)}s, rs=${tank.userData.rotationSpeed.toFixed(2)}, stored_r=${tank.userData.serverPosition.r.toFixed(2)}, new_r=${extrapolated.r.toFixed(2)}, delta_r=${(extrapolated.r - tank.userData.serverPosition.r).toFixed(2)}`);
-        }
         tank.position.x = extrapolated.x;
         tank.position.y = extrapolated.y;
         tank.position.z = extrapolated.z;
