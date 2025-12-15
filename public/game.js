@@ -880,6 +880,10 @@ function handleServerMessage(message) {
           // Create ghost mesh for local player to visualize what others see
           if (!myTank.userData.ghostMesh) {
             const ghostTank = renderManager.createGhostMesh(myTank);
+            // Reset rotation to 0 to ensure we're setting absolute values
+            ghostTank.rotation.set(0, 0, 0);
+            ghostTank.position.set(playerX, playerY, playerZ);
+            ghostTank.rotation.y = playerRotation;
             ghostTank.visible = showGhosts;
             scene.add(ghostTank);
             myTank.userData.ghostMesh = ghostTank;
@@ -1863,12 +1867,13 @@ function handleMotion(deltaTime) {
     
     // Update local player ghost to show what server/other players see
     if (myTank && myTank.userData.ghostMesh) {
-      myTank.userData.ghostMesh.position.set(
-        Number(playerX.toFixed(2)),
-        Number(playerY.toFixed(2)),
-        Number(playerZ.toFixed(2))
-      );
-      myTank.userData.ghostMesh.rotation.y = Number(playerRotation.toFixed(2));
+      const ghostX = Number(playerX.toFixed(2));
+      const ghostY = Number(playerY.toFixed(2));
+      const ghostZ = Number(playerZ.toFixed(2));
+      const ghostR = Number(playerRotation.toFixed(2));
+      
+      myTank.userData.ghostMesh.position.set(ghostX, ghostY, ghostZ);
+      myTank.userData.ghostMesh.rotation.y = ghostR;
     }
   }
   if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space'])) {
