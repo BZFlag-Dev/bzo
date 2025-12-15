@@ -879,6 +879,33 @@ class RenderManager {
     return tankGroup;
   }
 
+  createGhostMesh(tank) {
+    // Create a semi-transparent ghost version of a tank for showing server-confirmed position
+    const ghostTank = tank.clone(true); // Deep clone the tank
+    ghostTank.traverse((child) => {
+      if (child.isMesh && child.material) {
+        // Clone materials to avoid shared references
+        if (Array.isArray(child.material)) {
+          child.material = child.material.map(mat => {
+            const cloned = mat.clone();
+            cloned.transparent = true;
+            cloned.opacity = 0.3;
+            cloned.emissive.setHex(0x00ff00); // Green emissive
+            cloned.emissiveIntensity = 0.5;
+            return cloned;
+          });
+        } else {
+          child.material = child.material.clone();
+          child.material.transparent = true;
+          child.material.opacity = 0.3;
+          child.material.emissive.setHex(0x00ff00); // Green emissive
+          child.material.emissiveIntensity = 0.5;
+        }
+      }
+    });
+    return ghostTank;
+  }
+
   updateSpriteLabel(sprite, name, color = '#4CAF50') {
     if (!sprite) return;
     const canvas = document.createElement('canvas');

@@ -29,17 +29,23 @@ const fs = require('fs');
 
 // Common log function: logs to console and to server.log
 function log(...args) {
+  const now = new Date();
+  const timestamp = now.toISOString();
   const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  const logMsg = `[${timestamp}] ${msg}`;
   // Write to console
-  console.log(msg);
+  console.log(logMsg);
   // Append to server.log
-  fs.appendFileSync(path.join(__dirname, 'server.log'), msg + '\n');
+  fs.appendFileSync(path.join(__dirname, 'server.log'), logMsg + '\n');
 }
 
 function logError(...args) {
+  const now = new Date();
+  const timestamp = now.toISOString();
   const msg = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
-  console.error(msg);
-  fs.appendFileSync(path.join(__dirname, 'server.log'), '[ERROR] ' + msg + '\n');
+  const logMsg = `[${timestamp}] [ERROR] ${msg}`;
+  console.error(logMsg);
+  fs.appendFileSync(path.join(__dirname, 'server.log'), logMsg + '\n');
 }
 
 const app = express();
@@ -368,6 +374,11 @@ class Player {
     this.connectDate = new Date();
     // Assign a random color for the tank (as a hex int)
     this.color = Player.pickRandomColor();
+    
+    // Extrapolation state
+    this.forwardSpeed = 0;
+    this.rotationSpeed = 0;
+    this.jumpDirection = null;
   }
 
   // Pick a random color suitable for tanks (avoid too dark/light)
@@ -416,6 +427,101 @@ class Player {
       connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
       color: this.color,
     };
+  }
+  
+  /**
+   * Get extrapolated position at a specific time based on last known state.
+   * @param {number} atTime - Timestamp (ms) to extrapolate to
+   * @returns {{x: number, y: number, z: number, r: number}}
+   */
+  getExtrapolatedPosition(atTime) {
+    const dt = (atTime - this.lastUpdate) / 1000; // Convert to seconds
+    if (dt <= 0) return { x: this.x, y: this.y, z: this.z, r: this.rotation };
+    
+    // Apply rotation
+    const rotSpeed = GAME_CONFIG.TANK_ROTATION_SPEED || 1.5;
+    const newR = this.rotation + this.rotationSpeed * rotSpeed * dt;
+    
+    // Debug logging for extrapolation
+    if (dt > 1.0) {
+      log(`[EXTRAP] dt=${dt.toFixed(2)}s, pos=(${this.x.toFixed(2)},${this.z.toFixed(2)}), r=${this.rotation.toFixed(2)}, fs=${this.forwardSpeed.toFixed(2)}, rs=${this.rotationSpeed.toFixed(2)}, jumpDir=${this.jumpDirection !== null ? this.jumpDirection.toFixed(2) : 'null'}`);
+    }
+    
+    // Determine if player is in air based on jumpDirection
+    const isInAir = this.jumpDirection !== null && this.jumpDirection !== undefined;
+    
+    if (isInAir) {
+      // In air: straight-line motion in frozen jumpDirection
+      const speed = GAME_CONFIG.TANK_SPEED || 15;
+      const dx = -Math.sin(this.jumpDirection) * this.forwardSpeed * speed * dt;
+      const dz = -Math.cos(this.jumpDirection) * this.forwardSpeed * speed * dt;
+      
+      // Apply gravity to vertical velocity
+      const gravity = GAME_CONFIG.GRAVITY || 9.8;
+      const vv = this.verticalVelocity - gravity * dt;
+      const dy = (this.verticalVelocity + vv) / 2 * dt; // Average velocity over dt
+      
+      return {
+        x: this.x + dx,
+        y: Math.max(0, this.y + dy), // Don't go below ground
+        z: this.z + dz,
+        r: newR
+      };
+    } else {
+      // On ground: circular arc or straight line
+      const speed = GAME_CONFIG.TANK_SPEED || 15;
+      const rs = this.rotationSpeed || 0;
+      const fs = this.forwardSpeed || 0;
+      
+      if (Math.abs(rs) < 0.001) {
+        // Straight line motion
+        const dx = -Math.sin(this.rotation) * fs * speed * dt;
+        const dz = -Math.cos(this.rotation) * fs * speed * dt;
+        const result = { x: this.x + dx, y: this.y, z: this.z + dz, r: newR };
+        if (dt > 1.0) {
+          log(`[EXTRAP] Straight line: dx=${dx.toFixed(2)}, dz=${dz.toFixed(2)}, result=(${result.x.toFixed(2)},${result.z.toFixed(2)})`);
+        }
+        return result;
+      } else {
+        // Circular arc motion
+        // Radius of curvature: R = |linear_velocity / angular_velocity|
+        const R = Math.abs((fs * speed) / (rs * rotSpeed));
+        
+        // Arc angle traveled
+        const theta = rs * rotSpeed * dt;
+        
+        // Center of circle in world space
+        // Forward direction is (-sin(r), -cos(r))
+        // Right perpendicular (90° CW) is (-cos(r), sin(r))
+        // Left perpendicular (90° CCW) is (cos(r), -sin(r))
+        // Same sign (fs*rs > 0): forward+right or back+left → center to right
+        // Opposite sign (fs*rs < 0): forward+left or back+right → center to left
+        const perpSign = (fs * rs > 0) ? 1 : -1;
+        const cx = this.x + perpSign * R * (-Math.cos(this.rotation));
+        const cz = this.z + perpSign * R * Math.sin(this.rotation);
+        
+        // New position rotated around center
+        // Use -theta because standard rotation matrix is counter-clockwise,
+        // but rs > 0 means turning right (clockwise)
+        const dx = this.x - cx;
+        const dz = this.z - cz;
+        const cosTheta = Math.cos(-theta);
+        const sinTheta = Math.sin(-theta);
+        const newDx = dx * cosTheta - dz * sinTheta;
+        const newDz = dx * sinTheta + dz * cosTheta;
+        
+        const result = {
+          x: cx + newDx,
+          y: this.y,
+          z: cz + newDz,
+          r: this.rotation + theta
+        };
+        if (dt > 1.0) {
+          log(`[EXTRAP] Circular arc: R=${R.toFixed(2)}, theta=${theta.toFixed(2)}, center=(${cx.toFixed(2)},${cz.toFixed(2)}), result=(${result.x.toFixed(2)},${result.z.toFixed(2)})`);
+        }
+        return result;
+      }
+    }
   }
 }
 
@@ -590,27 +696,39 @@ function findValidSpawnPosition(tankRadius = 2) {
 }
 
 // Validate player movement
-function validateMovement(player, newX, newY, newZ, newRotation, deltaTime) {
+function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velocityChanged = false) {
   // Can't move while paused
   if (player.paused) {
     return false;
   }
 
-  // Calculate distance moved
-  const distMoved = distance(player.x, player.z, newX, newZ);
-  const maxDist = GAME_CONFIG.TANK_SPEED * deltaTime * GAME_CONFIG.MAX_SPEED_TOLERANCE;
+  // Get extrapolated position based on last known velocities
+  const now = Date.now();
+  const timeSinceLastUpdate = (now - player.lastUpdate) / 1000;
+  const extrapolated = player.getExtrapolatedPosition(now);
 
-  if (distMoved > maxDist) {
-    log(`Player "${player.name}" moved too fast: ${distMoved} > ${maxDist}`);
+  // Compare to extrapolated position, not last stored position
+  // With velocity-based dead reckoning, the client position should match extrapolated position
+  // We allow a tolerance based on physics drift, network jitter, and rounding errors
+  // If velocity changed, use much looser validation since extrapolation doesn't account for it
+  const distMoved = distance(extrapolated.x, extrapolated.z, newX, newZ);
+  const maxDrift = velocityChanged ? 20.0 : 3.0; // Looser tolerance when velocity changes
+
+  if (distMoved > maxDrift) {
+    log(`Player "${player.name}" moved too far from extrapolated: ${distMoved.toFixed(2)} > ${maxDrift.toFixed(2)}`);
+    log(`  Stored: (${player.x.toFixed(2)}, ${player.z.toFixed(2)}, r=${player.rotation.toFixed(2)})`);
+    log(`  Extrap: (${extrapolated.x.toFixed(2)}, ${extrapolated.z.toFixed(2)}, r=${extrapolated.r.toFixed(2)})`);
+    log(`  Recvd:  (${newX.toFixed(2)}, ${newZ.toFixed(2)}, r=${newRotation.toFixed(2)})`);
+    log(`  Vels: fs=${player.forwardSpeed.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, vv=${player.verticalVelocity.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s`);
     return false;
   }
 
-  // Calculate rotation change
-  const rotDiff = Math.abs(normalizeAngle(newRotation - player.rotation));
-  const maxRot = GAME_CONFIG.TANK_ROTATION_SPEED * deltaTime * GAME_CONFIG.MAX_SPEED_TOLERANCE;
+  // Calculate rotation change from extrapolated rotation
+  const rotDiff = Math.abs(normalizeAngle(newRotation - extrapolated.r));
+  const maxRotDrift = 0.5; // Allow ~28 degrees of drift from extrapolation (increased tolerance)
 
-  if (rotDiff > maxRot) {
-    log(`Player "${player.name}" rotated too fast: ${rotDiff} > ${maxRot}`);
+  if (rotDiff > maxRotDrift) {
+    log(`Player "${player.name}" rotated too far from extrapolated: ${rotDiff.toFixed(2)} > ${maxRotDrift.toFixed(2)} (stored: ${player.rotation.toFixed(2)}, extrapolated: ${extrapolated.r.toFixed(2)}, received: ${newRotation.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s)`);
     return false;
   }
 
@@ -778,19 +896,22 @@ function gameLoop() {
       }
     }
 
-    // Check collision with players
+    // Check collision with players using extrapolated positions
     players.forEach((player) => {
       if (player.id === proj.playerId) return; // Can't hit yourself
       if (player.paused) return; // Can't hit paused players
       if (player.health <= 0) return; // Can't hit dead players
 
+      // Use extrapolated position for accurate hit detection
+      const extrapolated = player.getExtrapolatedPosition(now);
+      
       // Check horizontal distance
-      const dist = distance(proj.x, proj.z, player.x, player.z);
+      const dist = distance(proj.x, proj.z, extrapolated.x, extrapolated.z);
       if (dist < 2) { // Tank hitbox radius
         // Check vertical collision - tank is roughly 2 units tall
         const tankHeight = 2;
-        const playerBottom = player.y;
-        const playerTop = player.y + tankHeight;
+        const playerBottom = extrapolated.y;
+        const playerTop = extrapolated.y + tankHeight;
 
         // Projectile must be within tank's vertical bounds
         if (proj.y >= playerBottom && proj.y <= playerTop) {
@@ -950,10 +1071,11 @@ wss.on('connection', (ws, req) => {
           const now = Date.now();
           // Calculate deltaTime based on server's last update time
           const deltaTime = (now - player.lastUpdate) / 1000;
-          player.lastUpdate = now;
+          // DON'T update player.lastUpdate here - it breaks extrapolation in validateMovement!
 
           // Clamp deltaTime to reasonable values (prevent abuse and handle reconnects)
-          const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 0.5);
+          // With velocity-based dead reckoning, we allow longer intervals (up to 10 seconds)
+          const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 10.0);
 
           // Only accept new compact field names
           const x = Number(message.x);
@@ -963,7 +1085,28 @@ wss.on('connection', (ws, req) => {
           const fs = Number(message.fs);
           const rs = Number(message.rs);
           const vv = Number(message.vv);
-          if (validateMovement(player, x, y, z, r, clampedDeltaTime)) {
+          
+          // Track jump direction for extrapolation
+          const oldVV = player.verticalVelocity || 0;
+          const isJumpStart = oldVV <= 0 && vv > 10; // Transition from ground/falling to jumping
+          const isLanding = oldVV < 0 && vv === 0 && y <= 0.1; // Transition from air to ground
+          
+          if (isJumpStart) {
+            player.jumpDirection = r; // Store rotation at jump start
+          } else if (isLanding) {
+            player.jumpDirection = null; // Clear jump direction on landing
+          }
+          
+          // Check if velocities changed significantly - if so, use looser validation
+          const fsChanged = Math.abs(fs - (player.forwardSpeed || 0)) > 0.1;
+          const rsChanged = Math.abs(rs - (player.rotationSpeed || 0)) > 0.1;
+          const vvChanged = Math.abs(vv - (player.verticalVelocity || 0)) > 0.5;
+          const velocityChanged = fsChanged || rsChanged || vvChanged;
+          
+          // Use actual deltaTime for validation since we compare to extrapolated position
+          // The extrapolated position accounts for the full time interval using OLD velocities
+          if (validateMovement(player, x, y, z, r, deltaTime, velocityChanged)) {
+            // Update position/rotation AND velocities for next extrapolation
             player.x = x;
             player.y = y;
             player.z = z;
@@ -971,6 +1114,7 @@ wss.on('connection', (ws, req) => {
             player.forwardSpeed = fs;
             player.rotationSpeed = rs;
             player.verticalVelocity = vv;
+            player.lastUpdate = now; // Update timestamp AFTER accepting the move
             broadcast({
               type: 'pm',
               id: player.id,

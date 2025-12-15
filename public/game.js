@@ -174,15 +174,21 @@ let playerY = 0; // Y is vertical position
 let playerZ = 0;
 let playerRotation = 0;
 
-// Dead reckoning state - track last sent position
-let lastSentX = 0;
-let lastSentZ = 0;
-let lastSentRotation = 0;
+// Dead reckoning state - track last sent velocities (not positions, since positions are extrapolated)
+let lastSentForwardSpeed = 0;
+let lastSentRotationSpeed = 0;
+let lastSentVerticalVelocity = 0;
 let lastSentTime = 0;
 let worldTime = 0;
-const POSITION_THRESHOLD = 0.5; // Send update if position differs by more than 0.5 units
-const ROTATION_THRESHOLD = 0.1; // Send update if rotation differs by more than 0.1 radians (~6 degrees)
-const MAX_UPDATE_INTERVAL = 200; // Force send update at least every 200ms
+// Velocity-based thresholds: only send when velocity changes significantly
+// Thresholds must be large enough to avoid noise from frame-to-frame velocity calculation variations
+const VELOCITY_THRESHOLD = 0.15; // Send if forward/rotation speed changes by 15%
+const VERTICAL_VELOCITY_THRESHOLD = 1.0; // Send if vertical velocity changes significantly
+const MAX_UPDATE_INTERVAL = 5000; // Force update every 5 seconds
+
+// Extrapolation state
+let myJumpDirection = null; // null when on ground, rotation when in air
+let showGhosts = false; // Toggle for ghost rendering
 
 // Debug tracking
 let debugEnabled = false;
@@ -303,6 +309,23 @@ window.addEventListener('DOMContentLoaded', () => {
         // Set initial state
         anaglyphBtn.classList.toggle('active', renderManager.getAnaglyphEnabled());
         anaglyphBtn.title = renderManager.getAnaglyphEnabled() ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+      }
+
+      // Ghost toggle button
+      const ghostBtn = document.getElementById('ghostBtn');
+      if (ghostBtn) {
+        ghostBtn.addEventListener('click', () => {
+          showGhosts = !showGhosts;
+          ghostBtn.classList.toggle('active', showGhosts);
+          ghostBtn.title = showGhosts ? 'Hide Ghost Players' : 'Show Ghost Players';
+          // Update visibility of all ghost meshes
+          tanks.forEach((tank, id) => {
+            if (id !== myPlayerId && tank.userData.ghostMesh) {
+              tank.userData.ghostMesh.visible = showGhosts;
+            }
+          });
+        });
+        ghostBtn.title = 'Show Ghost Players';
       }
     // Add handler for Upload Map button
     const uploadBtn = document.getElementById('uploadBtn');
@@ -793,10 +816,10 @@ function handleServerMessage(message) {
       renderManager.buildGround(gameConfig.MAP_SIZE);
       renderManager.createMapBoundaries(gameConfig.MAP_SIZE);
 
-      // Initialize dead reckoning state
-      lastSentX = playerX;
-      lastSentZ = playerZ;
-      lastSentRotation = playerRotation;
+      // Initialize dead reckoning state (velocity-based)
+      lastSentForwardSpeed = 0;
+      lastSentRotationSpeed = 0;
+      lastSentVerticalVelocity = 0;
       lastSentTime = performance.now();
 
       // Update obstacles from server
@@ -880,21 +903,40 @@ function handleServerMessage(message) {
       if (tank) {
         const oldY = tank.position.y;
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
+        const oldJumpDirection = tank.userData.jumpDirection;
 
+        // Store server-confirmed position for ghost rendering
+        tank.userData.serverPosition = {
+          x: message.x,
+          y: message.y,
+          z: message.z,
+          r: message.r
+        };
+        tank.userData.lastUpdateTime = performance.now();
+
+        // Update position (will be overridden by extrapolation in animation loop)
         tank.position.set(message.x, message.y, message.z);
         tank.rotation.y = message.r;
         tank.userData.forwardSpeed = message.fs;
         tank.userData.rotationSpeed = message.rs;
         tank.userData.verticalVelocity = message.vv;
 
-        // Detect jump (vertical velocity suddenly became positive and large)
-        if (oldVerticalVel < 10 && message.vv >= 20) {
+        // Detect jump start (record jump direction)
+        if (oldVerticalVel <= 0 && message.vv > 10) {
+          tank.userData.jumpDirection = message.r;
           renderManager.playLocalJumpSound(tank.position);
         }
 
-        // Detect landing
-        if (oldVerticalVel < 0 && message.vv === 0 && oldY > message.y) {
+        // Detect landing (clear jump direction)
+        if (oldVerticalVel < 0 && message.vv === 0 && message.y <= 0.1 && oldJumpDirection !== null) {
+          tank.userData.jumpDirection = null;
           renderManager.playLandSound(tank.position);
+        }
+
+        // Update ghost mesh position to server-confirmed position
+        if (tank.userData.ghostMesh) {
+          tank.userData.ghostMesh.position.set(message.x, message.y, message.z);
+          tank.userData.ghostMesh.rotation.y = message.r;
         }
       }
       break;
@@ -905,9 +947,9 @@ function handleServerMessage(message) {
       playerY = message.y;
       playerZ = message.z;
       playerRotation = message.r;
-      lastSentX = playerX;
-      lastSentZ = playerZ;
-      lastSentRotation = playerRotation;
+      // Don't reset velocity tracking - the correction is only for position/rotation drift
+      // Resetting velocities to 0 would trigger immediate resend of current velocities
+      // Only update lastSentTime to prevent immediate heartbeat trigger
       lastSentTime = performance.now();
       if (myTank) {
         const y = message.y !== undefined ? message.y : 0;
@@ -1000,6 +1042,17 @@ function addPlayer(player) {
     tank = renderManager.createTank(tankColor, player.name);
     scene.add(tank);
     tanks.set(player.id, tank);
+    
+    // Create ghost mesh for this tank (server-confirmed position indicator)
+    if (player.id !== myPlayerId) {
+      const ghostTank = renderManager.createGhostMesh(tank);
+      ghostTank.visible = showGhosts; // Initially hidden unless ghosts are enabled
+      scene.add(ghostTank);
+      tank.userData.ghostMesh = ghostTank;
+      
+      // Store server position for ghost
+      tank.userData.serverPosition = { x: player.x, y: player.y, z: player.z, r: player.rotation };
+    }
   }
   // Always update tank state
   tank.position.set(player.x, player.y, player.z);
@@ -1013,6 +1066,11 @@ function addPlayer(player) {
 function removePlayer(playerId) {
   const tank = tanks.get(playerId);
   if (tank) {
+    // Remove ghost mesh if it exists
+    if (tank.userData.ghostMesh) {
+      scene.remove(tank.userData.ghostMesh);
+      tank.userData.ghostMesh = null;
+    }
     scene.remove(tank);
     tanks.delete(playerId);
     callUpdateScoreboard();
@@ -1236,7 +1294,24 @@ function checkCollision(x, y, z, tankRadius = 2) {
       const distSquared = distX * distX + distZ * distZ;
       if (distSquared < tankRadius * tankRadius) {
         if (typeof sendToServer === 'function') {
-          sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+          try {
+            // Build debug message with safe checks
+            const debugParts = [];
+            debugParts.push('[COLLISION]');
+            debugParts.push(x !== undefined && x !== null ? x.toFixed(2) : `x=UNDEF`);
+            debugParts.push(y !== undefined && y !== null ? y.toFixed(2) : `y=UNDEF`);
+            debugParts.push(z !== undefined && z !== null ? z.toFixed(2) : `z=UNDEF`);
+            debugParts.push(`${obs.name || 'UNNAMED'}:${obs.type || 'NOTYPE'}`);
+            debugParts.push(obs.x !== undefined ? obs.x.toFixed(2) : `obsx=UNDEF`);
+            debugParts.push(obstacleBase !== undefined ? obstacleBase.toFixed(2) : `base=UNDEF`);
+            debugParts.push(obs.z !== undefined ? obs.z.toFixed(2) : `obsz=UNDEF`);
+            debugParts.push(`rot:${obs.rotation !== undefined ? obs.rotation.toFixed(2) : 'UNDEF'}`);
+            debugParts.push(`h:${obstacleHeight !== undefined ? obstacleHeight.toFixed(2) : 'UNDEF'}`);
+            debugParts.push(`top:${obstacleTop !== undefined ? obstacleTop.toFixed(2) : 'UNDEF'}`);
+            sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
+          } catch (e) {
+            console.error('Error sending collision chat message:', e);
+          }m
         }
         return obs;
       }
@@ -1258,7 +1333,24 @@ function checkCollision(x, y, z, tankRadius = 2) {
           const maxPyramidY = obs.h * (1 - n);
           if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
             if (typeof sendToServer === 'function') {
-              sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
+              try {
+                // Build debug message with safe checks
+                const debugParts = [];
+                debugParts.push('[COLLISION]');
+                debugParts.push(x !== undefined && x !== null ? x.toFixed(2) : `x=UNDEF`);
+                debugParts.push(y !== undefined && y !== null ? y.toFixed(2) : `y=UNDEF`);
+                debugParts.push(z !== undefined && z !== null ? z.toFixed(2) : `z=UNDEF`);
+                debugParts.push(`${obs.name || 'UNNAMED'}:${obs.type || 'NOTYPE'}`);
+                debugParts.push(obs.x !== undefined ? obs.x.toFixed(2) : `obsx=UNDEF`);
+                debugParts.push(obstacleBase !== undefined ? obstacleBase.toFixed(2) : `base=UNDEF`);
+                debugParts.push(obs.z !== undefined ? obs.z.toFixed(2) : `obsz=UNDEF`);
+                debugParts.push(`rot:${obs.rotation !== undefined ? obs.rotation.toFixed(2) : 'UNDEF'}`);
+                debugParts.push(`h:${obstacleHeight !== undefined ? obstacleHeight.toFixed(2) : 'UNDEF'}`);
+                debugParts.push(`top:${obstacleTop !== undefined ? obstacleTop.toFixed(2) : 'UNDEF'}`);
+                sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
+              } catch (e) {
+                console.error('Error sending collision chat message:', e);
+              }
             }
             return obs;
           }
@@ -1398,13 +1490,13 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
 
   // Fallback: try axis-aligned sliding using full collision logic
   // Try sliding along X axis only
-  const xSlideCollisionObj = checkCollision(newX, y, z, tankRadius);
+  const xSlideCollisionObj = checkCollision(newX, newY, z, tankRadius);
   if (!xSlideCollisionObj) {
     return { x: newX, y: newY, z: z, moved: true, altered: true, landedOn: null, landedType: null };
   }
 
   // Try sliding along Z axis only
-  const zSlideCollisionObj = checkCollision(x, y, newZ, tankRadius);
+  const zSlideCollisionObj = checkCollision(x, newY, newZ, tankRadius);
   if (!zSlideCollisionObj) {
     return { x: x, y: newY, z: newZ, moved: true, altered: true, landedOn: null, landedType: null };
   }
@@ -1619,10 +1711,14 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
   }
 
+  let forceMoveSend = false; // Track if we need to force a move packet
+  
   if (jumpTriggered && !isInAir) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     jumpDirection = playerRotation; // Store jump direction at jump start
+    myJumpDirection = jumpDirection; // Track our own jump direction
+    forceMoveSend = true; // Force send on jump
     if (myTank) renderManager.playLocalJumpSound(myTank.position);
   }
 
@@ -1632,6 +1728,11 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity = -0.01;
   } else if (result.landedOn) {
     myTank.userData.verticalVelocity = 0;
+    // Check if we just landed (transition from air to ground)
+    if (isInAir && jumpDirection !== null) {
+      forceMoveSend = true; // Force send on landing
+      myJumpDirection = null; // Clear our jump direction on land
+    }
   }
 
   let forwardSpeed = 0;
@@ -1673,18 +1774,41 @@ function handleMotion(deltaTime) {
 
   const now = performance.now();
   const timeSinceLastSend = now - lastSentTime;
-  const positionDelta = Math.sqrt(
-    Math.pow(playerX - lastSentX, 2) +
-    Math.pow(playerZ - lastSentZ, 2)
-  );
-  const rotationDelta = Math.abs(playerRotation - lastSentRotation);
+  const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
+  
+  // Velocity-based dead reckoning: only send when velocities change (positions are extrapolated)
+  const forwardSpeedDelta = Math.abs(forwardSpeed - lastSentForwardSpeed);
+  const rotationSpeedDelta = Math.abs(rotationSpeed - lastSentRotationSpeed);
+  const verticalVelocityDelta = Math.abs(verticalVelocity - lastSentVerticalVelocity);
+  
+  const reasons = [];
+  if (forceMoveSend) reasons.push('force');
+  if (forwardSpeedDelta > VELOCITY_THRESHOLD) reasons.push(`fs:${forwardSpeedDelta.toFixed(3)}`);
+  if (rotationSpeedDelta > VELOCITY_THRESHOLD) reasons.push(`rs:${rotationSpeedDelta.toFixed(3)}`);
+  if (verticalVelocityDelta > VERTICAL_VELOCITY_THRESHOLD) reasons.push(`vv:${verticalVelocityDelta.toFixed(3)}`);
+  if (timeSinceLastSend > MAX_UPDATE_INTERVAL) reasons.push(`time:${(timeSinceLastSend/1000).toFixed(1)}s`);
+  
+  // Minimum 100ms between non-forced updates to prevent rapid-fire from calculation noise
+  const minTimeBetweenUpdates = 100; // ms
+  const canSendVelocityUpdate = forceMoveSend || timeSinceLastSend > minTimeBetweenUpdates;
+  
   const shouldSendUpdate =
-    positionDelta > POSITION_THRESHOLD ||
-    rotationDelta > ROTATION_THRESHOLD ||
-    timeSinceLastSend > MAX_UPDATE_INTERVAL;
+    forceMoveSend || // Force send on jump/land transitions
+    timeSinceLastSend > MAX_UPDATE_INTERVAL || // Heartbeat
+    (canSendVelocityUpdate && (
+      forwardSpeedDelta > VELOCITY_THRESHOLD ||
+      rotationSpeedDelta > VELOCITY_THRESHOLD ||
+      verticalVelocityDelta > VERTICAL_VELOCITY_THRESHOLD
+    ));
+  
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
-    const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
-    const y = myTank ? myTank.position.y : 1;
+    if (debugEnabled) console.log(`[CLIENT] Sending 'm': ${reasons.join(', ')}`);
+    
+    // Round velocities to the precision we send to match server expectations
+    const sentFS = Number(forwardSpeed.toFixed(2));
+    const sentRS = Number(rotationSpeed.toFixed(2));
+    const sentVV = Number(verticalVelocity.toFixed(2));
+
     sendToServer({
       type: 'm',
       id: myPlayerId,
@@ -1692,14 +1816,15 @@ function handleMotion(deltaTime) {
       y: Number(playerY.toFixed(2)),
       z: Number(playerZ.toFixed(2)),
       r: Number(playerRotation.toFixed(2)),
-      fs: Number(forwardSpeed.toFixed(2)),
-      rs: Number(rotationSpeed.toFixed(2)),
-      vv: Number(verticalVelocity.toFixed(2)),
+      fs: sentFS,
+      rs: sentRS,
+      vv: sentVV,
       dt: Number(deltaTime.toFixed(3)),
     });
-    lastSentX = playerX;
-    lastSentZ = playerZ;
-    lastSentRotation = playerRotation;
+    // Store the ROUNDED values we actually sent to prevent rounding-induced deltas
+    lastSentForwardSpeed = sentFS;
+    lastSentRotationSpeed = sentRS;
+    lastSentVerticalVelocity = sentVV;
     lastSentTime = now;
   }
   if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space'])) {
@@ -2020,6 +2145,92 @@ function updateChatWindow() {
   }
 }
 
+/**
+ * Extrapolate a player's position based on their last known state and elapsed time.
+ * @param {Object} player - Player object with position, rotation, speeds, jumpDirection
+ * @param {number} dt - Time elapsed since last server update (seconds)
+ * @returns {{x: number, y: number, z: number, r: number}} Extrapolated position and rotation
+ */
+function extrapolatePosition(player, dt) {
+  if (!player || !gameConfig) return player;
+  
+  const { x, y, z, r, forwardSpeed, rotationSpeed, verticalVelocity, jumpDirection } = player;
+  
+  // Apply rotation
+  const rotSpeed = gameConfig.TANK_ROTATION_SPEED || 1.5;
+  const newR = r + (rotationSpeed || 0) * rotSpeed * dt;
+  
+  // Determine if player is in air based on jumpDirection
+  const isInAir = jumpDirection !== null && jumpDirection !== undefined;
+  
+  if (isInAir) {
+    // In air: straight-line motion in frozen jumpDirection
+    const speed = gameConfig.TANK_SPEED || 15;
+    const dx = -Math.sin(jumpDirection) * (forwardSpeed || 0) * speed * dt;
+    const dz = -Math.cos(jumpDirection) * (forwardSpeed || 0) * speed * dt;
+    
+    // Apply gravity to vertical velocity
+    const gravity = gameConfig.GRAVITY || 9.8;
+    const vv = (verticalVelocity || 0) - gravity * dt;
+    const dy = ((verticalVelocity || 0) + vv) / 2 * dt; // Average velocity over dt
+    
+    return {
+      x: x + dx,
+      y: Math.max(0, y + dy), // Don't go below ground
+      z: z + dz,
+      r: newR
+    };
+  } else {
+    // On ground: circular arc or straight line
+    const speed = gameConfig.TANK_SPEED || 15;
+    const rs = rotationSpeed || 0;
+    const fs = forwardSpeed || 0;
+    
+    if (Math.abs(rs) < 0.001) {
+      // Straight line motion
+      const dx = -Math.sin(r) * fs * speed * dt;
+      const dz = -Math.cos(r) * fs * speed * dt;
+      return { x: x + dx, y: y, z: z + dz, r: newR };
+    } else {
+      // Circular arc motion
+      // Radius of curvature: R = |linear_velocity / angular_velocity|
+      // linear_velocity = fs * speed
+      // angular_velocity = rs * rotSpeed
+      const R = Math.abs((fs * speed) / (rs * rotSpeed));
+      
+      // Arc angle traveled - this is also the rotation change!
+      const theta = rs * rotSpeed * dt;
+      
+      // Center of circle in world space
+      // Forward direction is (-sin(r), -cos(r))
+      // Right perpendicular (90° CW) is (-cos(r), sin(r))
+      // Left perpendicular (90° CCW) is (cos(r), -sin(r))
+      // Same sign (fs*rs > 0): forward+right or back+left → center to right
+      // Opposite sign (fs*rs < 0): forward+left or back+right → center to left
+      const perpSign = (fs * rs > 0) ? 1 : -1;
+      const cx = x + perpSign * R * (-Math.cos(r));
+      const cz = z + perpSign * R * Math.sin(r);
+      
+      // New position rotated around center
+      // Use -theta because standard rotation matrix is counter-clockwise,
+      // but rs > 0 means turning right (clockwise)
+      const dx = x - cx;
+      const dz = z - cz;
+      const cosTheta = Math.cos(-theta);
+      const sinTheta = Math.sin(-theta);
+      const newDx = dx * cosTheta - dz * sinTheta;
+      const newDz = dx * sinTheta + dz * cosTheta;
+      
+      return {
+        x: cx + newDx,
+        y: y,
+        z: cz + newDz,
+        r: r + theta  // Use theta directly - tank rotation matches arc traveled
+      };
+    }
+  }
+}
+
 function animate() {
   const now = performance.now();
   const deltaTime = (now - lastTime) / 1000;
@@ -2036,6 +2247,42 @@ function animate() {
   requestAnimationFrame(animate);
   handleInputEvents();
   handleMotion(deltaTime);
+  
+  // Extrapolate other players' positions
+  if (gameConfig) {
+    tanks.forEach((tank, playerId) => {
+      if (playerId === myPlayerId) return; // Skip local player
+      if (!tank.userData || !tank.userData.serverPosition) return;
+      
+      const lastUpdate = tank.userData.lastUpdateTime || now;
+      const timeSinceUpdate = (now - lastUpdate) / 1000; // Convert to seconds
+      
+      // Extrapolate position from last server-confirmed state
+      const extrapolated = extrapolatePosition({
+        x: tank.userData.serverPosition.x,
+        y: tank.userData.serverPosition.y,
+        z: tank.userData.serverPosition.z,
+        r: tank.userData.serverPosition.r,
+        forwardSpeed: tank.userData.forwardSpeed || 0,
+        rotationSpeed: tank.userData.rotationSpeed || 0,
+        verticalVelocity: tank.userData.verticalVelocity || 0,
+        jumpDirection: tank.userData.jumpDirection
+      }, timeSinceUpdate);
+      
+      // Update tank's rendered position smoothly
+      if (extrapolated) {
+        // Debug: log if rotating
+        if (debugEnabled && tank.userData.rotationSpeed && Math.abs(tank.userData.rotationSpeed) > 0.1 && timeSinceUpdate > 0.1) {
+          console.log(`[EXTRAP] dt=${timeSinceUpdate.toFixed(2)}s, rs=${tank.userData.rotationSpeed.toFixed(2)}, stored_r=${tank.userData.serverPosition.r.toFixed(2)}, new_r=${extrapolated.r.toFixed(2)}, delta_r=${(extrapolated.r - tank.userData.serverPosition.r).toFixed(2)}`);
+        }
+        tank.position.x = extrapolated.x;
+        tank.position.y = extrapolated.y;
+        tank.position.z = extrapolated.z;
+        tank.rotation.y = extrapolated.r;
+      }
+    });
+  }
+  
   updateProjectiles(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
