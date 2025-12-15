@@ -1719,6 +1719,8 @@ function handleMotion(deltaTime) {
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     jumpDirection = playerRotation; // Store jump direction at jump start
     myJumpDirection = jumpDirection; // Track our own jump direction
+    // Freeze forwardSpeed at jump time so it doesn't decrease during circular jumps
+    myTank.userData.frozenForwardSpeed = myTank.userData.forwardSpeed || 0;
     forceMoveSend = true; // Force send on jump
     if (myTank) renderManager.playLocalJumpSound(myTank.position);
   }
@@ -1733,6 +1735,7 @@ function handleMotion(deltaTime) {
     if (isInAir && jumpDirection !== null) {
       forceMoveSend = true; // Force send on landing
       myJumpDirection = null; // Clear our jump direction on land
+      myTank.userData.frozenForwardSpeed = undefined; // Clear frozen forwardSpeed
     }
   }
 
@@ -1750,17 +1753,25 @@ function handleMotion(deltaTime) {
   }
 
   if (deltaTime > 0) {
-    const actualDeltaX = playerX - oldX;
-    const actualDeltaZ = playerZ - oldZ;
-    const forwardX = -Math.sin(playerRotation);
-    const forwardZ = -Math.cos(playerRotation);
-    const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
-    if (actualDistance > 0.001) {
-      const dot = (actualDeltaX * forwardX + actualDeltaZ * forwardZ) / actualDistance;
-      const actualSpeed = actualDistance / deltaTime;
-      const tankSpeed = gameConfig.TANK_SPEED;
-      forwardSpeed = (dot * actualSpeed) / tankSpeed;
-      forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
+    // Only recalculate forwardSpeed when on ground
+    if (!isInAir) {
+      const actualDeltaX = playerX - oldX;
+      const actualDeltaZ = playerZ - oldZ;
+      const forwardX = -Math.sin(playerRotation);
+      const forwardZ = -Math.cos(playerRotation);
+      const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
+      if (actualDistance > 0.001) {
+        const dot = (actualDeltaX * forwardX + actualDeltaZ * forwardZ) / actualDistance;
+        const actualSpeed = actualDistance / deltaTime;
+        const tankSpeed = gameConfig.TANK_SPEED;
+        forwardSpeed = (dot * actualSpeed) / tankSpeed;
+        forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
+      }
+    } else {
+      // In air: use frozen forwardSpeed from jump start
+      if (myTank.userData.frozenForwardSpeed !== undefined) {
+        forwardSpeed = myTank.userData.frozenForwardSpeed;
+      }
     }
     if (!(myTank.position.y > 0)) {
       const actualDeltaRot = playerRotation - oldRotation;
