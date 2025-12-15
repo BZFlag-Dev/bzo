@@ -942,6 +942,11 @@ function handleServerMessage(message) {
           renderManager.playLocalJumpSound(tank.position);
         }
 
+        // Detect fall start (drove off edge - record direction for air physics)
+        if (oldJumpDirection === null && message.vv < 0 && message.vv > -1) {
+          tank.userData.jumpDirection = message.r;
+        }
+
         // Detect landing (clear jump direction)
         // Don't check oldVerticalVel < 0 because extrapolation doesn't update tank.userData.verticalVelocity
         if (oldJumpDirection !== null && message.vv === 0) {
@@ -1269,6 +1274,7 @@ function checkIfOnObstacle(x, z, tankRadius = 2, y = null) {
   return null;
 }
 
+// Returns: null (no collision), { type: 'boundary' }, { type: 'collision', obstacle }, or { type: 'ontop', obstacle }
 function checkCollision(x, y, z, tankRadius = 2) {
   const mapSize = gameConfig.MAP_SIZE || gameConfig.mapSize || 100;
   const halfMap = mapSize / 2;
@@ -1276,7 +1282,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
   // Check map boundaries (always apply regardless of height)
   if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
       z - tankRadius < -halfMap || z + tankRadius > halfMap) {
-    return { type: 'boundary' };
+    return { type: 'boundary', obstacle: null };
   }
 
   for (const obs of OBSTACLES) {
@@ -1285,7 +1291,32 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const obstacleTop = obstacleBase + obstacleHeight;
     const epsilon = 0.15;
     const tankHeight = 2;
-    // Only check if tank top is below obstacle top and tank base is above obstacle base
+    
+    // Check if we're "on top" of this obstacle (at its top height)
+    if (Math.abs(y - obstacleTop) < 0.5) {
+      const halfW = obs.w / 2;
+      const halfD = obs.d / 2;
+      const rotation = obs.rotation || 0;
+      const dx = x - obs.x;
+      const dz = z - obs.z;
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      const localX = dx * cos - dz * sin;
+      const localZ = dx * sin + dz * cos;
+      
+      // Use same collision logic - closest point on box
+      const closestX = Math.max(-halfW, Math.min(localX, halfW));
+      const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
+      const distX = localX - closestX;
+      const distZ = localZ - closestZ;
+      const distSquared = distX * distX + distZ * distZ;
+      
+      if (distSquared < tankRadius * tankRadius) {
+        return { type: 'ontop', obstacle: obs, obstacleTop };
+      }
+    }
+    
+    // Only check collision if tank top is below obstacle top and tank base is above obstacle base
     const tankTop = y + tankHeight;
     if (tankTop <= obstacleBase + epsilon) continue;
     if (y >= obstacleTop - epsilon) continue;
@@ -1329,7 +1360,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
             console.error('Error sending collision chat message:', e);
           }
         }
-        return obs;
+        return { type: 'collision', obstacle: obs };
       }
     } else if (obs.type === 'pyramid') {
       // Pyramid collision: check if tank top is under the sloped surface
@@ -1368,7 +1399,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
                 console.error('Error sending collision chat message:', e);
               }
             }
-            return obs;
+            return { type: 'collision', obstacle: obs };
           }
         }
       }
@@ -1399,59 +1430,47 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   let landedOn = null;
   let landedType = null; // 'ground' or 'obstacle'
   let startedFalling = false;
+  let fallingFromObstacle = null; // Obstacle we're falling from (to skip collision)
   let altered = false;
   if (newY < 0) {
       landedType = 'ground';
       altered = true
-      return { x: newX, y: 0, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
+      return { x: newX, y: 0, z: newZ, moved: true, altered, landedOn, landedType, startedFalling, fallingFromObstacle };
   }
 
   // Try full movement first
   const collisionObj = checkCollision(newX, newY, newZ, tankRadius);
-  if (!collisionObj) {
-    // Check for on obstacle (landing logic unchanged)
-    let obstacle = null;
-    for (const obs of OBSTACLES) {
-      const halfW = obs.w / 2;
-      const halfD = obs.d / 2;
-      const rotation = obs.rotation || 0;
-      const obstacleBase = obs.baseY || 0;
-      const obstacleHeight = obs.h || 4;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      const tankHeight = 2;
-      const margin = 0.1;
-      const dx = newX - obs.x;
-      const dz = newZ - obs.z;
-      const cos = Math.cos(rotation);
-      const sin = Math.sin(rotation);
-      const localX = dx * cos - dz * sin;
-      const localZ = dx * sin + dz * cos;
-      const xyInBounds = Math.abs(localX) <= halfW + tankRadius && Math.abs(localZ) <= halfD + tankRadius;
-      if (xyInBounds) {
-        if (intendedDeltaY <= 0 && newY >= obstacleTop && newY <= obstacleTop + margin) {
-          // on top
-          obstacle = obs;
-          landedOn = obstacle;
-          landedType = 'obstacle';
-          break;
-        } else if (intendedDeltaY > 0 && newY < obstacleBase && newY + tankHeight + margin > obstacleBase) {
-          // will hit bottom
-          obstacle = obs;
-          landedOn = obstacle;
-          landedType = 'obstacle';
+  if (!collisionObj || collisionObj.type === 'ontop') {
+    // If we're on top of an obstacle, that's the landing
+    if (collisionObj && collisionObj.type === 'ontop') {
+      landedOn = collisionObj.obstacle;
+      landedType = 'obstacle';
+    }
+    
+    // Only detect fall start if not already in air (myJumpDirection === null)
+    // This prevents re-triggering fall detection every frame after falling starts
+    if (!collisionObj && intendedDeltaY == 0 && y > 0 && myJumpDirection === null) {
+      // Find which obstacle we're falling from (if any) at our current height
+      for (const obs of OBSTACLES) {
+        const obstacleBase = obs.baseY || 0;
+        const obstacleHeight = obs.h || 4;
+        const obstacleTop = obstacleBase + obstacleHeight;
+        
+        // Check if this obstacle is at our height level (we might be leaving it)
+        if (Math.abs(y - obstacleTop) < 1.0) {
+          fallingFromObstacle = obs;
           break;
         }
       }
-    }
-    if (!obstacle && intendedDeltaY == 0 && y > 0) {
-      // If not on obstacle or ground we are driving off an edge and should start falling
+      
+      // Start falling - we'll skip collision with fallingFromObstacle
       startedFalling = true;
-      return { x: newX, y: newY - 0.1, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
+      return { x: newX, y: newY - 0.1, z: newZ, moved: true, altered, landedOn, landedType, startedFalling, fallingFromObstacle };
     }
     const actualDX = newX - x;
     const actualDZ = newZ - z;
     altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
-    return { x: newX, y: newY, z: newZ, moved: true, altered, landedOn, landedType, startedFalling };
+    return { x: newX, y: newY, z: newZ, moved: true, altered, landedOn, landedType, startedFalling, fallingFromObstacle };
   }
 
   // Find the collision normal
@@ -1468,33 +1487,10 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const slideNewZ = z + slideZ;
 
     const slideCollisionObj = checkCollision(slideNewX, newY, slideNewZ, tankRadius);
-    if (!slideCollisionObj) {
-      // Check for landing on obstacle (landing logic unchanged)
-      let obstacle = null;
-      for (const obs of OBSTACLES) {
-        const halfW = obs.w / 2;
-        const halfD = obs.d / 2;
-        const rotation = obs.rotation || 0;
-        const obstacleBase = obs.baseY || 0;
-        const obstacleHeight = obs.h || 4;
-        const obstacleTop = obstacleBase + obstacleHeight;
-        const tankHeight = 2;
-        const margin = 0.1;
-        const dx = slideNewX - obs.x;
-        const dz = slideNewZ - obs.z;
-        const cos = Math.cos(rotation);
-        const sin = Math.sin(rotation);
-        const localX = dx * cos - dz * sin;
-        const localZ = dx * sin + dz * cos;
-        const xyInBounds = Math.abs(localX) <= halfW + tankRadius && Math.abs(localZ) <= halfD + tankRadius;
-        // Only consider landing if tank is above obstacle base and below obstacle top
-        if (xyInBounds && y !== null && y + tankHeight > obstacleBase + margin && y < obstacleTop - margin) {
-          obstacle = obs;
-          break;
-        }
-      }
-      if (obstacle) {
-        landedOn = obstacle;
+    if (!slideCollisionObj || slideCollisionObj.type === 'ontop') {
+      // If we're on top of an obstacle, that's the landing
+      if (slideCollisionObj && slideCollisionObj.type === 'ontop') {
+        landedOn = slideCollisionObj.obstacle;
         landedType = 'obstacle';
       } else if (y !== null && Math.abs(y) < 0.5) {
         landedType = 'ground';
@@ -1507,13 +1503,13 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   // Fallback: try axis-aligned sliding using full collision logic
   // Try sliding along X axis only
   const xSlideCollisionObj = checkCollision(newX, newY, z, tankRadius);
-  if (!xSlideCollisionObj) {
-    return { x: newX, y: newY, z: z, moved: true, altered: true, landedOn: null, landedType: null };
+  if (!xSlideCollisionObj || xSlideCollisionObj.type === 'ontop') {
+    return { x: newX, y: newY, z: z, moved: true, altered: true, landedOn: null, landedType: null, startedFalling: false, fallingFromObstacle: null };
   }
 
   // Try sliding along Z axis only
   const zSlideCollisionObj = checkCollision(x, newY, newZ, tankRadius);
-  if (!zSlideCollisionObj) {
+  if (!zSlideCollisionObj || zSlideCollisionObj.type === 'ontop') {
     return { x: x, y: newY, z: newZ, moved: true, altered: true, landedOn: null, landedType: null };
   }
 
@@ -1606,7 +1602,10 @@ let intendedRotation = 0; // -1..1
 let intendedY = 0; // -1..1 (for jump/momentum)
 let jumpTriggered = false;
 let isInAir = false;
+let onGround = false;
+let onObstacle = false;
 let jumpDirection = null; // Stores the direction at jump start
+let skipCollisionWithObstacle = null; // Obstacle to skip collision with (when falling from it)
 
 function handleInputEvents() {
   // Reset intended input each frame
@@ -1618,29 +1617,16 @@ function handleInputEvents() {
   if (!myTank || !gameConfig) return;
 
   // Check if tank is in the air (not on ground or obstacle)
-  const onGround = myTank.position.y < 0.1;
-  let onObstacle = false;
+  onGround = myTank.position.y < 0.1;
+  onObstacle = false;
   if (onGround) {
     playerY = 0;
   } else {
-    for (const obs of OBSTACLES) {
-      const obstacleHeight = obs.h || 4;
-      const obstacleBase = obs.baseY || 0;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      if (Math.abs(myTank.position.y - obstacleTop) < 0.5) {
-        const dx = myTank.position.x - obs.x;
-        const dz = myTank.position.z - obs.z;
-        const cos = Math.cos(obs.rotation || 0);
-        const sin = Math.sin(obs.rotation || 0);
-        const localX = dx * cos - dz * sin;
-        const localZ = dx * sin + dz * cos;
-        const margin = 2 * 0.7;
-        if (Math.abs(localX) <= obs.w / 2 + margin && Math.abs(localZ) <= obs.d / 2 + margin) {
-          onObstacle = true;
-          playerY = obstacleTop;
-          break;
-        }
-      }
+    // Use checkCollision to detect if we're on top of an obstacle
+    const collisionObj = checkCollision(myTank.position.x, myTank.position.y, myTank.position.z, 2);
+    if (collisionObj && collisionObj.type === 'ontop') {
+      onObstacle = true;
+      playerY = collisionObj.obstacleTop;
     }
   }
   isInAir = !onGround && !onObstacle;
@@ -1695,12 +1681,14 @@ function handleMotion(deltaTime) {
   
   // Detect landing immediately based on ground state from handleInputEvents
   // This must happen before any position/velocity modifications
-  if (jumpDirection !== null && (isInAir === false)) {
+  // Only clear jumpDirection if we're actually ON something (ground or obstacle), not just isInAir=false
+  if (jumpDirection !== null && (onGround || onObstacle)) {
     // We were in air, now we're on ground/obstacle - send landing packet
     forceMoveSend = true;
     jumpDirection = null;
     myJumpDirection = null;
     myTank.userData.jumpForwardSpeed = undefined;
+    myTank.userData.fallForwardSpeed = undefined;
     myTank.userData.verticalVelocity = 0;
   }
 
@@ -1716,12 +1704,18 @@ function handleMotion(deltaTime) {
   let moveRotation = playerRotation;
   let intendedDeltaX, intendedDeltaY = 0, intendedDeltaZ, intendedDeltaRot;
 
+  // Determine forward speed for movement calculation
+  let movementForwardSpeed = intendedForward;
   if (isInAir && jumpDirection !== null) {
     moveRotation = jumpDirection;
+    // Use frozen forward speed from jump or fall start
+    movementForwardSpeed = myTank.userData.fallForwardSpeed !== undefined 
+      ? myTank.userData.fallForwardSpeed 
+      : myTank.userData.jumpForwardSpeed || 0;
   }
 
-  intendedDeltaX = -Math.sin(moveRotation) * intendedForward * speed;
-  intendedDeltaZ = -Math.cos(moveRotation) * intendedForward * speed;
+  intendedDeltaX = -Math.sin(moveRotation) * movementForwardSpeed * speed;
+  intendedDeltaZ = -Math.cos(moveRotation) * movementForwardSpeed * speed;
   intendedDeltaRot = intendedRotation * rotSpeed;
   if (myTank.userData.verticalVelocity !== 0) {
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
@@ -1737,6 +1731,7 @@ function handleMotion(deltaTime) {
   }
 
   let jumpStarted = false; // Track if jump was just triggered this frame
+  let fallStarted = false; // Track if fall was just triggered this frame
   
   // Only allow jump if not currently in a jump (jumpDirection is null)
   if (jumpTriggered && jumpDirection === null) {
@@ -1752,7 +1747,31 @@ function handleMotion(deltaTime) {
   const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
 
   if (result.startedFalling) {
-    myTank.userData.verticalVelocity = -0.01;
+    // Set small negative velocity so server knows we're falling (not on ground with vv=0)
+    myTank.userData.verticalVelocity = -0.1;
+    forceMoveSend = true; // Immediately notify server we're falling
+    // Set jumpDirection to current rotation to trigger air physics
+    jumpDirection = playerRotation;
+    myJumpDirection = jumpDirection;
+    fallStarted = true;
+    
+    // Freeze forward speed at fall start (same as jump)
+    const frozenForwardSpeed = myTank.userData.forwardSpeed || 0;
+    myTank.userData.fallForwardSpeed = frozenForwardSpeed;
+    
+    // Immediately re-validate with air physics since this frame's movement was calculated wrong
+    // Recalculate movement with frozen direction and frozen forward speed
+    const fallDeltaX = -Math.sin(jumpDirection) * frozenForwardSpeed * speed;
+    const fallDeltaZ = -Math.cos(jumpDirection) * frozenForwardSpeed * speed;
+    const fallDeltaY = myTank.userData.verticalVelocity * deltaTime;
+    
+    // Re-validate with correct air physics
+    const fallResult = validateMove(playerX, playerY, playerZ, fallDeltaX, fallDeltaY, fallDeltaZ, 2);
+    if (fallResult.moved) {
+      playerX = fallResult.x;
+      playerY = fallResult.y;
+      playerZ = fallResult.z;
+    }
   } else if (result.landedOn) {
     myTank.userData.verticalVelocity = 0;
   }
@@ -1760,7 +1779,8 @@ function handleMotion(deltaTime) {
   let forwardSpeed = 0;
   let rotationSpeed = myTank.userData.rotationSpeed || 0;
 
-  if (result.moved) {
+  if (result.moved && !fallStarted) {
+    // Don't use result if we just started falling - we already applied fallResult above
     playerX = result.x;
     playerY = result.y;
     playerZ = result.z;
@@ -1774,6 +1794,11 @@ function handleMotion(deltaTime) {
       jumpDirection = playerRotation;
       myJumpDirection = jumpDirection;
     }
+  } else if (fallStarted) {
+    // Fall started - apply rotation but position was already updated by fallResult
+    playerRotation = intendedRotation * rotSpeed + oldRotation;
+    myTank.position.set(playerX, playerY, playerZ);
+    myTank.rotation.y = playerRotation;
   }
 
   if (deltaTime > 0) {

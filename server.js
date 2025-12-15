@@ -700,9 +700,9 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
 
   if (distMoved > maxDrift) {
     log(`Player "${player.name}" moved too far from extrapolated: ${distMoved.toFixed(2)} > ${maxDrift.toFixed(2)}`);
-    log(`  Stored: (${player.x.toFixed(2)}, ${player.z.toFixed(2)}, r=${player.rotation.toFixed(2)})`);
-    log(`  Extrap: (${extrapolated.x.toFixed(2)}, ${extrapolated.z.toFixed(2)}, r=${extrapolated.r.toFixed(2)})`);
-    log(`  Recvd:  (${newX.toFixed(2)}, ${newZ.toFixed(2)}, r=${newRotation.toFixed(2)})`);
+    log(`  Stored: (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${player.z.toFixed(2)}, r=${player.rotation.toFixed(2)})`);
+    log(`  Extrap: (${extrapolated.x.toFixed(2)}, ${extrapolated.y.toFixed(2)}, ${extrapolated.z.toFixed(2)}, r=${extrapolated.r.toFixed(2)})`);
+    log(`  Recvd:  (${newX.toFixed(2)}, ${newY.toFixed(2)}, ${newZ.toFixed(2)}, r=${newRotation.toFixed(2)})`);
     log(`  Vels: fs=${player.forwardSpeed.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, vv=${player.verticalVelocity.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s`);
     return false;
   }
@@ -1078,8 +1078,9 @@ wss.on('connection', (ws, req) => {
           const oldVV = player.verticalVelocity || 0;
           const isJumpStart = oldVV <= 0 && vv > 10; // Transition from ground/falling to jumping
           const isLanding = player.jumpDirection !== null && vv === 0; // Transition from air to ground
+          const isFallStart = player.jumpDirection === null && vv < 0; // Started falling (drove off edge)
           
-          // Log jump/land events but DON'T update jumpDirection yet - must validate first
+          // Log jump/land/fall events but DON'T update jumpDirection yet - must validate first
           if (isJumpStart) {
             // Calculate expected landing position (assuming ~2 second flight)
             const jumpTime = 2.05; // Approximate jump duration
@@ -1094,6 +1095,8 @@ wss.on('connection', (ws, req) => {
             log(`[JUMP] Expected landing: pos=(${expectedLandX.toFixed(2)},${expectedLandZ.toFixed(2)}), r=${expectedLandR.toFixed(2)}`);
           } else if (isLanding) {
             log(`[LAND] Player "${player.name}" landed: pos=(${x.toFixed(2)},${z.toFixed(2)}), r=${r.toFixed(2)}, fs=${fs.toFixed(2)}, rs=${rs.toFixed(2)}, vv=${vv.toFixed(2)}`);
+          } else if (isFallStart) {
+            log(`[FALL] Player "${player.name}" started falling: pos=(${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}), r=${r.toFixed(2)}, fs=${fs.toFixed(2)}, rs=${rs.toFixed(2)}, vv=${vv.toFixed(2)}`);
           }
           
           // Check if velocities changed significantly - if so, use looser validation
@@ -1108,6 +1111,8 @@ wss.on('connection', (ws, req) => {
             // Validation passed - now update jumpDirection
             if (isJumpStart) {
               player.jumpDirection = r; // Store rotation at jump start
+            } else if (isFallStart) {
+              player.jumpDirection = r; // Store rotation at fall start (same as jump)
             } else if (isLanding) {
               player.jumpDirection = null; // Clear jump direction on landing
             }
