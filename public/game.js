@@ -188,7 +188,7 @@ const MAX_UPDATE_INTERVAL = 5000; // Force update every 5 seconds
 
 // Extrapolation state
 let myJumpDirection = null; // null when on ground, rotation when in air
-let showGhosts = false; // Toggle for ghost rendering
+let showGhosts = localStorage.getItem('showGhosts') === 'true'; // Toggle for ghost rendering
 
 // Debug tracking
 let debugEnabled = false;
@@ -316,16 +316,19 @@ window.addEventListener('DOMContentLoaded', () => {
       if (ghostBtn) {
         ghostBtn.addEventListener('click', () => {
           showGhosts = !showGhosts;
+          localStorage.setItem('showGhosts', showGhosts);
           ghostBtn.classList.toggle('active', showGhosts);
           ghostBtn.title = showGhosts ? 'Hide Ghost Players' : 'Show Ghost Players';
-          // Update visibility of all ghost meshes
-          tanks.forEach((tank, id) => {
-            if (id !== myPlayerId && tank.userData.ghostMesh) {
+          // Update visibility of all ghost meshes (including local player)
+          tanks.forEach((tank) => {
+            if (tank.userData.ghostMesh) {
               tank.userData.ghostMesh.visible = showGhosts;
             }
           });
         });
-        ghostBtn.title = 'Show Ghost Players';
+        // Set initial state from localStorage
+        ghostBtn.classList.toggle('active', showGhosts);
+        ghostBtn.title = showGhosts ? 'Hide Ghost Players' : 'Show Ghost Players';
       }
     // Add handler for Upload Map button
     const uploadBtn = document.getElementById('uploadBtn');
@@ -873,6 +876,14 @@ function handleServerMessage(message) {
           myTank.rotation.y = playerRotation;
           myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
           myTank.userData.playerState = message.player;
+          
+          // Create ghost mesh for local player to visualize what others see
+          if (!myTank.userData.ghostMesh) {
+            const ghostTank = renderManager.createGhostMesh(myTank);
+            ghostTank.visible = showGhosts;
+            scene.add(ghostTank);
+            myTank.userData.ghostMesh = ghostTank;
+          }
           myTank.userData.forwardSpeed = message.player.forwardSpeed || 0;
           myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
           myTank.visible = true;
@@ -1312,7 +1323,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
             sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
           } catch (e) {
             console.error('Error sending collision chat message:', e);
-          }m
+          }
         }
         return obs;
       }
@@ -1606,7 +1617,6 @@ function handleInputEvents() {
   const onGround = myTank.position.y < 0.1;
   let onObstacle = false;
   if (onGround) {
-    // Don't clear verticalVelocity here - let handleMotion() detect landing first
     playerY = 0;
   } else {
     for (const obs of OBSTACLES) {
@@ -1623,7 +1633,6 @@ function handleInputEvents() {
         const margin = 2 * 0.7;
         if (Math.abs(localX) <= obs.w / 2 + margin && Math.abs(localZ) <= obs.d / 2 + margin) {
           onObstacle = true;
-          // Don't clear verticalVelocity here - let handleMotion() detect landing first
           playerY = obstacleTop;
           break;
         }
@@ -1678,9 +1687,18 @@ function handleMotion(deltaTime) {
   if (!myTank || !gameConfig) return;
   if (isPaused || pauseCountdownStart > 0) return;
 
-  // Track air state before this frame's updates for landing detection
-  const wasInAir = jumpDirection !== null;
-  const hadVerticalVelocity = myTank.userData.verticalVelocity !== 0;
+  let forceMoveSend = false;
+  
+  // Detect landing immediately based on ground state from handleInputEvents
+  // This must happen before any position/velocity modifications
+  if (jumpDirection !== null && (isInAir === false)) {
+    // We were in air, now we're on ground/obstacle - send landing packet
+    forceMoveSend = true;
+    jumpDirection = null;
+    myJumpDirection = null;
+    myTank.userData.jumpForwardSpeed = undefined;
+    myTank.userData.verticalVelocity = 0;
+  }
 
   let moved = false;
   const oldX = playerX;
@@ -1714,7 +1732,6 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
   }
 
-  let forceMoveSend = false; // Track if we need to force a move packet
   let jumpStarted = false; // Track if jump was just triggered this frame
   
   // Only allow jump if not currently in a jump (jumpDirection is null)
@@ -1786,16 +1803,6 @@ function handleMotion(deltaTime) {
   myTank.userData.forwardSpeed = forwardSpeed;
   myTank.userData.rotationSpeed = rotationSpeed;
 
-  // Detect landing after all position/velocity updates
-  const nowHasVerticalVelocity = myTank.userData.verticalVelocity !== 0;
-  if (wasInAir && hadVerticalVelocity && !nowHasVerticalVelocity) {
-    // Just landed - force send packet
-    forceMoveSend = true;
-    jumpDirection = null;
-    myJumpDirection = null;
-    myTank.userData.jumpForwardSpeed = undefined;
-  }
-
   const now = performance.now();
   const timeSinceLastSend = now - lastSentTime;
   const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
@@ -1853,6 +1860,16 @@ function handleMotion(deltaTime) {
     lastSentRotationSpeed = sentRS;
     lastSentVerticalVelocity = sentVV;
     lastSentTime = now;
+    
+    // Update local player ghost to show what server/other players see
+    if (myTank && myTank.userData.ghostMesh) {
+      myTank.userData.ghostMesh.position.set(
+        Number(playerX.toFixed(2)),
+        Number(playerY.toFixed(2)),
+        Number(playerZ.toFixed(2))
+      );
+      myTank.userData.ghostMesh.rotation.y = Number(playerRotation.toFixed(2));
+    }
   }
   if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space'])) {
     const now = Date.now();

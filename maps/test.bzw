@@ -5,7 +5,6 @@ size 200.0
 flagHeight 0.0
 end
 
-# roof
 pyramid
 name "inverted"
 position 0.0 36.0 0.0
@@ -47,4 +46,11 @@ name "top"
 position -10.0 -10.0 0.0
 rotation 0.0
 size     2.0 2.0 12.0
+end
+
+box
+name "platform"
+position 60.0 60.0 10.0
+rotation 0.0
+size     40.0 40.0 5.0
 end
