@@ -491,18 +491,14 @@ class Player {
         const theta = rs * rotSpeed * dt;
         
         // Center of circle in world space
-        // Forward direction is (-sin(r), -cos(r))
-        // Right perpendicular (90° CW) is (-cos(r), sin(r))
-        // Left perpendicular (90° CCW) is (cos(r), -sin(r))
-        // Same sign (fs*rs > 0): forward+right or back+left → center to right
-        // Opposite sign (fs*rs < 0): forward+left or back+right → center to left
-        const perpSign = (fs * rs > 0) ? 1 : -1;
-        const cx = this.x + perpSign * R * (-Math.cos(this.rotation));
-        const cz = this.z + perpSign * R * Math.sin(this.rotation);
+        // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2  
+        const perpAngle = this.rotation - Math.PI / 2;
+        const centerSign = -(rs * fs); // Negated to match correct circular motion
+        const cx = this.x + Math.sign(centerSign) * R * (-Math.sin(perpAngle));
+        const cz = this.z + Math.sign(centerSign) * R * (-Math.cos(perpAngle));
         
         // New position rotated around center
-        // Use -theta because standard rotation matrix is counter-clockwise,
-        // but rs > 0 means turning right (clockwise)
+        // Negate theta for clockwise rotation (rs > 0 means turn right = clockwise)
         const dx = this.x - cx;
         const dz = this.z - cz;
         const cosTheta = Math.cos(-theta);
@@ -1089,8 +1085,12 @@ wss.on('connection', (ws, req) => {
           // Track jump direction for extrapolation
           const oldVV = player.verticalVelocity || 0;
           const isJumpStart = oldVV <= 0 && vv > 10; // Transition from ground/falling to jumping
-          const isLanding = oldVV < 0 && vv === 0 && y <= 0.1; // Transition from air to ground
+          const isLanding = player.jumpDirection !== null && vv === 0; // Transition from air to ground
           
+          // Save old jumpDirection in case validation fails
+          const oldJumpDirection = player.jumpDirection;
+          
+          // Update jumpDirection BEFORE validation so extrapolation uses correct physics
           if (isJumpStart) {
             player.jumpDirection = r; // Store rotation at jump start
           } else if (isLanding) {
@@ -1127,14 +1127,21 @@ wss.on('connection', (ws, req) => {
               vv,
             }, ws);
           } else {
+            // Validation failed - restore old jumpDirection
+            player.jumpDirection = oldJumpDirection;
             // Send correction back to client
+            // Reset velocities and timestamp so next extrapolation starts from corrected state
+            player.forwardSpeed = 0;
+            player.rotationSpeed = 0;
+            player.verticalVelocity = 0;
+            player.lastUpdate = now;
             ws.send(JSON.stringify({
               type: 'positionCorrection',
               x: player.x,
               y: player.y,
               z: player.z,
               r: player.rotation,
-              vv: player.verticalVelocity,
+              vv: 0,
             }));
           }
           break;

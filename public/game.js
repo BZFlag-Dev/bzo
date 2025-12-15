@@ -928,7 +928,8 @@ function handleServerMessage(message) {
         }
 
         // Detect landing (clear jump direction)
-        if (oldVerticalVel < 0 && message.vv === 0 && message.y <= 0.1 && oldJumpDirection !== null) {
+        // Don't check oldVerticalVel < 0 because extrapolation doesn't update tank.userData.verticalVelocity
+        if (oldJumpDirection !== null && message.vv === 0) {
           tank.userData.jumpDirection = null;
           renderManager.playLandSound(tank.position);
         }
@@ -1779,7 +1780,9 @@ function handleMotion(deltaTime) {
   // Velocity-based dead reckoning: only send when velocities change (positions are extrapolated)
   const forwardSpeedDelta = Math.abs(forwardSpeed - lastSentForwardSpeed);
   const rotationSpeedDelta = Math.abs(rotationSpeed - lastSentRotationSpeed);
-  const verticalVelocityDelta = Math.abs(verticalVelocity - lastSentVerticalVelocity);
+  // Don't check vertical velocity changes while in air - gravity is extrapolated
+  // Only jump/land transitions matter (handled by forceMoveSend)
+  const verticalVelocityDelta = isInAir ? 0 : Math.abs(verticalVelocity - lastSentVerticalVelocity);
   
   const reasons = [];
   if (forceMoveSend) reasons.push('force');
@@ -2202,18 +2205,14 @@ function extrapolatePosition(player, dt) {
       const theta = rs * rotSpeed * dt;
       
       // Center of circle in world space
-      // Forward direction is (-sin(r), -cos(r))
-      // Right perpendicular (90° CW) is (-cos(r), sin(r))
-      // Left perpendicular (90° CCW) is (cos(r), -sin(r))
-      // Same sign (fs*rs > 0): forward+right or back+left → center to right
-      // Opposite sign (fs*rs < 0): forward+left or back+right → center to left
-      const perpSign = (fs * rs > 0) ? 1 : -1;
-      const cx = x + perpSign * R * (-Math.cos(r));
-      const cz = z + perpSign * R * Math.sin(r);
+      // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2
+      const perpAngle = r - Math.PI / 2;
+      const centerSign = -(rs * fs); // Negated to match correct circular motion
+      const cx = x + Math.sign(centerSign) * R * (-Math.sin(perpAngle));
+      const cz = z + Math.sign(centerSign) * R * (-Math.cos(perpAngle));
       
       // New position rotated around center
-      // Use -theta because standard rotation matrix is counter-clockwise,
-      // but rs > 0 means turning right (clockwise)
+      // Negate theta for clockwise rotation (rs > 0 means turn right = clockwise)
       const dx = x - cx;
       const dz = z - cz;
       const cosTheta = Math.cos(-theta);
