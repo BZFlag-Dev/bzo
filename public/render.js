@@ -893,20 +893,25 @@ class RenderManager {
           child.material = child.material.map(mat => {
             const cloned = mat.clone();
             cloned.transparent = true;
-            cloned.opacity = 0.15; // More faint
-            cloned.color.setHex(0x808080); // Grey color
-            cloned.emissive.setHex(0x404040); // Faint grey emissive
+            cloned.opacity = 0.25;
+            cloned.color.setHex(0xffffff);
+            cloned.emissive.setHex(0x404040);
             cloned.emissiveIntensity = 0.2;
             return cloned;
           });
         } else {
           child.material = child.material.clone();
           child.material.transparent = true;
-          child.material.opacity = 0.15; // More faint
-          child.material.color.setHex(0x808080); // Grey color
-          child.material.emissive.setHex(0x404040); // Faint grey emissive
+          child.material.opacity = 0.25;
+          child.material.color.setHex(0xffffff);
+          child.material.emissive.setHex(0x404040);
           child.material.emissiveIntensity = 0.2;
         }
+      } else if (child.isSprite && child.material) {
+        // Make sprite label (name) transparent to match ghost opacity
+        child.material = child.material.clone();
+        child.material.opacity = 0.25;
+        child.material.transparent = true;
       }
     });
     return ghostTank;

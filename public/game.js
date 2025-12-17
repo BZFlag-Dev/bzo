@@ -1217,8 +1217,29 @@ function handlePlayerRespawn(message) {
     tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
     tank.userData.verticalVelocity = message.player.verticalVelocity;
+
+    // Update player state with full respawn data (including health = 100)
+    tank.userData.playerState = message.player;
+
+    // Update ghost mesh position BEFORE making it visible
+    if (tank.userData.ghostMesh) {
+      tank.userData.ghostMesh.position.set(message.player.x, message.player.y, message.player.z);
+      tank.userData.ghostMesh.rotation.y = message.player.rotation;
+      tank.userData.ghostMesh.visible = showGhosts;
+    }
+
+    // Update server position for extrapolation
+    tank.userData.serverPosition = {
+      x: message.player.x,
+      y: message.player.y,
+      z: message.player.z,
+      r: message.player.rotation
+    };
+
     tank.visible = true;
   }
+
+  callUpdateScoreboard();
 
   if (message.player.id === myPlayerId) {
     playerX = message.player.x;
