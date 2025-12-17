@@ -2125,8 +2125,6 @@ function updateRadar() {
   if (gameConfig && gameConfig.MAP_SIZE) {
     radarCtx.save();
     radarCtx.globalAlpha = 0.7;
-    radarCtx.translate(center, center);
-    radarCtx.beginPath();
     // Calculate visible world border segment within SHOT_DISTANCE
     const border = mapSize / 2;
     const left = Math.max(px - SHOT_DISTANCE, -border);
@@ -2136,12 +2134,13 @@ function updateRadar() {
     
     // Top edge (North, Z = -border)
     if (top === -border) {
-      const p1 = world2Radar(left, -border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
-      const p2 = world2Radar(right, -border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p1 = world2Radar(left, -border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p2 = world2Radar(right, -border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#B20000'; // North - red
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
+      radarCtx.lineDashOffset = left * 2; // Anchor dashes to world coordinates
       radarCtx.beginPath();
       radarCtx.moveTo(p1.x, p1.y);
       radarCtx.lineTo(p2.x, p2.y);
@@ -2150,12 +2149,13 @@ function updateRadar() {
     }
     // Bottom edge (South, Z = +border)
     if (bottom === border) {
-      const p1 = world2Radar(left, border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
-      const p2 = world2Radar(right, border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p1 = world2Radar(left, border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p2 = world2Radar(right, border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#1976D2'; // South - blue
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
+      radarCtx.lineDashOffset = left * 2; // Anchor dashes to world coordinates
       radarCtx.beginPath();
       radarCtx.moveTo(p1.x, p1.y);
       radarCtx.lineTo(p2.x, p2.y);
@@ -2164,12 +2164,13 @@ function updateRadar() {
     }
     // Left edge (West, X = -border)
     if (left === -border) {
-      const p1 = world2Radar(-border, top, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
-      const p2 = world2Radar(-border, bottom, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p1 = world2Radar(-border, top, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p2 = world2Radar(-border, bottom, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#FBC02D'; // West - yellow
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
+      radarCtx.lineDashOffset = top * 2; // Anchor dashes to world coordinates
       radarCtx.beginPath();
       radarCtx.moveTo(p1.x, p1.y);
       radarCtx.lineTo(p2.x, p2.y);
@@ -2178,12 +2179,13 @@ function updateRadar() {
     }
     // Right edge (East, X = +border)
     if (right === border) {
-      const p1 = world2Radar(border, top, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
-      const p2 = world2Radar(border, bottom, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p1 = world2Radar(border, top, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p2 = world2Radar(border, bottom, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#388E3C'; // East - green
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
+      radarCtx.lineDashOffset = top * 2; // Anchor dashes to world coordinates
       radarCtx.beginPath();
       radarCtx.moveTo(p1.x, p1.y);
       radarCtx.lineTo(p2.x, p2.y);
