@@ -2321,23 +2321,32 @@ function updateRadar() {
     const state = tank.userData && tank.userData.playerState;
     if ((state && state.health <= 0) || tank.visible === false) return;
     
+    // Get player color (convert from hex number to CSS string)
+    let playerColor = '#4CAF50'; // Default green
+    if (state && typeof state.color === 'number') {
+      playerColor = '#' + state.color.toString(16).padStart(6, '0');
+    }
+    
     const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
     
     if (pos.distance > SHOT_DISTANCE) {
       // Tank is outside radar range - draw as small dot at edge
-      // Calculate angle from player to tank
+      // Calculate angle in radar space (same rotation as world2Radar)
       const dx = tank.position.x - px;
       const dz = tank.position.z - pz;
-      const angle = Math.atan2(dz, dx) - playerHeading + Math.PI / 2;
+      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+      const angle = Math.atan2(rotY, rotX);
       
       // Position dot at edge of radar circle
-      const edgeX = center + Math.sin(angle) * (radius - 8);
-      const edgeY = center + Math.cos(angle) * (radius - 8);
+      const edgeX = center + Math.cos(angle) * (radius - 8);
+      const edgeY = center + Math.sin(angle) * (radius - 8);
       
       radarCtx.save();
       radarCtx.beginPath();
       radarCtx.arc(edgeX, edgeY, 3, 0, Math.PI * 2);
-      radarCtx.fillStyle = playerId === myPlayerId ? 'rgba(33, 150, 243, 0.8)' : 'rgba(255, 87, 34, 0.8)';
+      radarCtx.fillStyle = playerColor;
+      radarCtx.globalAlpha = 0.8;
       radarCtx.fill();
       radarCtx.restore();
       return;
@@ -2352,7 +2361,7 @@ function updateRadar() {
       radarCtx.lineTo(-6, 8);
       radarCtx.lineTo(6, 8);
       radarCtx.closePath();
-      radarCtx.fillStyle = 'rgba(33, 150, 243, 1)';
+      radarCtx.fillStyle = playerColor;
       radarCtx.globalAlpha = 1;
       radarCtx.fill();
     } else {
@@ -2363,7 +2372,7 @@ function updateRadar() {
       radarCtx.lineTo(-6, 8);
       radarCtx.lineTo(6, 8);
       radarCtx.closePath();
-      radarCtx.fillStyle = 'rgba(255, 87, 34, 1)';
+      radarCtx.fillStyle = playerColor;
       radarCtx.globalAlpha = 0.95;
       radarCtx.fill();
     }
