@@ -2045,6 +2045,65 @@ function resizeRadar() {
   radarCanvas.style.height = size + 'px';
 }
 
+/**
+ * Convert 3D world coordinates to 2D radar coordinates
+ * @param {number} worldX - World X position
+ * @param {number} worldZ - World Z position
+ * @param {number} px - Player X position
+ * @param {number} pz - Player Z position
+ * @param {number} playerHeading - Player heading in radians
+ * @param {number} center - Radar canvas center
+ * @param {number} radius - Radar effective radius
+ * @param {number} shotDistance - Visible radar distance
+ * @param {number} worldRotation - Optional world rotation (default 0)
+ * @returns {{x: number, y: number, distance: number, rotation: number}} Radar coordinates, distance, and transformed rotation
+ */
+function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shotDistance, worldRotation = 0) {
+  const dx = worldX - px;
+  const dz = worldZ - pz;
+  const distance = Math.sqrt(dx * dx + dz * dz);
+  
+  // Rotate to player-relative coordinates (forward = up on radar)
+  const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+  const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+  
+  // Scale to radar size
+  const x = center + (rotX / shotDistance) * (radius - 16);
+  const y = center + (rotY / shotDistance) * (radius - 16);
+  
+  // Rotation transform:
+  // - Negate worldRotation to account for Z-axis direction difference (Three.js vs canvas)
+  // - Add playerHeading so objects stay fixed in world space as radar rotates
+  const rotation = -worldRotation + playerHeading;
+  
+  return { x, y, distance, rotation };
+}
+
+/**
+ * Calculate opacity for radar objects based on player's Y position relative to object
+ * @param {number} playerY - Player's Y position
+ * @param {number} baseY - Object's base Y position
+ * @param {number} height - Object's height
+ * @returns {number} Opacity value between 0.2 and 0.8
+ */
+function getRadarOpacity(playerY, baseY = 0, height = 0) {
+  const topY = baseY + height;
+  
+  // Player is within the object's vertical bounds - most opaque
+  if (playerY >= baseY && playerY <= topY) {
+    return 0.8;
+  }
+  
+  // Player is above or below - more translucent
+  const distanceAbove = playerY > topY ? (playerY - topY) : 0;
+  const distanceBelow = playerY < baseY ? (baseY - playerY) : 0;
+  const verticalDistance = Math.max(distanceAbove, distanceBelow);
+  
+  // Fade from 0.8 to 0.2 based on vertical distance (fade over 20 units)
+  const opacity = Math.max(0.2, 0.8 - (verticalDistance / 20) * 0.6);
+  return opacity;
+}
+
 function updateRadar() {
   if (!radarCtx || !myTank || !gameConfig) return;
   // Declare radar variables only once
@@ -2055,6 +2114,7 @@ function updateRadar() {
   const mapSize = gameConfig.MAP_SIZE || 100;
   // Player world position and heading
   const px = myTank.position.x;
+  const py = myTank.position.y;
   const pz = myTank.position.z;
   const playerHeading = myTank.rotation ? myTank.rotation.y : 0;
   // No radarRotation; use playerHeading directly
@@ -2073,89 +2133,75 @@ function updateRadar() {
     const right = Math.min(px + SHOT_DISTANCE, border);
     const top = Math.max(pz - SHOT_DISTANCE, -border);
     const bottom = Math.min(pz + SHOT_DISTANCE, border);
-    // Draw each edge if visible in radar
-    const toRadar = (wx, wz) => {
-      const dx = wx - px;
-      const dz = wz - pz;
-      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      return [
-        (rotX / SHOT_DISTANCE) * (radius - 16),
-        (rotY / SHOT_DISTANCE) * (radius - 16)
-      ];
-    };
+    
     // Top edge (North, Z = -border)
     if (top === -border) {
-      const [x1, y1] = toRadar(left, -border);
-      const [x2, y2] = toRadar(right, -border);
+      const p1 = world2Radar(left, -border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p2 = world2Radar(right, -border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#B20000'; // North - red
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.beginPath();
-      radarCtx.moveTo(x1, y1);
-      radarCtx.lineTo(x2, y2);
+      radarCtx.moveTo(p1.x, p1.y);
+      radarCtx.lineTo(p2.x, p2.y);
       radarCtx.stroke();
       radarCtx.restore();
     }
     // Bottom edge (South, Z = +border)
     if (bottom === border) {
-      const [x1, y1] = toRadar(left, border);
-      const [x2, y2] = toRadar(right, border);
+      const p1 = world2Radar(left, border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p2 = world2Radar(right, border, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#1976D2'; // South - blue
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.beginPath();
-      radarCtx.moveTo(x1, y1);
-      radarCtx.lineTo(x2, y2);
+      radarCtx.moveTo(p1.x, p1.y);
+      radarCtx.lineTo(p2.x, p2.y);
       radarCtx.stroke();
       radarCtx.restore();
     }
     // Left edge (West, X = -border)
     if (left === -border) {
-      const [x1, y1] = toRadar(-border, top);
-      const [x2, y2] = toRadar(-border, bottom);
+      const p1 = world2Radar(-border, top, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p2 = world2Radar(-border, bottom, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#FBC02D'; // West - yellow
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.beginPath();
-      radarCtx.moveTo(x1, y1);
-      radarCtx.lineTo(x2, y2);
+      radarCtx.moveTo(p1.x, p1.y);
+      radarCtx.lineTo(p2.x, p2.y);
       radarCtx.stroke();
       radarCtx.restore();
     }
     // Right edge (East, X = +border)
     if (right === border) {
-      const [x1, y1] = toRadar(border, top);
-      const [x2, y2] = toRadar(border, bottom);
+      const p1 = world2Radar(border, top, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
+      const p2 = world2Radar(border, bottom, px, pz, playerHeading, 0, 0, SHOT_DISTANCE);
       radarCtx.save();
       radarCtx.strokeStyle = '#388E3C'; // East - green
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.beginPath();
-      radarCtx.moveTo(x1, y1);
-      radarCtx.lineTo(x2, y2);
+      radarCtx.moveTo(p1.x, p1.y);
+      radarCtx.lineTo(p2.x, p2.y);
       radarCtx.stroke();
       radarCtx.restore();
     }
     radarCtx.restore();
   }
 
-  // Draw projectiles (shots) within SHOT_DISTANCE, using same transform as map/obstacles
+  // Draw projectiles (shots) within SHOT_DISTANCE
   if (typeof projectiles !== 'undefined' && projectiles.forEach) {
     projectiles.forEach((proj, id) => {
-      const dx = proj.position.x - px;
-      const dz = proj.position.z - pz;
-      if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
-      const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+      const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      if (pos.distance > SHOT_DISTANCE) return;
+      
       radarCtx.save();
       radarCtx.beginPath();
-      radarCtx.arc(x, y, 4, 0, Math.PI * 2);
+      radarCtx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
       radarCtx.fillStyle = '#FFD700';
       radarCtx.globalAlpha = 0.85;
       radarCtx.shadowColor = '#FFD700';
@@ -2208,48 +2254,52 @@ function updateRadar() {
   // Draw obstacles within SHOT_DISTANCE, rotated to match map orientation
   if (typeof OBSTACLES !== 'undefined' && Array.isArray(OBSTACLES)) {
     OBSTACLES.forEach(obs => {
-      const dx = obs.x - px;
-      const dz = obs.z - pz;
-      if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-      // Rotate obstacle positions to match tanks and shots
-      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
-      const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+      const obsWidth = obs.w || 8;
+      const obsDepth = obs.d || 8;
+      
+      // Transform obstacle to radar coordinates (includes rotation)
+      const result = world2Radar(obs.x, obs.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE, obs.rotation || 0);
+      
+      // For large objects, check if ANY part is within view, not just the center
+      // Calculate the maximum extent from center (half-diagonal of bounding box)
+      const maxExtent = Math.sqrt(obsWidth * obsWidth + obsDepth * obsDepth) / 2;
+      
+      // Cull only if the closest point on the object is outside SHOT_DISTANCE
+      if (result.distance - maxExtent > SHOT_DISTANCE) return;
+      
+      // Calculate opacity based on player's vertical position relative to obstacle
+      const baseY = obs.baseY || 0;
+      const height = obs.h || 4;
+      const opacity = getRadarOpacity(py, baseY, height);
 
       // Obstacle size scaling
       const scale = (radius - 16) / SHOT_DISTANCE;
-      const w = (obs.w || 8) * scale;
-      const d = (obs.d || 8) * scale;
-      // Adjust rotation so that non-square buildings align with world axes
-      const rot = (obs.rotation || 0) + playerHeading;
+      const w = obsWidth * scale;
+      const d = obsDepth * scale;
+      
       radarCtx.save();
-      radarCtx.translate(x, y);
-      radarCtx.rotate(rot);
-      radarCtx.globalAlpha = 0.5;
-      radarCtx.fillStyle = 'rgba(180,180,180,0.5)';
+      radarCtx.translate(result.x, result.y);
+      radarCtx.rotate(result.rotation);
+      radarCtx.globalAlpha = opacity;
+      radarCtx.fillStyle = 'rgba(180,180,180,0.8)';
+      // Map Three.js dimensions: w (X-axis) → canvas width, d (Z-axis) → canvas height
       radarCtx.fillRect(-w/2, -d/2, w, d);
       radarCtx.restore();
     });
   }
 
-  // Draw tanks within SHOT_DISTANCE, using same transform as map/obstacles/shots
+  // Draw tanks within SHOT_DISTANCE
   tanks.forEach((tank, playerId) => {
     if (!tank.position) return;
     // Only show on radar if alive and visible
     const state = tank.userData && tank.userData.playerState;
     if ((state && state.health <= 0) || tank.visible === false) return;
-    const dx = tank.position.x - px;
-    const dz = tank.position.z - pz;
-    if (Math.abs(dx) > SHOT_DISTANCE || Math.abs(dz) > SHOT_DISTANCE) return;
-    // Use radarRotation for all world-to-radar transforms
-    const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-    const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-    const x = center + (rotX / SHOT_DISTANCE) * (radius - 16);
-    const y = center + (rotY / SHOT_DISTANCE) * (radius - 16);
+    
+    const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+    if (pos.distance > SHOT_DISTANCE) return;
 
     radarCtx.save();
-    radarCtx.translate(x, y);
+    radarCtx.translate(pos.x, pos.y);
     if (playerId === myPlayerId) {
       // Player tank: always point up (no rotation needed)
       radarCtx.beginPath();

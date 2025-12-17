@@ -881,6 +881,7 @@ function gameLoop() {
       // Check if projectile is inside obstacle bounds
       if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
         // Hit obstacle!
+        log(`Projectile ${id} hit obstacle "${obs.name || 'unnamed'}" at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)}), localSpace:(${localX.toFixed(2)}, ${localZ.toFixed(2)}), obs:(${obs.x}, ${obs.z}), rot:${rotation.toFixed(2)}`);
         projectiles.delete(id);
         broadcastAll({ type: 'projectileRemoved', id });
         return;
