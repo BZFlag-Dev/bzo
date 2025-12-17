@@ -882,6 +882,11 @@ function handleServerMessage(message) {
           myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
           myTank.userData.playerState = message.player;
           
+          // Update name label with confirmed name from server
+          if (myTank.userData.nameLabel && myTank.userData.nameLabel.material) {
+            renderManager.updateSpriteLabel(myTank.userData.nameLabel, message.player.name, message.player.color);
+          }
+          
           // Create ghost mesh for local player to visualize what others see
           if (!myTank.userData.ghostMesh) {
             const ghostTank = renderManager.createGhostMesh(myTank);
@@ -893,6 +898,13 @@ function handleServerMessage(message) {
             scene.add(ghostTank);
             myTank.userData.ghostMesh = ghostTank;
           }
+          
+          // Update ghost mesh name label too
+          if (myTank.userData.ghostMesh && myTank.userData.ghostMesh.userData.nameLabel && 
+              myTank.userData.ghostMesh.userData.nameLabel.material) {
+            renderManager.updateSpriteLabel(myTank.userData.ghostMesh.userData.nameLabel, message.player.name, message.player.color);
+          }
+          
           myTank.userData.forwardSpeed = message.player.forwardSpeed || 0;
           myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
           myTank.visible = true;
@@ -1087,6 +1099,18 @@ function addPlayer(player) {
   tank.userData.playerState = player; // Store player state for scoreboard
   tank.userData.verticalVelocity = player.verticalVelocity;
   tank.visible = player.health > 0;
+  
+  // Update name label if it exists and has a material
+  if (tank.userData.nameLabel && tank.userData.nameLabel.material && player.name) {
+    renderManager.updateSpriteLabel(tank.userData.nameLabel, player.name, player.color);
+  }
+  
+  // Update ghost mesh name label if it exists and has a material
+  if (tank.userData.ghostMesh && tank.userData.ghostMesh.userData.nameLabel && 
+      tank.userData.ghostMesh.userData.nameLabel.material && player.name) {
+    renderManager.updateSpriteLabel(tank.userData.ghostMesh.userData.nameLabel, player.name, player.color);
+  }
+  
   callUpdateScoreboard();
 }
 
@@ -2290,7 +2314,7 @@ function updateRadar() {
     });
   }
 
-  // Draw tanks within SHOT_DISTANCE
+  // Draw tanks within SHOT_DISTANCE, or as edge dots if beyond
   tanks.forEach((tank, playerId) => {
     if (!tank.position) return;
     // Only show on radar if alive and visible
@@ -2298,7 +2322,26 @@ function updateRadar() {
     if ((state && state.health <= 0) || tank.visible === false) return;
     
     const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-    if (pos.distance > SHOT_DISTANCE) return;
+    
+    if (pos.distance > SHOT_DISTANCE) {
+      // Tank is outside radar range - draw as small dot at edge
+      // Calculate angle from player to tank
+      const dx = tank.position.x - px;
+      const dz = tank.position.z - pz;
+      const angle = Math.atan2(dz, dx) - playerHeading + Math.PI / 2;
+      
+      // Position dot at edge of radar circle
+      const edgeX = center + Math.sin(angle) * (radius - 8);
+      const edgeY = center + Math.cos(angle) * (radius - 8);
+      
+      radarCtx.save();
+      radarCtx.beginPath();
+      radarCtx.arc(edgeX, edgeY, 3, 0, Math.PI * 2);
+      radarCtx.fillStyle = playerId === myPlayerId ? 'rgba(33, 150, 243, 0.8)' : 'rgba(255, 87, 34, 0.8)';
+      radarCtx.fill();
+      radarCtx.restore();
+      return;
+    }
 
     radarCtx.save();
     radarCtx.translate(pos.x, pos.y);
