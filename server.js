@@ -855,37 +855,18 @@ function gameLoop() {
       return;
     }
 
-    // Check collision with obstacles
-    for (const obs of OBSTACLES) {
-      const halfW = obs.w / 2;
-      const halfD = obs.d / 2;
-      const rotation = obs.rotation || 0;
-      const obstacleHeight = obs.h || 4;
-      const obstacleBase = obs.baseY || 0;
-      const obstacleTop = obstacleBase + obstacleHeight;
-
-      // Only check collision if projectile is within obstacle's vertical range
-      if (proj.y < obstacleBase || proj.y >= obstacleTop) {
-        continue; // Projectile is below or above this obstacle
+    // Check collision with obstacles using checkCollision() with small projectile radius
+    const projectileRadius = 0.1;
+    const obstacleHit = checkCollision(proj.x, proj.y, proj.z, projectileRadius);
+    if (obstacleHit) {
+      if (obstacleHit.type === 'boundary') {
+        log(`Projectile ${id} hit boundary at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
+      } else {
+        log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
       }
-
-      // Transform projectile position to obstacle's local space
-      const dx = proj.x - obs.x;
-      const dz = proj.z - obs.z;
-
-      const cos = Math.cos(-rotation);
-      const sin = Math.sin(-rotation);
-      const localX = dx * cos - dz * sin;
-      const localZ = dx * sin + dz * cos;
-
-      // Check if projectile is inside obstacle bounds
-      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
-        // Hit obstacle!
-        log(`Projectile ${id} hit obstacle "${obs.name || 'unnamed'}" at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)}), localSpace:(${localX.toFixed(2)}, ${localZ.toFixed(2)}), obs:(${obs.x}, ${obs.z}), rot:${rotation.toFixed(2)}`);
-        projectiles.delete(id);
-        broadcastAll({ type: 'projectileRemoved', id });
-        return;
-      }
+      projectiles.delete(id);
+      broadcastAll({ type: 'projectileRemoved', id });
+      return;
     }
 
     // Check collision with players using extrapolated positions
