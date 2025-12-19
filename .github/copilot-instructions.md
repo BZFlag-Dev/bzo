@@ -43,6 +43,7 @@
 
 - No automated tests are present; manual play sessions via the browser are the de-facto regression check.
 - When adding network messages, document them in both server switch statements and client handlers, and update debug HUD counters if needed.
+- **NEVER use `tail`, `grep`, or terminal commands on `server.log`** - it's always open in the editor. Use `read_file` instead.
 
 # Player Join/Entry/Scoreboard Flow (Persistent Project Memory)
 
