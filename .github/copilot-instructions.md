@@ -143,3 +143,35 @@ const dz = -Math.cos(moveDirection) * fs * speed * dt;
 **IMPLEMENTED** - Direction vector feature is now active.
 
 ---
+
+# World Coordinate System (Persistent Project Memory)
+
+## Three.js Default Coordinate System
+This project uses the standard Three.js coordinate system for the game world (top-down view):
+
+**Axes:**
+- **+X = East** (right)
+- **-X = West** (left)  
+- **+Z = South** (toward camera/positive values)
+- **-Z = North** (away from camera/negative values)
+- **+Y = Up** (vertical height)
+
+**Rotation (r) - Player facing direction:**
+- **r = 0** = facing **North** (-Z direction)
+- **r = π/2 (1.57)** = facing **West** (-X direction)
+- **r = π (3.14)** = facing **South** (+Z direction)
+- **r = 3π/2 (4.71)** = facing **East** (+X direction)
+
+**Movement Vectors:**
+- Moving north: Z becomes **more negative** (e.g., -10 to -20)
+- Moving south: Z becomes **more positive** (e.g., -10 to -5, or 0 to 10)
+- Moving east: X becomes **more positive**
+- Moving west: X becomes **more negative**
+
+**Examples:**
+- Position (30, -30): 30 units east of origin, 30 units north
+- Position (50, 10): 50 units east, 10 units south of origin
+- Intended vector (0, -5): Moving north (toward more negative Z)
+- Intended vector (0, 5): Moving south (toward more positive Z)
+
+---
