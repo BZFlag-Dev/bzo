@@ -87,6 +87,8 @@ class RenderManager {
     this.celestialMeshes = [];
     this.clouds = [];
 
+    this.compassMarkers = [];
+
     this.debugLabels = [];
     this.debugLabelsEnabled = true;
 
@@ -343,6 +345,14 @@ class RenderManager {
     // Create and track boundary meshes
     const boundaryMeshes = [];
 
+    // Remove old compass markers if present
+    if (!this.compassMarkers) this.compassMarkers = [];
+    this.compassMarkers.forEach(marker => {
+      this.scene.remove(marker);
+      if (marker.material && marker.material.map) marker.material.map.dispose();
+      if (marker.material) marker.material.dispose();
+    });
+    this.compassMarkers = [];
 
     const northWall = new THREE.Mesh(
       new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
@@ -424,6 +434,8 @@ class RenderManager {
     sprite.position.copy(position);
     sprite.scale.set(20, 20, 1);
     this.scene.add(sprite);
+    if (!this.compassMarkers) this.compassMarkers = [];
+    this.compassMarkers.push(sprite);
   }
 
   clearObstacles() {
