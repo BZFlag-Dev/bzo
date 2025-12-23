@@ -1544,7 +1544,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   }
 
   // Find the collision normal
-  const normal = getCollisionNormal(x, y, z, newX, newY, newZ, tankRadius);
+  const normal = getCollisionNormal(collisionObj, x, y, z, newX, newY, newZ, tankRadius);
 
   if (normal) {
     // Project movement vector onto the surface (perpendicular to normal)
@@ -1587,7 +1587,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   return { x: x, y: y, z: z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
-function getCollisionNormal(fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) {
+function getCollisionNormal(obj, fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) {
   const mapSize = gameConfig.mapSize;
   const halfMap = mapSize / 2;
 
@@ -1597,75 +1597,65 @@ function getCollisionNormal(fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) 
   if (toZ - tankRadius < -halfMap) return { x: 0, z: 1 };
   if (toZ + tankRadius > halfMap) return { x: 0, z: -1 };
 
-  // Check obstacles
-  for (const obs of OBSTACLES) {
-    const obstacleHeight = obs.h;
-    const obstacleBase = obs.baseY;
-    const obstacleTop = obstacleBase + obstacleHeight;
-
-    // If tank can pass under or over, skip its normal
-    if (toY + tankRadius <= obstacleBase || toY >= obstacleTop) {
-      continue;
-    }
-    const halfW = obs.w / 2;
-    const halfD = obs.d / 2;
-    const rotation = obs.rotation || 0;
-
-    // Transform target position to obstacle's local space
-    const dx = toX - obs.x;
-    const dz = toZ - obs.z;
-
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const localX = dx * cos - dz * sin;
-    const localZ = dx * sin + dz * cos;
-
-    // Check if there's a collision
-    const closestX = Math.max(-halfW, Math.min(localX, halfW));
-    const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
-    const distX = localX - closestX;
-    const distZ = localZ - closestZ;
-    const distSquared = distX * distX + distZ * distZ;
-
-    if (distSquared < tankRadius * tankRadius) {
-      // Calculate normal in local space
-      let normalLocalX = 0;
-      let normalLocalZ = 0;
-
-      if (distSquared > 0.0001) {
-        // Normal points from closest point to tank center
-        const dist = Math.sqrt(distSquared);
-        normalLocalX = distX / dist;
-        normalLocalZ = distZ / dist;
-      } else {
-        // Tank center is inside obstacle, determine which edge is closest
-        const distToLeft = localX + halfW;
-        const distToRight = halfW - localX;
-        const distToFront = localZ + halfD;
-        const distToBack = halfD - localZ;
-
-        const minDist = Math.min(distToLeft, distToRight, distToFront, distToBack);
-
-        if (minDist === distToLeft) normalLocalX = -1;
-        else if (minDist === distToRight) normalLocalX = 1;
-        else if (minDist === distToFront) normalLocalZ = -1;
-        else normalLocalZ = 1;
-      }
-
-      // Transform normal back to world space
-      const cosRot = Math.cos(rotation);
-      const sinRot = Math.sin(rotation);
-      const normalX = normalLocalX * cosRot - normalLocalZ * sinRot;
-      const normalZ = normalLocalX * sinRot + normalLocalZ * cosRot;
-
-      // Normalize
-      const length = Math.sqrt(normalX * normalX + normalZ * normalZ);
-      return { x: normalX / length, z: normalZ / length };
-    }
+  // Use provided obstacle
+  if (!obj) return null;
+  const obs = obj;
+  const obstacleHeight = obs.h;
+  const obstacleBase = obs.baseY;
+  const obstacleTop = obstacleBase + obstacleHeight;
+  if (toY + tankRadius <= obstacleBase || toY >= obstacleTop) {
+    return null;
   }
-
+  const halfW = obs.w / 2;
+  const halfD = obs.d / 2;
+  const rotation = obs.rotation || 0;
+  const dx = toX - obs.x;
+  const dz = toZ - obs.z;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const localX = dx * cos - dz * sin;
+  const localZ = dx * sin + dz * cos;
+  const closestX = Math.max(-halfW, Math.min(localX, halfW));
+  const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
+  const distX = localX - closestX;
+  const distZ = localZ - closestZ;
+  const distSquared = distX * distX + distZ * distZ;
+  if (distSquared < tankRadius * tankRadius) {
+    let normalLocalX = 0;
+    let normalLocalZ = 0;
+    if (distSquared > 0.0001) {
+      const dist = Math.sqrt(distSquared);
+      normalLocalX = distX / dist;
+      normalLocalZ = distZ / dist;
+    } else {
+      const distToLeft = localX + halfW;
+      const distToRight = halfW - localX;
+      const distToFront = localZ + halfD;
+      const distToBack = halfD - localZ;
+      const minDist = Math.min(distToLeft, distToRight, distToFront, distToBack);
+      if (minDist === distToLeft) normalLocalX = -1;
+      else if (minDist === distToRight) normalLocalX = 1;
+      else if (minDist === distToFront) normalLocalZ = -1;
+      else normalLocalZ = 1;
+    }
+    const cosRot = Math.cos(rotation);
+    const sinRot = Math.sin(rotation);
+    const normalX = normalLocalX * cosRot - normalLocalZ * sinRot;
+    const normalZ = normalLocalX * sinRot + normalLocalZ * cosRot;
+    const length = Math.sqrt(normalX * normalX + normalZ * normalZ);
+    const worldNormal = { x: normalX / length, z: normalZ / length };
+    if (typeof sendToServer === 'function') {
+      sendToServer({
+        type: 'chat',
+        to: -1,
+        text: `[NORMAL-DEBUG] obs:${obs.name} rot:${rotation.toFixed(2)} local:(${localX.toFixed(2)},${localZ.toFixed(2)}) closest:(${closestX.toFixed(2)},${closestZ.toFixed(2)}) normalLocal:(${normalLocalX.toFixed(2)},${normalLocalZ.toFixed(2)}) worldNormal:(${worldNormal.x.toFixed(2)},${worldNormal.z.toFixed(2)}) pos:(${toX.toFixed(2)},${toZ.toFixed(2)})`
+      });
+    }
+    return worldNormal;
+  }
   return null;
 }
+
 // Intended input state
 let intendedForward = 0; // -1..1
 let intendedRotation = 0; // -1..1
