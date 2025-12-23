@@ -1665,7 +1665,6 @@ let isInAir = false;
 let onGround = false;
 let onObstacle = false;
 let jumpDirection = null; // Stores the direction at jump start
-let skipCollisionWithObstacle = null; // Obstacle to skip collision with (when falling from it)
 
 function handleInputEvents() {
   // Reset intended input each frame
