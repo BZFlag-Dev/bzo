@@ -1406,7 +1406,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
             debugParts.push(`rot:${obs.rotation !== undefined ? obs.rotation.toFixed(2) : 'UNDEF'}`);
             debugParts.push(`h:${obstacleHeight !== undefined ? obstacleHeight.toFixed(2) : 'UNDEF'}`);
             debugParts.push(`top:${obstacleTop !== undefined ? obstacleTop.toFixed(2) : 'UNDEF'}`);
-            sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
+            //sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
           } catch (e) {
             console.error('Error sending collision chat message:', e);
           }
@@ -1445,7 +1445,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
                 debugParts.push(`rot:${obs.rotation !== undefined ? obs.rotation.toFixed(2) : 'UNDEF'}`);
                 debugParts.push(`h:${obstacleHeight !== undefined ? obstacleHeight.toFixed(2) : 'UNDEF'}`);
                 debugParts.push(`top:${obstacleTop !== undefined ? obstacleTop.toFixed(2) : 'UNDEF'}`);
-                sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
+                //sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
               } catch (e) {
                 console.error('Error sending collision chat message:', e);
               }
@@ -1586,7 +1586,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   return { x: x, y: y, z: z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
-function getCollisionNormal(obj, fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) {
+function getCollisionNormal(obs, fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) {
   const mapSize = gameConfig.mapSize;
   const halfMap = mapSize / 2;
 
@@ -1597,14 +1597,7 @@ function getCollisionNormal(obj, fromX, fromY, fromZ, toX, toY, toZ, tankRadius 
   if (toZ + tankRadius > halfMap) return { x: 0, z: -1 };
 
   // Use provided obstacle
-  if (!obj) return null;
-  const obs = obj;
-  const obstacleHeight = obs.h;
-  const obstacleBase = obs.baseY;
-  const obstacleTop = obstacleBase + obstacleHeight;
-  if (toY + tankRadius <= obstacleBase || toY >= obstacleTop) {
-    return null;
-  }
+  if (!obs) return null;
   const halfW = obs.w / 2;
   const halfD = obs.d / 2;
   const rotation = obs.rotation || 0;
