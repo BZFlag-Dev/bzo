@@ -1556,6 +1556,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const slideNewZ = z + slideZ;
 
     const slideCollisionObj = checkCollision(slideNewX, newY, slideNewZ, tankRadius);
+    console.log('Slide collision check:', newX,newY,newZ,slideNewX,slideNewZ,slideCollisionObj);
     if (!slideCollisionObj || slideCollisionObj.type === 'ontop') {
       // If we're on top of an obstacle, that's the landing
       if (slideCollisionObj && slideCollisionObj.type === 'ontop') {
@@ -1583,6 +1584,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   }
 
   // No movement possible
+  console.log('No movement possible due to collision');
   return { x: x, y: y, z: z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
