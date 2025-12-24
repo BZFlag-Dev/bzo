@@ -1491,7 +1491,6 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
 
   // Try full movement first
   const collisionObj = checkCollision(newX, newY, newZ, tankRadius);
-  
   // If we hit a collision while moving upward (jumping into obstacle bottom), start falling
   if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY > 0) {
     // Hit obstacle bottom while jumping - immediately start falling
@@ -1544,7 +1543,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   }
 
   // Find the collision normal
-  const normal = getCollisionNormal(collisionObj, x, y, z, newX, newY, newZ, tankRadius);
+  const normal = getCollisionNormal(collisionObj.obstacle, x, y, z, newX, newY, newZ, tankRadius);
 
   if (normal) {
     // Project movement vector onto the surface (perpendicular to normal)
