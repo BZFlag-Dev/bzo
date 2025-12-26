@@ -477,7 +477,7 @@ function init() {
       updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
       showMessage,
       updateDebugDisplay,
-      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation })
+      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation, worldTime })
     });
   }
 
