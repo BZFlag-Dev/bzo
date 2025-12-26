@@ -54,13 +54,36 @@ class RenderManager {
         this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
         this.ambientLight.color.set(0x828293);
-        // Fog and background color: interpolate between day and night
-        // Day: #87ceeb (light blue), Night: #23264a (brighter blue-gray)
-        const dayColor = new THREE.Color(0x87ceeb);
+        // Enable sun shadow only if sun is above horizon
+        this.sunLight.castShadow = sunUp;
+
+        // Sun color: add a subtle red-orange tint at dawn/dusk
+        // Day: #fffbe6 (warm white), Night: #23264a, Dawn/Dusk: #ffb366 (orange tint)
+        const noonColor = new THREE.Color(0xfffbe6);
         const nightColor = new THREE.Color(0x23264a);
-        // Use sunY in [-max, max] to get t in [0,1] (0=night, 1=day)
+        const dawnTint = new THREE.Color(0xffb366);
+        // t: 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset, 1=midnight
         const t = Math.max(0, Math.min(1, sunY / (sunDistance * 0.8)));
-        const fogColor = nightColor.clone().lerp(dayColor, t);
+        // Compute time-of-day for tinting (worldTime: 0-23999)
+        const timeOfDay = (worldTime % 24000) / 24000;
+        // Dawn: 0.20-0.29, Dusk: 0.70-0.79 (about 1 hour each)
+        let sunColor = noonColor.clone();
+        if (timeOfDay >= 0.20 && timeOfDay < 0.29) {
+          // Dawn
+          const blend = (timeOfDay - 0.20) / 0.09;
+          sunColor.lerp(dawnTint, blend * 0.4); // max 40% tint
+        } else if (timeOfDay >= 0.71 && timeOfDay < 0.80) {
+          // Dusk
+          const blend = 1 - (timeOfDay - 0.71) / 0.09;
+          sunColor.lerp(dawnTint, blend * 0.4);
+        }
+        // Dim at night
+        sunColor.lerp(nightColor, 1 - t);
+        this.sunLight.color.copy(sunColor);
+
+        // Fog and background color: as before
+        const dayColor = new THREE.Color(0x87ceeb);
+        let fogColor = nightColor.clone().lerp(dayColor, t);
         this.scene.fog.color.copy(fogColor);
         this.scene.background.copy(fogColor);
       }
@@ -163,7 +186,7 @@ class RenderManager {
 
   _initDynamicLights() {
     if (!this.scene) return;
-    // Ambient and sun light will be updated dynamically
+    // Ambient, sun, and moon light will be updated dynamically
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Start dimmer
     this.scene.add(this.ambientLight);
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -175,6 +198,15 @@ class RenderManager {
     this.sunLight.shadow.camera.top = 120;
     this.sunLight.shadow.camera.bottom = -120;
     this.scene.add(this.sunLight);
+    this.moonLight = new THREE.DirectionalLight(0xccccff, 0.3);
+    this.moonLight.castShadow = true;
+    this.moonLight.shadow.mapSize.width = 1024;
+    this.moonLight.shadow.mapSize.height = 1024;
+    this.moonLight.shadow.camera.left = -120;
+    this.moonLight.shadow.camera.right = 120;
+    this.moonLight.shadow.camera.top = 120;
+    this.moonLight.shadow.camera.bottom = -120;
+    this.scene.add(this.moonLight);
   }
 
   updateSunLighting(celestial) {

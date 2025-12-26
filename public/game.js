@@ -2492,7 +2492,8 @@ function animate() {
 
   // Advance worldTime so 24000 ticks = 20 minutes (1200 seconds)
   // 24000 / 1200 = 20 ticks per second
-  worldTime = (worldTime + 20 * deltaTime) % 24000;
+  worldTime = (worldTime + 200 * deltaTime) % 24000;
+  renderManager.setWorldTime(worldTime);
 
   updateFps();
   updateChatWindow();
