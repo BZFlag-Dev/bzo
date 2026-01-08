@@ -65,7 +65,6 @@ function updateFps() {
 }
 
 // Game state
-
 let scene;
 let camera;
 let myPlayerId = null;
@@ -710,23 +709,6 @@ function connectToServer() {
 
   ws.onopen = () => {
     showMessage('Connected to server!');
-
-    // Only send join if there is a saved name that is not 'Player' or 'Player n'
-    const savedName = localStorage.getItem('playerName');
-    if (savedName && savedName.trim().length > 0) {
-      const trimmed = savedName.trim();
-      // Check for 'Player' or 'Player n' (where n is a number)
-      if (
-        trimmed !== 'Player' &&
-        !/^Player \d+$/.test(trimmed)
-      ) {
-        sendToServer({
-          type: 'joinGame',
-          name: trimmed,
-          isMobile,
-        });
-      }
-    }
   };
 
   ws.onmessage = (event) => {
@@ -808,6 +790,18 @@ function handleServerMessage(message) {
       playerZ = message.player.z;
       playerRotation = message.player.rotation;
 
+      // Only send join if there is a saved name that is not 'Player' or 'Player n'
+      const savedName = localStorage.getItem('playerName');
+      if (savedName && savedName.trim().length > 0) {
+        const trimmed = savedName.trim();
+        // Check for 'Player' or 'Player n' (where n is a number)
+        if (
+          trimmed !== 'Player' &&
+          !/^Player \d+$/.test(trimmed)
+        ) {
+          myPlayerName = trimmed;
+        }
+      }
       if (myPlayerName !== 'Player' && !/^Player \d+$/.test(myPlayerName)) {
         sendToServer({
           type: 'joinGame',
