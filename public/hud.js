@@ -128,7 +128,7 @@ export function updateDebugDisplay({
   if (typeof worldTime !== 'undefined') {
     html += `<div><span class="label">World Time:</span><span class="value">${worldTime.toFixed(1)} (${formatWorldTime(worldTime)})</span></div>`;
   }
-  
+
   if (latestOrientation && latestOrientation.status) {
     html += `<div><span class="label">Orientation Status:</span><span class="value">${latestOrientation.status}</span></div>`;
     if (latestOrientation.alpha !== null && latestOrientation.beta !== null && latestOrientation.gamma !== null) {

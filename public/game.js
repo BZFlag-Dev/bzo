@@ -875,12 +875,12 @@ function handleServerMessage(message) {
           myTank.rotation.y = playerRotation;
           myTank.userData.verticalVelocity = message.player.verticalVelocity || 0;
           myTank.userData.playerState = message.player;
-          
+
           // Update name label with confirmed name from server
           if (myTank.userData.nameLabel && myTank.userData.nameLabel.material) {
             renderManager.updateSpriteLabel(myTank.userData.nameLabel, message.player.name, message.player.color);
           }
-          
+
           // Create ghost mesh for local player to visualize what others see
           if (!myTank.userData.ghostMesh) {
             const ghostTank = renderManager.createGhostMesh(myTank);
@@ -892,13 +892,13 @@ function handleServerMessage(message) {
             scene.add(ghostTank);
             myTank.userData.ghostMesh = ghostTank;
           }
-          
+
           // Update ghost mesh name label too
-          if (myTank.userData.ghostMesh && myTank.userData.ghostMesh.userData.nameLabel && 
+          if (myTank.userData.ghostMesh && myTank.userData.ghostMesh.userData.nameLabel &&
               myTank.userData.ghostMesh.userData.nameLabel.material) {
             renderManager.updateSpriteLabel(myTank.userData.ghostMesh.userData.nameLabel, message.player.name, message.player.color);
           }
-          
+
           myTank.userData.forwardSpeed = message.player.forwardSpeed || 0;
           myTank.userData.rotationSpeed = message.player.rotationSpeed || 0;
           myTank.visible = true;
@@ -1075,14 +1075,14 @@ function addPlayer(player) {
     tank = renderManager.createTank(tankColor, player.name);
     scene.add(tank);
     tanks.set(player.id, tank);
-    
+
     // Create ghost mesh for this tank (server-confirmed position indicator)
     if (player.id !== myPlayerId) {
       const ghostTank = renderManager.createGhostMesh(tank);
       ghostTank.visible = showGhosts; // Initially hidden unless ghosts are enabled
       scene.add(ghostTank);
       tank.userData.ghostMesh = ghostTank;
-      
+
       // Store server position for ghost
       tank.userData.serverPosition = { x: player.x, y: player.y, z: player.z, r: player.rotation };
     }
@@ -1093,18 +1093,18 @@ function addPlayer(player) {
   tank.userData.playerState = player; // Store player state for scoreboard
   tank.userData.verticalVelocity = player.verticalVelocity;
   tank.visible = player.health > 0;
-  
+
   // Update name label if it exists and has a material
   if (tank.userData.nameLabel && tank.userData.nameLabel.material && player.name) {
     renderManager.updateSpriteLabel(tank.userData.nameLabel, player.name, player.color);
   }
-  
+
   // Update ghost mesh name label if it exists and has a material
-  if (tank.userData.ghostMesh && tank.userData.ghostMesh.userData.nameLabel && 
+  if (tank.userData.ghostMesh && tank.userData.ghostMesh.userData.nameLabel &&
       tank.userData.ghostMesh.userData.nameLabel.material && player.name) {
     renderManager.updateSpriteLabel(tank.userData.ghostMesh.userData.nameLabel, player.name, player.color);
   }
-  
+
   callUpdateScoreboard();
 }
 
@@ -1336,7 +1336,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const obstacleTop = obstacleBase + obstacleHeight;
     const epsilon = 0.15;
     const tankHeight = 2;
-    
+
     // Check if we're "on top" of this obstacle (at its top height)
     if (Math.abs(y - obstacleTop) < 0.5) {
       const halfW = obs.w / 2;
@@ -1348,19 +1348,19 @@ function checkCollision(x, y, z, tankRadius = 2) {
       const sin = Math.sin(rotation);
       const localX = dx * cos - dz * sin;
       const localZ = dx * sin + dz * cos;
-      
+
       // Use same collision logic - closest point on box
       const closestX = Math.max(-halfW, Math.min(localX, halfW));
       const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
       const distX = localX - closestX;
       const distZ = localZ - closestZ;
       const distSquared = distX * distX + distZ * distZ;
-      
+
       if (distSquared < tankRadius * tankRadius) {
         return { type: 'ontop', obstacle: obs, obstacleTop };
       }
     }
-    
+
     // Only check collision if tank top is below obstacle top and tank base is above obstacle base
     const tankTop = y + tankHeight;
     if (tankTop <= obstacleBase + epsilon) continue;
@@ -1489,27 +1489,27 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY > 0) {
     // Hit obstacle bottom while jumping - immediately start falling
     // Keep horizontal position at current location, start falling from current height
-    return { 
-      x: x, 
-      y: y, 
-      z: z, 
-      moved: false, 
-      altered: false, 
-      landedOn: null, 
-      landedType: null, 
-      startedFalling: false, 
+    return {
+      x: x,
+      y: y,
+      z: z,
+      moved: false,
+      altered: false,
+      landedOn: null,
+      landedType: null,
+      startedFalling: false,
       fallingFromObstacle: null,
       hitObstacleBottom: true  // Signal to reverse vertical velocity
     };
   }
-  
+
   if (!collisionObj || collisionObj.type === 'ontop') {
     // If we're on top of an obstacle, that's the landing
     if (collisionObj && collisionObj.type === 'ontop') {
       landedOn = collisionObj.obstacle;
       landedType = 'obstacle';
     }
-    
+
     // Only detect fall start if not already in air (myJumpDirection === null)
     // This prevents re-triggering fall detection every frame after falling starts
     if (!collisionObj && intendedDeltaY == 0 && y > 0 && myJumpDirection === null) {
@@ -1518,14 +1518,14 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
         const obstacleBase = obs.baseY || 0;
         const obstacleHeight = obs.h || 4;
         const obstacleTop = obstacleBase + obstacleHeight;
-        
+
         // Check if this obstacle is at our height level (we might be leaving it)
         if (Math.abs(y - obstacleTop) < 1.0) {
           fallingFromObstacle = obs;
           break;
         }
       }
-      
+
       // Start falling - we'll skip collision with fallingFromObstacle
       startedFalling = true;
       return { x: newX, y: newY - 0.1, z: newZ, moved: true, altered, landedOn, landedType, startedFalling, fallingFromObstacle };
@@ -1725,7 +1725,7 @@ function handleMotion(deltaTime) {
   if (isPaused || pauseCountdownStart > 0) return;
 
   let forceMoveSend = false;
-  
+
   // Detect landing immediately based on ground state from handleInputEvents
   // This must happen before any position/velocity modifications
   // Only clear jumpDirection if we're actually ON something (ground or obstacle), not just isInAir=false
@@ -1756,8 +1756,8 @@ function handleMotion(deltaTime) {
   if (isInAir && jumpDirection !== null) {
     moveRotation = jumpDirection;
     // Use frozen forward speed from jump or fall start
-    movementForwardSpeed = myTank.userData.fallForwardSpeed !== undefined 
-      ? myTank.userData.fallForwardSpeed 
+    movementForwardSpeed = myTank.userData.fallForwardSpeed !== undefined
+      ? myTank.userData.fallForwardSpeed
       : myTank.userData.jumpForwardSpeed || 0;
   }
 
@@ -1779,7 +1779,7 @@ function handleMotion(deltaTime) {
 
   let jumpStarted = false; // Track if jump was just triggered this frame
   let fallStarted = false; // Track if fall was just triggered this frame
-  
+
   // Only allow jump if not currently in a jump (jumpDirection is null)
   if (jumpTriggered && jumpDirection === null) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
@@ -1806,17 +1806,17 @@ function handleMotion(deltaTime) {
     jumpDirection = playerRotation;
     myJumpDirection = jumpDirection;
     fallStarted = true;
-    
+
     // Freeze forward speed at fall start (same as jump)
     const frozenForwardSpeed = myTank.userData.forwardSpeed || 0;
     myTank.userData.fallForwardSpeed = frozenForwardSpeed;
-    
+
     // Immediately re-validate with air physics since this frame's movement was calculated wrong
     // Recalculate movement with frozen direction and frozen forward speed
     const fallDeltaX = -Math.sin(jumpDirection) * frozenForwardSpeed * speed;
     const fallDeltaZ = -Math.cos(jumpDirection) * frozenForwardSpeed * speed;
     const fallDeltaY = myTank.userData.verticalVelocity * deltaTime;
-    
+
     // Re-validate with correct air physics
     const fallResult = validateMove(playerX, playerY, playerZ, fallDeltaX, fallDeltaY, fallDeltaZ, 2);
     if (fallResult.moved) {
@@ -1840,7 +1840,7 @@ function handleMotion(deltaTime) {
     playerRotation = intendedRotation * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
-    
+
     // Store jumpDirection AFTER rotation update so it matches packet r value
     if (jumpStarted) {
       jumpDirection = playerRotation;
@@ -1860,17 +1860,17 @@ function handleMotion(deltaTime) {
     const actualDeltaX = playerX - oldX;
     const actualDeltaZ = playerZ - oldZ;
     const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
-    
+
     if (actualDistance > 0.001) {
       // Calculate direction from movement vector
       const actualDirection = Math.atan2(-actualDeltaX, -actualDeltaZ);
-      
+
       // Determine expected direction (r on ground, jumpDirection in air)
       const expectedDirection = isInAir && jumpDirection !== null ? jumpDirection : playerRotation;
-      
+
       // Normalize angle difference to -PI to PI
       const angleDiff = Math.abs(((actualDirection - expectedDirection + Math.PI) % (Math.PI * 2)) - Math.PI);
-      
+
       // If actual direction differs from expected by more than 0.01 radians, include it
       if (angleDiff > 0.01) {
         slideDirection = actualDirection;
@@ -1885,11 +1885,11 @@ function handleMotion(deltaTime) {
       const actualDeltaX = playerX - oldX;
       const actualDeltaZ = playerZ - oldZ;
       const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
-      
+
       if (actualDistance > 0.001) {
         const actualSpeed = actualDistance / deltaTime;
         const tankSpeed = gameConfig.TANK_SPEED;
-        
+
         // When sliding (slideDirection set), use actual speed in that direction
         // Otherwise, use dot product with rotation direction
         if (slideDirection !== null) {
@@ -1923,25 +1923,25 @@ function handleMotion(deltaTime) {
   const now = performance.now();
   const timeSinceLastSend = now - lastSentTime;
   const verticalVelocity = myTank ? (myTank.userData.verticalVelocity || 0) : 0;
-  
+
   // Velocity-based dead reckoning: only send when velocities change (positions are extrapolated)
   const forwardSpeedDelta = Math.abs(forwardSpeed - lastSentForwardSpeed);
   const rotationSpeedDelta = Math.abs(rotationSpeed - lastSentRotationSpeed);
   // Don't check vertical velocity changes while in air - gravity is extrapolated
   // Only jump/land transitions matter (handled by forceMoveSend)
   const verticalVelocityDelta = isInAir ? 0 : Math.abs(verticalVelocity - lastSentVerticalVelocity);
-  
+
   const reasons = [];
   if (forceMoveSend) reasons.push('force');
   if (forwardSpeedDelta > VELOCITY_THRESHOLD) reasons.push(`fs:${forwardSpeedDelta.toFixed(3)}`);
   if (rotationSpeedDelta > VELOCITY_THRESHOLD) reasons.push(`rs:${rotationSpeedDelta.toFixed(3)}`);
   if (verticalVelocityDelta > VERTICAL_VELOCITY_THRESHOLD) reasons.push(`vv:${verticalVelocityDelta.toFixed(3)}`);
   if (timeSinceLastSend > MAX_UPDATE_INTERVAL) reasons.push(`time:${(timeSinceLastSend/1000).toFixed(1)}s`);
-  
+
   // Minimum 100ms between non-forced updates to prevent rapid-fire from calculation noise
   const minTimeBetweenUpdates = 100; // ms
   const canSendVelocityUpdate = forceMoveSend || timeSinceLastSend > minTimeBetweenUpdates;
-  
+
   const shouldSendUpdate =
     forceMoveSend || // Force send on jump/land transitions
     timeSinceLastSend > MAX_UPDATE_INTERVAL || // Heartbeat
@@ -1950,10 +1950,10 @@ function handleMotion(deltaTime) {
       rotationSpeedDelta > VELOCITY_THRESHOLD ||
       verticalVelocityDelta > VERTICAL_VELOCITY_THRESHOLD
     ));
-  
+
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
     if (debugEnabled) console.log(`[CLIENT] Sending dw: ${reasons.join(', ')}`);
-    
+
     // Round velocities to the precision we send to match server expectations
     // For jump packets, send the intendedForward value used for movement, not calculated forwardSpeed
     const sentFS = jumpStarted ? Number((myTank.userData.jumpForwardSpeed || 0).toFixed(2)) : Number(forwardSpeed.toFixed(2));
@@ -1972,7 +1972,7 @@ function handleMotion(deltaTime) {
       vv: sentVV,
       dt: Number(deltaTime.toFixed(3)),
     };
-    
+
     // Add optional direction field if sliding
     if (slideDirection !== null) {
       movePacket.d = Number(slideDirection.toFixed(2));
@@ -1984,14 +1984,14 @@ function handleMotion(deltaTime) {
     lastSentRotationSpeed = sentRS;
     lastSentVerticalVelocity = sentVV;
     lastSentTime = now;
-    
+
     // Update local player ghost to show what server/other players see
     if (myTank && myTank.userData.ghostMesh) {
       const ghostX = Number(playerX.toFixed(2));
       const ghostY = Number(playerY.toFixed(2));
       const ghostZ = Number(playerZ.toFixed(2));
       const ghostR = Number(playerRotation.toFixed(2));
-      
+
       myTank.userData.ghostMesh.position.set(ghostX, ghostY, ghostZ);
       myTank.userData.ghostMesh.rotation.y = ghostR;
     }
@@ -2084,20 +2084,20 @@ function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shot
   const dx = worldX - px;
   const dz = worldZ - pz;
   const distance = Math.sqrt(dx * dx + dz * dz);
-  
+
   // Rotate to player-relative coordinates (forward = up on radar)
   const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
   const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-  
+
   // Scale to radar size
   const x = center + (rotX / shotDistance) * (radius - 16);
   const y = center + (rotY / shotDistance) * (radius - 16);
-  
+
   // Rotation transform:
   // - Negate worldRotation to account for Z-axis direction difference (Three.js vs canvas)
   // - Add playerHeading so objects stay fixed in world space as radar rotates
   const rotation = -worldRotation + playerHeading;
-  
+
   return { x, y, distance, rotation };
 }
 
@@ -2110,17 +2110,17 @@ function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shot
  */
 function getRadarOpacity(playerY, baseY = 0, height = 0) {
   const topY = baseY + height;
-  
+
   // Player is within the object's vertical bounds - most opaque
   if (playerY >= baseY && playerY <= topY) {
     return 0.8;
   }
-  
+
   // Player is above or below - more translucent
   const distanceAbove = playerY > topY ? (playerY - topY) : 0;
   const distanceBelow = playerY < baseY ? (baseY - playerY) : 0;
   const verticalDistance = Math.max(distanceAbove, distanceBelow);
-  
+
   // Fade from 0.8 to 0.2 based on vertical distance (fade over 20 units)
   const opacity = Math.max(0.2, 0.8 - (verticalDistance / 20) * 0.6);
   return opacity;
@@ -2153,7 +2153,7 @@ function updateRadar() {
     const right = Math.min(px + SHOT_DISTANCE, border);
     const top = Math.max(pz - SHOT_DISTANCE, -border);
     const bottom = Math.min(pz + SHOT_DISTANCE, border);
-    
+
     // Top edge (North, Z = -border)
     if (top === -border) {
       const p1 = world2Radar(left, -border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
@@ -2222,7 +2222,7 @@ function updateRadar() {
     projectiles.forEach((proj, id) => {
       const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       if (pos.distance > SHOT_DISTANCE) return;
-      
+
       radarCtx.save();
       radarCtx.beginPath();
       radarCtx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
@@ -2280,17 +2280,17 @@ function updateRadar() {
     OBSTACLES.forEach(obs => {
       const obsWidth = obs.w || 8;
       const obsDepth = obs.d || 8;
-      
+
       // Transform obstacle to radar coordinates (includes rotation)
       const result = world2Radar(obs.x, obs.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE, obs.rotation || 0);
-      
+
       // For large objects, check if ANY part is within view, not just the center
       // Calculate the maximum extent from center (half-diagonal of bounding box)
       const maxExtent = Math.sqrt(obsWidth * obsWidth + obsDepth * obsDepth) / 2;
-      
+
       // Cull only if the closest point on the object is outside SHOT_DISTANCE
       if (result.distance - maxExtent > SHOT_DISTANCE) return;
-      
+
       // Calculate opacity based on player's vertical position relative to obstacle
       const baseY = obs.baseY || 0;
       const height = obs.h || 4;
@@ -2300,7 +2300,7 @@ function updateRadar() {
       const scale = (radius - 16) / SHOT_DISTANCE;
       const w = obsWidth * scale;
       const d = obsDepth * scale;
-      
+
       radarCtx.save();
       radarCtx.translate(result.x, result.y);
       radarCtx.rotate(result.rotation);
@@ -2318,15 +2318,15 @@ function updateRadar() {
     // Only show on radar if alive and visible
     const state = tank.userData && tank.userData.playerState;
     if ((state && state.health <= 0) || tank.visible === false) return;
-    
+
     // Get player color (convert from hex number to CSS string)
     let playerColor = '#4CAF50'; // Default green
     if (state && typeof state.color === 'number') {
       playerColor = '#' + state.color.toString(16).padStart(6, '0');
     }
-    
+
     const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-    
+
     if (pos.distance > SHOT_DISTANCE) {
       // Tank is outside radar range - draw as small dot at edge
       // Calculate angle in radar space (same rotation as world2Radar)
@@ -2335,11 +2335,11 @@ function updateRadar() {
       const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
       const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
       const angle = Math.atan2(rotY, rotX);
-      
+
       // Position dot at edge of radar circle
       const edgeX = center + Math.cos(angle) * (radius - 8);
       const edgeY = center + Math.sin(angle) * (radius - 8);
-      
+
       radarCtx.save();
       radarCtx.beginPath();
       radarCtx.arc(edgeX, edgeY, 3, 0, Math.PI * 2);
@@ -2402,27 +2402,27 @@ function updateChatWindow() {
  */
 function extrapolatePosition(player, dt) {
   if (!player || !gameConfig) return player;
-  
+
   const { x, y, z, r, forwardSpeed, rotationSpeed, verticalVelocity, jumpDirection, slideDirection } = player;
-  
+
   // Apply rotation
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED || 1.5;
   const newR = r + (rotationSpeed || 0) * rotSpeed * dt;
-  
+
   // Determine if player is in air based on jumpDirection
   const isInAir = jumpDirection !== null && jumpDirection !== undefined;
-  
+
   if (isInAir) {
     // In air: straight-line motion in frozen jumpDirection
     const speed = gameConfig.TANK_SPEED || 15;
     const dx = -Math.sin(jumpDirection) * (forwardSpeed || 0) * speed * dt;
     const dz = -Math.cos(jumpDirection) * (forwardSpeed || 0) * speed * dt;
-    
+
     // Apply gravity to vertical velocity
     const gravity = gameConfig.GRAVITY || 9.8;
     const vv = (verticalVelocity || 0) - gravity * dt;
     const dy = ((verticalVelocity || 0) + vv) / 2 * dt; // Average velocity over dt
-    
+
     return {
       x: x + dx,
       y: Math.max(0, y + dy), // Don't go below ground
@@ -2434,10 +2434,10 @@ function extrapolatePosition(player, dt) {
     const speed = gameConfig.TANK_SPEED || 15;
     const rs = rotationSpeed || 0;
     const fs = forwardSpeed || 0;
-    
+
     // Use slide direction if present, otherwise use rotation
     const moveDirection = slideDirection !== undefined ? slideDirection : r;
-    
+
     if (Math.abs(rs) < 0.001) {
       // Straight line motion (or sliding)
       const dx = -Math.sin(moveDirection) * fs * speed * dt;
@@ -2449,17 +2449,17 @@ function extrapolatePosition(player, dt) {
       // linear_velocity = fs * speed
       // angular_velocity = rs * rotSpeed
       const R = Math.abs((fs * speed) / (rs * rotSpeed));
-      
+
       // Arc angle traveled - this is also the rotation change!
       const theta = rs * rotSpeed * dt;
-      
+
       // Center of circle in world space
       // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2
       const perpAngle = r - Math.PI / 2;
       const centerSign = -(rs * fs); // Negated to match correct circular motion
       const cx = x + Math.sign(centerSign) * R * (-Math.sin(perpAngle));
       const cz = z + Math.sign(centerSign) * R * (-Math.cos(perpAngle));
-      
+
       // New position rotated around center
       // Negate theta for clockwise rotation (rs > 0 means turn right = clockwise)
       const dx = x - cx;
@@ -2468,7 +2468,7 @@ function extrapolatePosition(player, dt) {
       const sinTheta = Math.sin(-theta);
       const newDx = dx * cosTheta - dz * sinTheta;
       const newDz = dx * sinTheta + dz * cosTheta;
-      
+
       return {
         x: cx + newDx,
         y: y,
@@ -2496,16 +2496,16 @@ function animate() {
   requestAnimationFrame(animate);
   handleInputEvents();
   handleMotion(deltaTime);
-  
+
   // Extrapolate other players' positions
   if (gameConfig) {
     tanks.forEach((tank, playerId) => {
       if (playerId === myPlayerId) return; // Skip local player
       if (!tank.userData || !tank.userData.serverPosition) return;
-      
+
       const lastUpdate = tank.userData.lastUpdateTime || now;
       const timeSinceUpdate = (now - lastUpdate) / 1000; // Convert to seconds
-      
+
       // Extrapolate position from last server-confirmed state
       const extrapolated = extrapolatePosition({
         x: tank.userData.serverPosition.x,
@@ -2518,7 +2518,7 @@ function animate() {
         jumpDirection: tank.userData.jumpDirection,
         slideDirection: tank.userData.slideDirection
       }, timeSinceUpdate);
-      
+
       // Update tank's rendered position smoothly
       if (extrapolated) {
         tank.position.x = extrapolated.x;
@@ -2528,7 +2528,7 @@ function animate() {
       }
     });
   }
-  
+
   updateProjectiles(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
