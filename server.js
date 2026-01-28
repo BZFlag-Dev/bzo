@@ -86,6 +86,10 @@ const GAME_CONFIG = {
   JUMP_COOLDOWN: 500, // ms between jumps
 };
 
+// WebSocket keep-alive configuration
+const WS_PING_INTERVAL = 30000; // Send ping every 30 seconds
+const WS_PONG_TIMEOUT = 60000; // Close connection if no pong after 60 seconds
+
 // --- Map selection: load from config and maps/ directory ---
 const configPath = path.join(__dirname, 'server-config.json');
 let serverConfig = {};
@@ -374,11 +378,15 @@ class Player {
     this.connectDate = new Date();
     // Assign a random color for the tank (as a hex int)
     this.color = Player.pickRandomColor();
-    
+
     // Extrapolation state
     this.forwardSpeed = 0;
     this.rotationSpeed = 0;
     this.jumpDirection = null;
+
+    // Keep-alive tracking
+    this.lastPongTime = Date.now();
+    this.isAlive = true;
   }
 
   // Pick a random color suitable for tanks (avoid too dark/light)
@@ -428,7 +436,7 @@ class Player {
       color: this.color,
     };
   }
-  
+
   /**
    * Get extrapolated position at a specific time based on last known state.
    * @param {number} atTime - Timestamp (ms) to extrapolate to
@@ -437,26 +445,26 @@ class Player {
   getExtrapolatedPosition(atTime) {
     const dt = (atTime - this.lastUpdate) / 1000; // Convert to seconds
     if (dt <= 0) return { x: this.x, y: this.y, z: this.z, r: this.rotation };
-    
+
     // Apply rotation
     const rotSpeed = GAME_CONFIG.TANK_ROTATION_SPEED || 1.5;
     const newR = this.rotation + this.rotationSpeed * rotSpeed * dt;
-    
+
     // Determine if player is in air based on jumpDirection
     const isInAir = this.jumpDirection !== null && this.jumpDirection !== undefined;
-    
+
     if (isInAir) {
       // In air: ALWAYS straight-line motion in frozen jumpDirection
       // Rotation continues to change (newR), but linear motion is frozen
       const speed = GAME_CONFIG.TANK_SPEED || 15;
       const dx = -Math.sin(this.jumpDirection) * this.forwardSpeed * speed * dt;
       const dz = -Math.cos(this.jumpDirection) * this.forwardSpeed * speed * dt;
-      
+
       // Apply gravity to vertical velocity
       const gravity = GAME_CONFIG.GRAVITY || 9.8;
       const vv = this.verticalVelocity - gravity * dt;
       const dy = (this.verticalVelocity + vv) / 2 * dt; // Average velocity over dt
-      
+
       return {
         x: this.x + dx,
         y: Math.max(0, this.y + dy), // Don't go below ground
@@ -464,15 +472,15 @@ class Player {
         r: newR
       };
     }
-    
+
     // On ground: check for circular vs straight motion
     const speed = GAME_CONFIG.TANK_SPEED || 15;
     const rs = this.rotationSpeed || 0;
     const fs = this.forwardSpeed || 0;
-    
+
     // Use slide direction if present, otherwise use rotation
     const moveDirection = this.slideDirection !== undefined ? this.slideDirection : this.rotation;
-    
+
     if (Math.abs(rs) < 0.001) {
       // Straight line motion (or sliding)
       const dx = -Math.sin(moveDirection) * fs * speed * dt;
@@ -482,17 +490,17 @@ class Player {
       // Circular arc motion
       // Radius of curvature: R = |linear_velocity / angular_velocity|
       const R = Math.abs((fs * speed) / (rs * rotSpeed));
-      
+
       // Arc angle traveled
       const theta = rs * rotSpeed * dt;
-      
+
       // Center of circle in world space
-      // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2  
+      // Forward is (-sin(r), -cos(r)), perpendicular at r - π/2
       const perpAngle = this.rotation - Math.PI / 2;
       const centerSign = -(rs * fs); // Negated to match correct circular motion
       const cx = this.x + Math.sign(centerSign) * R * (-Math.sin(perpAngle));
       const cz = this.z + Math.sign(centerSign) * R * (-Math.cos(perpAngle));
-      
+
       // New position rotated around center
       // Negate theta for clockwise rotation (rs > 0 means turn right = clockwise)
       const dx = this.x - cx;
@@ -501,7 +509,7 @@ class Player {
       const sinTheta = Math.sin(-theta);
       const newDx = dx * cosTheta - dz * sinTheta;
       const newDz = dx * sinTheta + dz * cosTheta;
-      
+
       return {
         x: cx + newDx,
         y: this.y,
@@ -750,11 +758,11 @@ function validateShot(player, shotX, shotY, shotZ) {
   // Shot originates from barrel end, which is ~3 units from tank center
   const barrelLength = 3.0;
   const now = Date.now();
-  
+
   // Use extrapolated position, not stored position
   const extrapolated = player.getExtrapolatedPosition(now);
   const dist = distance(extrapolated.x, extrapolated.z, shotX, shotZ);
-  
+
   if (dist > barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE) {
     log(`Player "${player.name}" shot from invalid position: ${dist.toFixed(2)} units away (extrapolated: ${extrapolated.x.toFixed(2)}, ${extrapolated.z.toFixed(2)}, shot: ${shotX.toFixed(2)}, ${shotZ.toFixed(2)})`);
     return false;
@@ -877,7 +885,7 @@ function gameLoop() {
 
       // Use extrapolated position for accurate hit detection
       const extrapolated = player.getExtrapolatedPosition(now);
-      
+
       // Check horizontal distance
       const dist = distance(proj.x, proj.z, extrapolated.x, extrapolated.z);
       if (dist < 2) { // Tank hitbox radius
@@ -923,6 +931,25 @@ function gameLoop() {
 
 setInterval(gameLoop, 16); // ~60fps
 
+// WebSocket keep-alive: periodically ping all clients and close dead connections
+setInterval(() => {
+  const now = Date.now();
+  players.forEach((player) => {
+    if (player.ws.readyState === 1) { // OPEN
+      // Check if connection is dead (no pong response)
+      if (now - player.lastPongTime > WS_PONG_TIMEOUT) {
+        log(`Player "${player.name}" connection timeout (no pong for ${Math.floor((now - player.lastPongTime) / 1000)}s)`);
+        player.ws.terminate();
+        return;
+      }
+
+      // Mark as potentially dead and send ping
+      player.isAlive = false;
+      player.ws.ping();
+    }
+  });
+}, WS_PING_INTERVAL);
+
 // Function to force all clients to reload
 function forceClientReload() {
   log('Forcing all clients to reload...');
@@ -948,6 +975,12 @@ wss.on('connection', (ws, req) => {
 
   // Set player as not yet joined (health = 0)
   player.health = 0;
+
+  // Handle pong responses for keep-alive
+  ws.on('pong', () => {
+    player.lastPongTime = Date.now();
+    player.isAlive = true;
+  });
 
   // Notify all existing players (except the new one) about the new player (so they add to scoreboard/world, invisible)
   broadcast({
@@ -1059,13 +1092,13 @@ wss.on('connection', (ws, req) => {
           const rs = Number(message.rs);
           const vv = Number(message.vv);
           const d = message.d !== undefined ? Number(message.d) : undefined; // Optional slide direction
-          
+
           // Track jump direction for extrapolation
           const oldVV = player.verticalVelocity || 0;
           const isJumpStart = oldVV <= 0 && vv > 10; // Transition from ground/falling to jumping
           const isLanding = player.jumpDirection !== null && vv === 0; // Transition from air to ground
           const isFallStart = player.jumpDirection === null && vv < 0; // Started falling (drove off edge)
-          
+
           // Log jump/land/fall events but DON'T update jumpDirection yet - must validate first
           if (isJumpStart) {
             // Calculate expected landing position (assuming ~2 second flight)
@@ -1084,14 +1117,14 @@ wss.on('connection', (ws, req) => {
           } else if (isFallStart) {
             log(`[FALL] Player "${player.name}" started falling: pos=(${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)}), r=${r.toFixed(2)}, fs=${fs.toFixed(2)}, rs=${rs.toFixed(2)}, vv=${vv.toFixed(2)}`);
           }
-          
+
           // Check if velocities changed significantly - if so, use looser validation
           const fsChanged = Math.abs(fs - (player.forwardSpeed || 0)) > 0.1;
           const rsChanged = Math.abs(rs - (player.rotationSpeed || 0)) > 0.1;
           const vvChanged = Math.abs(vv - (player.verticalVelocity || 0)) > 0.5;
           const isSliding = d !== undefined; // Use loose validation whenever sliding (extrapolation may not match)
           const velocityChanged = fsChanged || rsChanged || vvChanged || isSliding;
-          
+
           // Use actual deltaTime for validation since we compare to extrapolated position
           // The extrapolated position accounts for the full time interval using OLD velocities
           if (validateMovement(player, x, y, z, r, deltaTime, velocityChanged)) {
@@ -1103,7 +1136,7 @@ wss.on('connection', (ws, req) => {
             } else if (isLanding) {
               player.jumpDirection = null; // Clear jump direction on landing
             }
-            
+
             // Update position/rotation AND velocities for next extrapolation
             player.x = x;
             player.y = y;
@@ -1114,7 +1147,7 @@ wss.on('connection', (ws, req) => {
             player.verticalVelocity = vv;
             player.slideDirection = d; // Store slide direction (undefined if not sliding)
             player.lastUpdate = now; // Update timestamp AFTER accepting the move
-            
+
             const pmPacket = {
               type: 'pm',
               id: player.id,
@@ -1126,12 +1159,12 @@ wss.on('connection', (ws, req) => {
               rs,
               vv,
             };
-            
+
             // Include optional slide direction if present
             if (d !== undefined) {
               pmPacket.d = d;
             }
-            
+
             broadcast(pmPacket, ws);
           } else {
             // Validation failed - jumpDirection unchanged (no update needed)
