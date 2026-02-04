@@ -3,6 +3,26 @@
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
  */
 
+html, body {
+  margin: 0;
+  padding: 0;
+  padding-left: max(0px, env(safe-area-inset-left));
+  padding-right: max(0px, env(safe-area-inset-right));
+  padding-top: max(0px, env(safe-area-inset-top));
+  padding-bottom: max(0px, env(safe-area-inset-bottom));
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #000;
+  font-family: 'Arial', sans-serif;
+  color: #fff;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+}
+
 :root {
   --color-bg: #000;
   --color-fg: #fff;
@@ -34,6 +54,13 @@
 }
 #operatorOverlay, #operatorOverlay * {
   pointer-events: auto !important;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
 }
 
 /* Chat window responsive wrapping and scrolling */

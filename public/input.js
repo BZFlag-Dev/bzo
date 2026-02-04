@@ -354,11 +354,66 @@ export function hideHelpPanel() {
 }
 
 function toggleFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen();
+  const isFullscreen = document.fullscreenElement ||
+                       document.webkitFullscreenElement ||
+                       document.mozFullScreenElement;
+
+  // Detect iOS (Chrome, Safari, etc.)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const isStandalone = window.navigator.standalone === true;
+
+  if (!isFullscreen) {
+    // On iOS, show message about adding to home screen
+    if (isIOS && !isStandalone) {
+      hudContext.pushChatMessage('💡 iOS: Use "Share" → "Add to Home Screen" for fullscreen');
+      hudContext.updateChatWindow();
+      return;
+    }
+
+    // Request fullscreen
+    const elem = document.documentElement;
+    const request = elem.requestFullscreen ||
+                   elem.webkitRequestFullscreen ||
+                   elem.webkitEnterFullscreen ||
+                   elem.mozRequestFullScreen;
+
+    if (request) {
+      try {
+        if (request === elem.webkitEnterFullscreen) {
+          // Older webkit
+          request.call(elem);
+        } else if (request === elem.webkitRequestFullscreen) {
+          // Older webkit with keyboard input
+          request.call(elem, Element.ALLOW_KEYBOARD_INPUT);
+        } else {
+          // Standard fullscreen
+          request.call(elem);
+        }
+      } catch (e) {
+        console.warn('Fullscreen request failed:', e);
+        hudContext.pushChatMessage('⚠️ Fullscreen not supported');
+        hudContext.updateChatWindow();
+      }
+    } else {
+      hudContext.pushChatMessage('⚠️ Fullscreen not supported');
+      hudContext.updateChatWindow();
+    }
   } else {
-    document.exitFullscreen();
+    // Exit fullscreen
+    const exit = document.exitFullscreen ||
+               document.webkitExitFullscreen ||
+               document.webkitCancelFullScreen ||
+               document.mozCancelFullScreen;
+
+    if (exit) {
+      try {
+        exit.call(document);
+      } catch (e) {
+        console.warn('Fullscreen exit failed:', e);
+      }
+    }
   }
+
   setTimeout(() => {
     const message = `Screen resolution: ${window.innerWidth}x${window.innerHeight}`;
     hudContext.pushChatMessage(message);

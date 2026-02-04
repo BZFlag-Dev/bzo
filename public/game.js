@@ -391,6 +391,20 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Initialize Three.js
 function init() {
+  // Prevent iOS scrolling/bounce on fullscreen (web app mode)
+  document.addEventListener('touchmove', (e) => {
+    // Allow touch on specific elements (chat, controls overlay, etc.)
+    const allowedSelectors = ['#chatInput', '#chatWindow', '#controlsOverlay', '#settingsHud', '#helpPanel', '#entryDialog', '#operatorOverlay'];
+    const isAllowed = allowedSelectors.some(sel => {
+      const el = document.querySelector(sel);
+      return el && (e.target === el || (e.target && el.contains(e.target)));
+    });
+
+    if (!isAllowed) {
+      e.preventDefault();
+    }
+  }, { passive: false });
+
   setupInputHandlers();
 
   // Chat UI
