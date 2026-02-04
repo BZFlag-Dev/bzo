@@ -302,12 +302,49 @@ window.addEventListener('DOMContentLoaded', () => {
         anaglyphBtn.addEventListener('click', () => {
           const enabled = !renderManager.getAnaglyphEnabled();
           renderManager.setAnaglyphEnabled(enabled);
+          // Disable SBS if enabling anaglyph
+          if (enabled && renderManager.getSBSEnabled()) {
+            renderManager.setSBSEnabled(false);
+            const sbsBtn = document.getElementById('sbsBtn');
+            if (sbsBtn) {
+              sbsBtn.classList.remove('active');
+              sbsBtn.title = 'Enable SBS Stereo';
+            }
+          }
           anaglyphBtn.classList.toggle('active', enabled);
           anaglyphBtn.title = enabled ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
         });
         // Set initial state
         anaglyphBtn.classList.toggle('active', renderManager.getAnaglyphEnabled());
         anaglyphBtn.title = renderManager.getAnaglyphEnabled() ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+      }
+
+      // SBS Stereo toggle button
+      const sbsBtn = document.getElementById('sbsBtn');
+      if (sbsBtn) {
+        sbsBtn.addEventListener('click', () => {
+          const enabled = !renderManager.getSBSEnabled();
+          renderManager.setSBSEnabled(enabled);
+          // Disable anaglyph if enabling SBS
+          if (enabled && renderManager.getAnaglyphEnabled()) {
+            renderManager.setAnaglyphEnabled(false);
+            const anaglyphBtn = document.getElementById('anaglyphBtn');
+            if (anaglyphBtn) {
+              anaglyphBtn.classList.remove('active');
+              anaglyphBtn.title = 'Enable Anaglyph 3D';
+            }
+          }
+          sbsBtn.classList.toggle('active', enabled);
+          sbsBtn.title = enabled ? 'Disable SBS Stereo' : 'Enable SBS Stereo';
+          localStorage.setItem('sbsEnabled', enabled);
+        });
+        // Set initial state from localStorage
+        const savedSBS = localStorage.getItem('sbsEnabled') === 'true';
+        if (savedSBS) {
+          renderManager.setSBSEnabled(true);
+        }
+        sbsBtn.classList.toggle('active', renderManager.getSBSEnabled());
+        sbsBtn.title = renderManager.getSBSEnabled() ? 'Disable SBS Stereo' : 'Enable SBS Stereo';
       }
 
       // Ghost toggle button
