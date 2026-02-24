@@ -4,5 +4,11 @@
   "mapFile": "test.bzw",
   "motd": "Welcome to the test server!",
   "maxPlayers": 16,
-  "port": 3000
+  "port": 3000,
+  "antiCheat": {
+    "mode": "strict",
+    "linearDriftThreshold": 3.0,
+    "linearDriftThresholdVelocityChanged": 20.0,
+    "angularDriftThreshold": 0.5
+  }
 }

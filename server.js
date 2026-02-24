@@ -101,6 +101,15 @@ try {
 
 let MAP_SOURCE = serverConfig.mapFile || 'random';
 let mapPath = '';
+
+// Anti-cheat configuration
+const ANTICHEAT_CONFIG = {
+  mode: serverConfig.antiCheat?.mode || 'strict', // 'strict', 'warning', or 'disabled'
+  linearDriftThreshold: serverConfig.antiCheat?.linearDriftThreshold || 3.0,
+  linearDriftThresholdVelocityChanged: serverConfig.antiCheat?.linearDriftThresholdVelocityChanged || 20.0,
+  angularDriftThreshold: serverConfig.antiCheat?.angularDriftThreshold || 0.5,
+};
+log(`Anti-cheat mode: ${ANTICHEAT_CONFIG.mode}`);
 if (MAP_SOURCE !== 'random') {
   mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
   if (!fs.existsSync(mapPath)) {
@@ -387,6 +396,14 @@ class Player {
     // Keep-alive tracking
     this.lastPongTime = Date.now();
     this.isAlive = true;
+
+    // Anti-cheat tracking
+    this.cheatWarnings = {
+      linearDrift: 0,
+      angularDrift: 0,
+      totalWarnings: 0,
+      lastWarningTime: 0,
+    };
   }
 
   // Pick a random color suitable for tanks (avoid too dark/light)
@@ -697,34 +714,62 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
     return false;
   }
 
-  // Get extrapolated position based on last known velocities
-  const now = Date.now();
-  const timeSinceLastUpdate = (now - player.lastUpdate) / 1000;
-  const extrapolated = player.getExtrapolatedPosition(now);
+  // If anti-cheat is disabled, allow all movement (but still check collisions below)
+  if (ANTICHEAT_CONFIG.mode === 'disabled') {
+    // Skip to collision checks
+  } else {
+    // Get extrapolated position based on last known velocities
+    const now = Date.now();
+    const timeSinceLastUpdate = (now - player.lastUpdate) / 1000;
+    const extrapolated = player.getExtrapolatedPosition(now);
 
-  // Compare to extrapolated position, not last stored position
-  // With velocity-based dead reckoning, the client position should match extrapolated position
-  // We allow a tolerance based on physics drift, network jitter, and rounding errors
-  // If velocity changed, use much looser validation since extrapolation doesn't account for it
-  const distMoved = distance(extrapolated.x, extrapolated.z, newX, newZ);
-  const maxDrift = velocityChanged ? 20.0 : 3.0; // Looser tolerance when velocity changes
+    // Compare to extrapolated position, not last stored position
+    // With velocity-based dead reckoning, the client position should match extrapolated position
+    // We allow a tolerance based on physics drift, network jitter, and rounding errors
+    // If velocity changed, use much looser validation since extrapolation doesn't account for it
+    const distMoved = distance(extrapolated.x, extrapolated.z, newX, newZ);
+    const maxDrift = velocityChanged ? ANTICHEAT_CONFIG.linearDriftThresholdVelocityChanged : ANTICHEAT_CONFIG.linearDriftThreshold;
 
-  if (distMoved > maxDrift) {
-    log(`Player "${player.name}" moved too far from extrapolated: ${distMoved.toFixed(2)} > ${maxDrift.toFixed(2)}`);
-    log(`  Stored: (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${player.z.toFixed(2)}, r=${player.rotation.toFixed(2)})`);
-    log(`  Extrap: (${extrapolated.x.toFixed(2)}, ${extrapolated.y.toFixed(2)}, ${extrapolated.z.toFixed(2)}, r=${extrapolated.r.toFixed(2)})`);
-    log(`  Recvd:  (${newX.toFixed(2)}, ${newY.toFixed(2)}, ${newZ.toFixed(2)}, r=${newRotation.toFixed(2)})`);
-    log(`  Vels: fs=${player.forwardSpeed.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, vv=${player.verticalVelocity.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s`);
-    return false;
-  }
+    if (distMoved > maxDrift) {
+      const exceedAmount = distMoved - maxDrift;
+      const likelihood = Math.min(100, (exceedAmount / maxDrift) * 100).toFixed(1);
 
-  // Calculate rotation change from extrapolated rotation
-  const rotDiff = Math.abs(normalizeAngle(newRotation - extrapolated.r));
-  const maxRotDrift = 0.5; // Allow ~28 degrees of drift from extrapolation (increased tolerance)
+      player.cheatWarnings.linearDrift++;
+      player.cheatWarnings.totalWarnings++;
+      player.cheatWarnings.lastWarningTime = now;
 
-  if (rotDiff > maxRotDrift) {
-    log(`Player "${player.name}" rotated too far from extrapolated: ${rotDiff.toFixed(2)} > ${maxRotDrift.toFixed(2)} (stored: ${player.rotation.toFixed(2)}, extrapolated: ${extrapolated.r.toFixed(2)}, received: ${newRotation.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s)`);
-    return false;
+      log(`[ANTICHEAT:${ANTICHEAT_CONFIG.mode.toUpperCase()}] Player "${player.name}" LINEAR DRIFT: ${distMoved.toFixed(2)} > ${maxDrift.toFixed(2)} (+${exceedAmount.toFixed(2)}) | Likelihood: ${likelihood}% | Warnings: ${player.cheatWarnings.totalWarnings}`);
+      log(`  Stored: (${player.x.toFixed(2)}, ${player.y.toFixed(2)}, ${player.z.toFixed(2)}, r=${player.rotation.toFixed(2)})`);
+      log(`  Extrap: (${extrapolated.x.toFixed(2)}, ${extrapolated.y.toFixed(2)}, ${extrapolated.z.toFixed(2)}, r=${extrapolated.r.toFixed(2)})`);
+      log(`  Recvd:  (${newX.toFixed(2)}, ${newY.toFixed(2)}, ${newZ.toFixed(2)}, r=${newRotation.toFixed(2)})`);
+      log(`  Vels: fs=${player.forwardSpeed.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, vv=${player.verticalVelocity.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s, velChanged=${velocityChanged}`);
+
+      if (ANTICHEAT_CONFIG.mode === 'strict') {
+        return false;
+      }
+      // In warning mode, continue with validation
+    }
+
+    // Calculate rotation change from extrapolated rotation
+    const rotDiff = Math.abs(normalizeAngle(newRotation - extrapolated.r));
+    const maxRotDrift = ANTICHEAT_CONFIG.angularDriftThreshold;
+
+    if (rotDiff > maxRotDrift) {
+      const exceedAmount = rotDiff - maxRotDrift;
+      const likelihood = Math.min(100, (exceedAmount / maxRotDrift) * 100).toFixed(1);
+
+      player.cheatWarnings.angularDrift++;
+      player.cheatWarnings.totalWarnings++;
+      player.cheatWarnings.lastWarningTime = now;
+
+      log(`[ANTICHEAT:${ANTICHEAT_CONFIG.mode.toUpperCase()}] Player "${player.name}" ANGULAR DRIFT: ${rotDiff.toFixed(2)} > ${maxRotDrift.toFixed(2)} (+${exceedAmount.toFixed(2)}) | Likelihood: ${likelihood}% | Warnings: ${player.cheatWarnings.totalWarnings}`);
+      log(`  stored: ${player.rotation.toFixed(2)}, extrapolated: ${extrapolated.r.toFixed(2)}, received: ${newRotation.toFixed(2)}, rs=${player.rotationSpeed.toFixed(2)}, dt=${timeSinceLastUpdate.toFixed(2)}s`);
+
+      if (ANTICHEAT_CONFIG.mode === 'strict') {
+        return false;
+      }
+      // In warning mode, continue with validation
+    }
   }
 
   // Check map boundaries
@@ -949,6 +994,23 @@ setInterval(() => {
     }
   });
 }, WS_PING_INTERVAL);
+
+// Anti-cheat monitoring: periodic summary report (every 5 minutes)
+if (ANTICHEAT_CONFIG.mode !== 'disabled') {
+  setInterval(() => {
+    const playersWithWarnings = Array.from(players.values())
+      .filter(p => p.cheatWarnings.totalWarnings > 0)
+      .sort((a, b) => b.cheatWarnings.totalWarnings - a.cheatWarnings.totalWarnings);
+
+    if (playersWithWarnings.length > 0) {
+      log(`[ANTICHEAT SUMMARY] ${playersWithWarnings.length} player(s) with warnings:`);
+      playersWithWarnings.forEach(p => {
+        const timeSinceWarning = Math.floor((Date.now() - p.cheatWarnings.lastWarningTime) / 1000);
+        log(`  "${p.name}": ${p.cheatWarnings.totalWarnings} total (${p.cheatWarnings.linearDrift} linear, ${p.cheatWarnings.angularDrift} angular) - last ${timeSinceWarning}s ago`);
+      });
+    }
+  }, 300000); // 5 minutes
+}
 
 // Function to force all clients to reload
 function forceClientReload() {
@@ -1352,8 +1414,15 @@ wss.on('connection', (ws, req) => {
     const playerNum = player.playerNumber;
     const playerKills = player.kills
     const playerDeaths = player.deaths;
+    const cheatWarnings = player.cheatWarnings.totalWarnings;
     players.delete(player.id);
-    log(`Player "${playerName}" (#${playerNum}) disconnected. ${playerKills} kills, ${playerDeaths} deaths. Players: ${players.size}`);
+
+    let logMsg = `Player "${playerName}" (#${playerNum}) disconnected. ${playerKills} kills, ${playerDeaths} deaths.`;
+    if (cheatWarnings > 0 && ANTICHEAT_CONFIG.mode !== 'disabled') {
+      logMsg += ` [ANTICHEAT: ${cheatWarnings} warnings (${player.cheatWarnings.linearDrift} linear, ${player.cheatWarnings.angularDrift} angular)]`;
+    }
+    logMsg += ` Players: ${players.size}`;
+    log(logMsg);
 
     broadcast({
       type: 'playerLeft',
