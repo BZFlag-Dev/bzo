@@ -126,8 +126,8 @@ Add optional `d` (direction) field to `move` messages when actual movement direc
 
 ### Client extrapolation:
 ```javascript
-const moveDirection = player.slideDirection !== undefined 
-  ? player.slideDirection 
+const moveDirection = player.slideDirection !== undefined
+  ? player.slideDirection
   : (player.jumpDirection !== null ? player.jumpDirection : player.r);
 const dx = -Math.sin(moveDirection) * fs * speed * dt;
 const dz = -Math.cos(moveDirection) * fs * speed * dt;
@@ -151,7 +151,7 @@ This project uses the standard Three.js coordinate system for the game world (to
 
 **Axes:**
 - **+X = East** (right)
-- **-X = West** (left)  
+- **-X = West** (left)
 - **+Z = South** (toward camera/positive values)
 - **-Z = North** (away from camera/negative values)
 - **+Y = Up** (vertical height)
