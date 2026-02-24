@@ -616,7 +616,8 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
     const epsilon = 0.15;
-    const tankHeight = 2;
+    // Scale height based on radius (tanks are 2 units tall, projectiles much smaller)
+    const tankHeight = tankRadius; // For tanks (radius=2), height=2; for projectiles (radius=0.1), height=0.1
     // Only check if tank top is below obstacle top and tank base is above obstacle base
     const tankTop = y + tankHeight;
     if (tankTop <= obstacleBase + epsilon) continue;
