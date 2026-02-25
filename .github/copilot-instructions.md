@@ -5,6 +5,12 @@
 ## Coding Conventions
 
 - **Always prefer code reuse over duplication.** When implementing new features or refactoring, extract and reuse shared logic instead of copying code. This ensures maintainability and consistency across the project.
+- **Always remove trailing whitespace from edits.** Ensure no lines end with spaces or tabs to maintain clean code formatting.
+
+## Debugging Tips
+
+- **Client-side logging to server**: Send debug messages from the client to the server using `ws.send(JSON.stringify({ type: 'debug', message: 'your debug info' }))` and they will appear in `server.log`. This is especially useful for headsets like Quest 2 where browser console access is limited.
+- Never use `tail`, `grep`, or terminal commands on `server.log` - it's always open in the editor. Use `read_file` instead.
 
 ## Repo Snapshot
 - Real-time BZFlag-inspired arena: Node/Express/WS server in `server.js`, browser-side Three.js client under `public/`.
@@ -175,3 +181,83 @@ This project uses the standard Three.js coordinate system for the game world (to
 - Intended vector (0, 5): Moving south (toward more positive Z)
 
 ---
+
+# WebXR Implementation (Phase 1 - Head Tracking + Joystick Input)
+
+## Overview
+WebXR support enables VR gameplay on headsets like Meta Quest 2. Phase 1 implements head tracking for looking around and joystick-based movement/rotation independent of head pose.
+
+## Architecture
+
+### `webxr.js` - XR Session & Controller Management
+- **initXR()** - Detects WebXR support (`navigator.xr.isSessionSupported('immersive-vr')`)
+- **toggleXRSession(renderer)** - Creates/ends XR session and updates renderer
+- **updateXRControllerInput()** - Reads gamepad data from input sources each frame
+- **getXRControllerInput()** - Returns { leftThumbstick, rightThumbstick, rightTrigger }
+- **xrState** - Global state tracking: enabled flag, head pose, controller map
+
+### Integration Points
+
+**render.js:**
+- Renderer created with `xrCompatible: true` and `renderer.xr.enabled = true`
+- `getRenderer()` method added for webxr module access
+- `updateCamera()` handles XR first-person positioning:
+  - In XR: Camera at tank + eye height; Three.js applies head offset automatically
+  - Non-XR: Camera positioned with rotation offset
+
+**input.js:**
+- `updateVirtualInputFromXR()` - Maps controller input to virtualInput:
+  - Left thumbstick Y → forward/backward
+  - Right thumbstick X → turn left/right
+  - Right trigger → fire (Phase 2)
+
+**game.js:**
+- XR button added to settings HUD (enabled/disabled based on support)
+- `initXR()` called on DOMContentLoaded to detect support
+- `updateXRControllerInput()` called each frame before handleInputEvents
+- `toggleXRSession()` triggered by XR button click
+- First-person camera mode automatically enabled when entering VR
+
+**index.html:**
+- XR button added to settings: `id="xrBtn" title="Enter WebXR VR Mode"`
+
+## Controller Input Mapping (Quest 2)
+
+| Input | Binding | Effect |
+|-------|---------|--------|
+| Left Thumbstick Up/Down | Axes 1 | Forward/Backward movement |
+| Right Thumbstick Left/Right | Axes 2 | Tank rotation |
+| Right Trigger | Button 0 | Fire (Phase 2) |
+
+## How It Works (Phase 1)
+
+1. User clicks VR Mode button on Quest 2
+2. Browser requests immersive-vr session
+3. Renderer switches to stereo rendering
+4. Each frame:
+   - Controller thumbstick positions read from gamepad input sources
+   - Converted to virtualInput (forward, turn)
+   - Used by handleInputEvents for movement
+   - Tank rotation independent of head direction
+   - Three.js automatically positions camera for stereo view + head tracking
+
+## Future Work (Phase 2+)
+
+- **Phase 2:** Trigger button for firing (direction = tank facing, not head)
+- **Phase 3:** Hand tracking, comfort settings, snap turning option
+- **Phase 4:** VR-optimized UI, voice commands, controller haptics feedback
+
+## XR Coordinate System Mapping
+
+**Problem:** In XR mode, Three.js ignores manual camera positioning and uses the XR reference frame (origin at tracked head position). Game objects positioned relative to tank become unreachable.
+
+**Solution:** Created a `worldGroup` (Three.js Group) that contains all game content. In updateCamera():
+- **XR mode**: Translate worldGroup position to `(-tankX, -tankY + eyeHeight, -tankZ)`, effectively placing the tank at XR origin
+- **Normal mode**: Keep worldGroup at origin (0,0,0), position camera normally
+
+**Implementation:**
+1. `renderManager.worldGroup` - Group in scene containing all game objects
+2. Add all tanks to `renderManager.getWorldGroup()` instead of scene directly
+3. updateCamera() checks `xrState.enabled` and translates worldGroup or camera accordingly
+4. Result: Same game world appears same from player perspective in both VR and desktop
+

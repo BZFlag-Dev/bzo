@@ -1136,6 +1136,11 @@ wss.on('connection', (ws, req) => {
           // If targetId is invalid, ignore
           break;
         }
+        case 'debug': {
+          // Log debug messages from clients
+          log(`[DEBUG from ${player.name}] ${message.message || ''}`);
+          break;
+        }
         case 'm': {
           const now = Date.now();
           // Calculate deltaTime based on server's last update time

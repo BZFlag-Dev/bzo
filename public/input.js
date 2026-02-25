@@ -2,6 +2,8 @@
 // Handles keyboard, mouse, and touch input for the game.
 // Exports: setupInputHandlers, virtualInput, keys, lastVirtualJump
 
+import { getXRControllerInput, xrState, debugLog } from './webxr.js';
+
 // Virtual input state (for mobile/touch)
 export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
 export let lastVirtualJump = false;
@@ -135,6 +137,34 @@ export function setupInputHandlers() {
   document.addEventListener('keyup', (e) => {
     keys[e.code] = false;
   });
+}
+
+// Update virtualInput from XR controller input
+let vxrFrameCounter = 0;
+
+export function updateVirtualInputFromXR() {
+  if (!xrState.enabled) return;
+
+  const xrInput = getXRControllerInput();
+
+  // Right controller thumbstick: forward/backward (Y-axis) and left/right turn (X-axis)
+  const newForward = -xrInput.rightThumbstick.y;
+  virtualInput.forward = newForward;
+
+  // Right controller thumbstick left/right: tank rotation
+  virtualInput.turn = -xrInput.rightThumbstick.x;
+
+  // Right trigger OR A button: fire
+  virtualInput.fire = xrInput.rightTrigger > 0.5 || xrInput.buttonA;
+
+  // B button: jump
+  virtualInput.jump = xrInput.buttonB;
+
+  // Debug logging every 60 frames
+  vxrFrameCounter++;
+  if (vxrFrameCounter % 60 === 0) {
+    debugLog(`virtualInput: forward=${newForward.toFixed(2)}, turn=${virtualInput.turn.toFixed(2)}, fire=${virtualInput.fire}, jump=${virtualInput.jump}`);
+  }
 }
 
 // --- HUD & Orientation helpers ---

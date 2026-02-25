@@ -24,7 +24,8 @@ import {
   latestOrientation,
   toggleMouseMode,
   hideHelpPanel,
-  isMobile
+  isMobile,
+  updateVirtualInputFromXR
 } from './input.js';
 import {
   updateDebugDisplay,
@@ -36,6 +37,7 @@ import {
   updateDegreeBar
 } from './hud.js';
 import { renderManager } from './render.js';
+import { initXR, toggleXRSession, isXRSupported, updateXRControllerInput, setNormalAnimationLoop, isXREnabled, setSendToServer, debugLog } from './webxr.js';
 
 // FPS
 let fps = 0;
@@ -73,6 +75,7 @@ let myTank = null;
 let tanks = new Map();
 let projectiles = new Map();
 let ws = null;
+let wsReady = false; // Flag to track if WebSocket is connected and ready
 let gameConfig = null;
 let radarCanvas, radarCtx;
 
@@ -424,6 +427,42 @@ window.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Initialize WebXR support
+  initXR().then(supported => {
+    showMessage(`WebXR: ${supported ? 'SUPPORTED' : 'NOT SUPPORTED'}`, 'info');
+    const xrBtn = document.getElementById('xrBtn');
+    if (xrBtn) {
+      if (!supported) {
+        xrBtn.disabled = true;
+        xrBtn.title = 'WebXR not supported on this device';
+        xrBtn.classList.add('disabled');
+      } else {
+        xrBtn.addEventListener('click', async () => {
+          showMessage('Requesting VR...');
+          const renderer = renderManager.getRenderer();
+          if (!renderer) {
+            showMessage('Error: Renderer not available');
+            return;
+          }
+
+          const result = await toggleXRSession(renderer, animate);
+          if (result) {
+            xrBtn.classList.add('active');
+            xrBtn.title = 'Exit WebXR VR Mode';
+            // Force first-person camera when entering VR
+            cameraMode = 'first-person';
+            showMessage('✓ WebXR VR Mode: ON');
+          } else {
+            showMessage('✗ VR request failed - check server.log');
+            xrBtn.classList.remove('active');
+            xrBtn.title = 'Enter WebXR VR Mode';
+            showMessage('WebXR VR Mode: OFF');
+          }
+        });
+      }
+    }
+  });
 });
 
 // Initialize Three.js
@@ -736,6 +775,9 @@ function init() {
     }
   }, 100);
 
+  // Set up XR animation loop restoration capability
+  setNormalAnimationLoop(renderManager.getRenderer(), animate);
+
   // Start game loop
   animate();
 }
@@ -759,7 +801,10 @@ function connectToServer() {
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
   ws.onopen = () => {
+    wsReady = true;
     showMessage('Connected to server!');
+    // Now enable debug logging to server
+    setSendToServer(sendToServer);
   };
 
   ws.onmessage = (event) => {
@@ -776,6 +821,7 @@ function connectToServer() {
   };
 
   ws.onclose = (event) => {
+    wsReady = false;
     let kills = 0;
     let deaths = 0;
     if (myTank && myTank.userData && myTank.userData.playerState) {
@@ -813,22 +859,22 @@ function handleServerMessage(message) {
       tanks.forEach((tank, id) => {
         // Remove ghost mesh if it exists
         if (tank.userData.ghostMesh) {
-          scene.remove(tank.userData.ghostMesh);
+          renderManager.getWorldGroup().remove(tank.userData.ghostMesh);
           tank.userData.ghostMesh = null;
         }
-        scene.remove(tank);
+        renderManager.getWorldGroup().remove(tank);
       });
       tanks.clear();
 
       // Clear any existing projectiles
       projectiles.forEach((projectile) => {
-        scene.remove(projectile.mesh);
+        renderManager.getWorldGroup().remove(projectile.mesh);
       });
       projectiles.clear();
 
       // Clear any existing shields
       playerShields.forEach((shield, id) => {
-        scene.remove(shield);
+        renderManager.removeShield(shield);
       });
       playerShields.clear();
 
@@ -940,7 +986,7 @@ function handleServerMessage(message) {
             ghostTank.position.set(playerX, playerY, playerZ);
             ghostTank.rotation.y = playerRotation;
             ghostTank.visible = showGhosts;
-            scene.add(ghostTank);
+            renderManager.getWorldGroup().add(ghostTank);
             myTank.userData.ghostMesh = ghostTank;
           }
 
@@ -1124,14 +1170,14 @@ function addPlayer(player) {
     // Use player.color if present, else fallback to green
     const tankColor = (typeof player.color === 'number') ? player.color : 0x4caf50;
     tank = renderManager.createTank(tankColor, player.name);
-    scene.add(tank);
+    renderManager.getWorldGroup().add(tank);
     tanks.set(player.id, tank);
 
     // Create ghost mesh for this tank (server-confirmed position indicator)
     if (player.id !== myPlayerId) {
       const ghostTank = renderManager.createGhostMesh(tank);
       ghostTank.visible = showGhosts; // Initially hidden unless ghosts are enabled
-      scene.add(ghostTank);
+      renderManager.getWorldGroup().add(ghostTank);
       tank.userData.ghostMesh = ghostTank;
 
       // Store server position for ghost
@@ -1164,10 +1210,10 @@ function removePlayer(playerId) {
   if (tank) {
     // Remove ghost mesh if it exists
     if (tank.userData.ghostMesh) {
-      scene.remove(tank.userData.ghostMesh);
+      renderManager.getWorldGroup().remove(tank.userData.ghostMesh);
       tank.userData.ghostMesh = null;
     }
-    scene.remove(tank);
+    renderManager.getWorldGroup().remove(tank);
     tanks.delete(playerId);
     callUpdateScoreboard();
   }
@@ -1731,13 +1777,16 @@ function handleInputEvents() {
 
   if (isPaused || pauseCountdownStart > 0) return;
 
+  // Update virtual input from XR controller if available
+  updateVirtualInputFromXR();
+
   // Gather intended input from controls
   if (isInAir) {
     // In air: use stored jump values to match what we send in packets
     intendedForward = myTank.userData.jumpForwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
-    if (virtualControlsEnabled) {
+    if (virtualControlsEnabled || isXREnabled()) {
       intendedForward = virtualInput.forward;
       intendedRotation = virtualInput.turn;
       if (jumpDirection === null && virtualInput.jump) {
@@ -2047,7 +2096,7 @@ function handleMotion(deltaTime) {
       myTank.userData.ghostMesh.rotation.y = ghostR;
     }
   }
-  if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space'])) {
+  if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space']) || (isXREnabled() && virtualInput.fire)) {
     const now = Date.now();
     if (now - lastShotTime > gameConfig.SHOT_COOLDOWN) {
       shoot();
@@ -2540,11 +2589,26 @@ function animate() {
   worldTime = (worldTime + 20 * deltaTime) % 24000;
   renderManager.setWorldTime(worldTime);
 
+  // Debug: log game state in XR once on entry
+  if (isXREnabled() && !window.xrDebugLogged) {
+    window.xrDebugLogged = true;
+    debugLog(`[Game] XR entered, myTank: ${myTank ? `(${myTank.position.x.toFixed(1)}, ${myTank.position.y.toFixed(1)}, ${myTank.position.z.toFixed(1)})` : 'NULL'}, tanks: ${tanks.size}`);
+  }
+  if (!isXREnabled()) {
+    window.xrDebugLogged = false;
+  }
+
   updateFps();
   updateChatWindow();
   updateAltimeter({ myTank });
   updateDegreeBar({ myTank, playerRotation });
-  requestAnimationFrame(animate);
+
+  // Only schedule next frame if not in XR mode (XR loop handles scheduling)
+  if (!isXREnabled()) {
+    requestAnimationFrame(animate);
+  }
+
+  updateXRControllerInput();
   handleInputEvents();
   handleMotion(deltaTime);
 

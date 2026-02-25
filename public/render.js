@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { AnaglyphEffect } from './anaglyph.js';
 import { createTextLabel } from './labelUtil.js';
+import { xrState, debugLog } from './webxr.js';
 import {
   createShootBuffer,
   createExplosionBuffer,
@@ -46,7 +47,7 @@ class RenderManager {
       if (this.sunLight) {
         this.sunLight.position.set(sunX, sunY, sunZ);
         this.sunLight.target.position.set(0, 0, 0);
-        this.scene.add(this.sunLight.target);
+        this.worldGroup.add(this.sunLight.target);
         // Lighting intensity
         const sunUp = sunY > 0;
         const sunIntensity = sunUp ? 0.7 : 0.10;
@@ -145,6 +146,10 @@ class RenderManager {
     this.scene.background = new THREE.Color(0x87ceeb);
     this.scene.fog = new THREE.Fog(0x87ceeb, 50, 200);
 
+    // World group - translates all game content for XR positioning
+    this.worldGroup = new THREE.Group();
+    this.scene.add(this.worldGroup);
+
     this.camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / window.innerHeight,
@@ -154,7 +159,8 @@ class RenderManager {
     this.camera.position.set(0, 15, 20);
     this.camera.lookAt(0, 0, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, xrCompatible: true });
+    this.renderer.xr.enabled = true;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -199,7 +205,7 @@ class RenderManager {
     if (!this.scene) return;
     // Ambient, sun, and moon light will be updated dynamically
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Start dimmer
-    this.scene.add(this.ambientLight);
+    this.worldGroup.add(this.ambientLight);
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.width = 2048;
@@ -208,7 +214,7 @@ class RenderManager {
     this.sunLight.shadow.camera.right = 120;
     this.sunLight.shadow.camera.top = 120;
     this.sunLight.shadow.camera.bottom = -120;
-    this.scene.add(this.sunLight);
+    this.worldGroup.add(this.sunLight);
     this.moonLight = new THREE.DirectionalLight(0xccccff, 0.3);
     this.moonLight.castShadow = true;
     this.moonLight.shadow.mapSize.width = 1024;
@@ -217,7 +223,7 @@ class RenderManager {
     this.moonLight.shadow.camera.right = 120;
     this.moonLight.shadow.camera.top = 120;
     this.moonLight.shadow.camera.bottom = -120;
-    this.scene.add(this.moonLight);
+    this.worldGroup.add(this.moonLight);
   }
 
   updateSunLighting(celestial) {
@@ -227,6 +233,10 @@ class RenderManager {
 
   getScene() {
     return this.scene;
+  }
+
+  getWorldGroup() {
+    return this.worldGroup;
   }
 
   getCamera() {
@@ -261,6 +271,26 @@ class RenderManager {
 
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
+
+    // Debug XR rendering (log rarely to avoid spam)
+    if (xrState.enabled) {
+      if (!this.xrFrameCount) this.xrFrameCount = 0;
+      this.xrFrameCount++;
+
+      if (!this.xrDebugLogged) {
+        this.xrDebugLogged = true;
+        debugLog(`[Render] Entered XR mode, scene children: ${this.scene.children.length}, worldGroup children: ${this.worldGroup ? this.worldGroup.children.length : 'NULL'}`);
+      }
+
+      // Log first frame, then every 60 frames to verify rendering is working
+      if (this.xrFrameCount === 1 || this.xrFrameCount % 60 === 0) {
+        debugLog(`[Render] XR frame ${this.xrFrameCount}, worldGroup pos: (${this.worldGroup.position.x.toFixed(1)}, ${this.worldGroup.position.y.toFixed(1)}, ${this.worldGroup.position.z.toFixed(1)}), children: ${this.worldGroup.children.length}`);
+      }
+    } else {
+      this.xrDebugLogged = false;
+      this.xrFrameCount = 0;
+    }
+
     if (this.projectileLights) {
       for (const [projectile, light] of this.projectileLights.entries()) {
         if (projectile && light) {
@@ -276,8 +306,15 @@ class RenderManager {
       this.anaglyphEffect.render(this.scene, this.camera);
       this.labelRenderer.render(this.scene, this.camera);
     } else {
+      // In XR mode, Three.js handles stereo automatically when we call renderer.render()
+      if (xrState.enabled && this.xrFrameCount === 1) {
+        debugLog(`[Render] About to call renderer.render(), scene=${!!this.scene}, camera=${!!this.camera}, renderer.xr.enabled=${this.renderer.xr.enabled}, renderer.xr.isPresenting=${this.renderer.xr.isPresenting}`);
+      }
       this.renderer.render(this.scene, this.camera);
-      this.labelRenderer.render(this.scene, this.camera);
+      // Note: labelRenderer may not work properly in XR; skip it for now
+      if (!xrState.enabled) {
+        this.labelRenderer.render(this.scene, this.camera);
+      }
     }
   }
 
@@ -471,10 +508,10 @@ class RenderManager {
     this.ground = new THREE.Mesh(groundGeometry, groundMaterial);
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
-    this.scene.add(this.ground);
+    this.worldGroup.add(this.ground);
 
     this.gridHelper = new THREE.GridHelper(mapSize * 3, mapSize, 0x000000, 0x555555);
-    this.scene.add(this.gridHelper);
+    this.worldGroup.add(this.gridHelper);
   }
 
 
@@ -566,7 +603,7 @@ class RenderManager {
     northWall.castShadow = true;
     northWall.receiveShadow = true;
     northWall.name = 'North Wall';
-    this.scene.add(northWall);
+    this.worldGroup.add(northWall);
     boundaryMeshes.push(northWall);
     this._addCompassMarker('N', 0xB20000, new THREE.Vector3(0, wallHeight + 8, -mapSize / 2));
     this._addDebugLabel(northWall, 'boundary');
@@ -579,7 +616,7 @@ class RenderManager {
     southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
     southWall.castShadow = true;
     southWall.receiveShadow = true;
-    this.scene.add(southWall);
+    this.worldGroup.add(southWall);
     southWall.name = 'South Wall';
     boundaryMeshes.push(southWall);
     this._addCompassMarker('S', 0x1976D2, new THREE.Vector3(0, wallHeight + 8, mapSize / 2));
@@ -593,7 +630,7 @@ class RenderManager {
     eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
     eastWall.castShadow = true;
     eastWall.receiveShadow = true;
-    this.scene.add(eastWall);
+    this.worldGroup.add(eastWall);
     eastWall.name = 'East Wall';
     boundaryMeshes.push(eastWall);
     this._addCompassMarker('E', 0x388E3C, new THREE.Vector3(mapSize / 2, wallHeight + 8, 0));
@@ -607,7 +644,7 @@ class RenderManager {
     westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
     westWall.castShadow = true;
     westWall.receiveShadow = true;
-    this.scene.add(westWall);
+    this.worldGroup.add(westWall);
     westWall.name = 'West Wall';
     boundaryMeshes.push(westWall);
     this._addCompassMarker('W', 0xFBC02D, new THREE.Vector3(-mapSize / 2, wallHeight + 8, 0));
@@ -707,7 +744,7 @@ class RenderManager {
         mesh.receiveShadow = true;
         mesh.name = obs.name || `Pyramid ${i + 1}`;
         if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-        this.scene.add(mesh);
+        this.worldGroup.add(mesh);
         this._addDebugLabel(mesh, 'obstacle');
       } else {
         const concreteTexture = createObstacleTexture();
@@ -747,7 +784,7 @@ class RenderManager {
         mesh.receiveShadow = true;
         mesh.name = obs.name || `Box ${i + 1}`;
         if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-        this.scene.add(mesh);
+        this.worldGroup.add(mesh);
         this._addDebugLabel(mesh, 'obstacle');
       }
 
@@ -837,7 +874,7 @@ class RenderManager {
       mountain.rotation.y = Math.random() * Math.PI * 2;
       mountain.receiveShadow = true;
       mountain.castShadow = true;
-      this.scene.add(mountain);
+      this.worldGroup.add(mountain);
 
       const snowCapHeight = height * 0.3;
       const snowGeometry = new THREE.ConeGeometry(width / 4, snowCapHeight, 4);
@@ -851,7 +888,7 @@ class RenderManager {
       snowCap.position.set(x, height - snowCapHeight / 2, z);
       snowCap.rotation.y = mountain.rotation.y;
       snowCap.receiveShadow = true;
-      this.scene.add(snowCap);
+      this.worldGroup.add(snowCap);
 
       this.mountainMeshes.push(mountain, snowCap);
     }
@@ -877,14 +914,14 @@ class RenderManager {
       const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, fog: false });
       const sun = new THREE.Mesh(sunGeometry, sunMaterial);
       sun.position.set(celestialData.sun.x, celestialData.sun.y, celestialData.sun.z);
-      this.scene.add(sun);
+      this.worldGroup.add(sun);
       this.celestialMeshes.push(sun);
 
       const glowGeometry = new THREE.SphereGeometry(12, 32, 32);
       const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.3, fog: false });
       const glow = new THREE.Mesh(glowGeometry, glowMaterial);
       glow.position.copy(sun.position);
-      this.scene.add(glow);
+      this.worldGroup.add(glow);
       this.celestialMeshes.push(glow);
     }
 
@@ -893,7 +930,7 @@ class RenderManager {
       const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, fog: false });
       const moon = new THREE.Mesh(moonGeometry, moonMaterial);
       moon.position.set(celestialData.moon.x, celestialData.moon.y, celestialData.moon.z);
-      this.scene.add(moon);
+      this.worldGroup.add(moon);
       this.celestialMeshes.push(moon);
     }
   }
@@ -929,7 +966,7 @@ class RenderManager {
       cloudGroup.userData.velocity = 0.5 + Math.random() * 1.0;
       cloudGroup.userData.startX = cloudData.x;
 
-      this.scene.add(cloudGroup);
+      this.worldGroup.add(cloudGroup);
       this.clouds.push(cloudGroup);
     });
   }
@@ -1305,13 +1342,13 @@ class RenderManager {
     const shield = new THREE.Mesh(shieldGeometry, shieldMaterial);
     shield.position.set(x, y + 2, z);
     shield.userData.rotation = 0;
-    this.scene.add(shield);
+    this.worldGroup.add(shield);
     return shield;
   }
 
   removeShield(shield) {
     if (!shield || !this.scene) return;
-    this.scene.remove(shield);
+    this.worldGroup.remove(shield);
     if (shield.geometry) shield.geometry.dispose();
     if (shield.material) shield.material.dispose();
   }
@@ -1323,10 +1360,10 @@ class RenderManager {
     sound.setRefDistance(10);
     sound.setVolume(0.5);
     if (position) sound.position.copy(position);
-    this.scene.add(sound);
+    this.worldGroup.add(sound);
     sound.play();
     // Remove from scene after playback
-    sound.source.onended = () => { this.scene.remove(sound); };
+    sound.source.onended = () => { this.worldGroup.remove(sound); };
   }
 
   playExplosionSound(position) {
@@ -1336,9 +1373,9 @@ class RenderManager {
     sound.setRefDistance(15);
     sound.setVolume(0.7);
     if (position) sound.position.copy(position);
-    this.scene.add(sound);
+    this.worldGroup.add(sound);
     sound.play();
-    sound.source.onended = () => { this.scene.remove(sound); };
+    sound.source.onended = () => { this.worldGroup.remove(sound); };
   }
 
   playLocalJumpSound(position) {
@@ -1348,9 +1385,9 @@ class RenderManager {
     sound.setRefDistance(8);
     sound.setVolume(0.4);
     if (position) sound.position.copy(position);
-    this.scene.add(sound);
+    this.worldGroup.add(sound);
     sound.play();
-    sound.source.onended = () => { this.scene.remove(sound); };
+    sound.source.onended = () => { this.worldGroup.remove(sound); };
   }
 
   playLandSound(position) {
@@ -1360,9 +1397,9 @@ class RenderManager {
     sound.setRefDistance(8);
     sound.setVolume(0.9);
     if (position) sound.position.copy(position);
-    this.scene.add(sound);
+    this.worldGroup.add(sound);
     sound.play();
-    sound.source.onended = () => { this.scene.remove(sound); };
+    sound.source.onended = () => { this.worldGroup.remove(sound); };
   }
 
   createProjectile(data) {
@@ -1379,13 +1416,13 @@ class RenderManager {
     if (this.dynamicLightingEnabled) {
       const shotLight = new THREE.PointLight(0xffee88, 1.5, 12, 2);
       shotLight.position.copy(projectile.position);
-      this.scene.add(shotLight);
+      this.worldGroup.add(shotLight);
       projectile.userData.shotLight = shotLight;
       // Track for update/removal
       if (!this.projectileLights) this.projectileLights = new Map();
       this.projectileLights.set(projectile, shotLight);
     }
-    this.scene.add(projectile);
+    this.worldGroup.add(projectile);
     this.playShootSound(projectile.position);
     return projectile;
   }
@@ -1399,21 +1436,21 @@ class RenderManager {
       popSound.setRefDistance(8);
       popSound.setVolume(0.7);
       popSound.position.copy(projectile.position);
-      this.scene.add(popSound);
+      this.worldGroup.add(popSound);
       popSound.play();
       // Remove sound from scene after it finishes
       popSound.source.onended = () => {
-        this.scene.remove(popSound);
+        this.worldGroup.remove(popSound);
         popSound.disconnect();
       };
     }
     // Remove point light from scene if present
     if (this.projectileLights && this.projectileLights.has(projectile)) {
       const light = this.projectileLights.get(projectile);
-      this.scene.remove(light);
+      this.worldGroup.remove(light);
       this.projectileLights.delete(projectile);
     }
-    this.scene.remove(projectile);
+    this.worldGroup.remove(projectile);
     if (projectile.geometry) projectile.geometry.dispose();
     if (projectile.material) projectile.material.dispose();
   }
@@ -1427,7 +1464,7 @@ class RenderManager {
     if (this.dynamicLightingEnabled && typeof THREE !== 'undefined') {
       explosionLight = new THREE.PointLight(0xffe066, 3, 40, 2.5);
       explosionLight.position.copy(position);
-      this.scene.add(explosionLight);
+      this.worldGroup.add(explosionLight);
       // Animate light fade out
       let lightIntensity = 500.0;
       const lightFade = () => {
@@ -1436,7 +1473,7 @@ class RenderManager {
         if (lightIntensity > 0.05) {
           requestAnimationFrame(lightFade);
         } else {
-          this.scene.remove(explosionLight);
+          this.worldGroup.remove(explosionLight);
           explosionLight.dispose && explosionLight.dispose();
         }
       };
@@ -1447,7 +1484,7 @@ class RenderManager {
     const material = new THREE.MeshBasicMaterial({ color: 0xff4500, transparent: true, opacity: 0.8 });
     const explosion = new THREE.Mesh(geometry, material);
     explosion.position.copy(position);
-    this.scene.add(explosion);
+    this.worldGroup.add(explosion);
 
     const animateExplosion = () => {
       material.opacity -= 0.05;
@@ -1455,7 +1492,7 @@ class RenderManager {
       if (material.opacity > 0) {
         requestAnimationFrame(animateExplosion);
       } else {
-        this.scene.remove(explosion);
+        this.worldGroup.remove(explosion);
         geometry.dispose();
         material.dispose();
       }
@@ -1542,7 +1579,7 @@ class RenderManager {
         (Math.random() - 0.5) * 10,
       );
       debris.userData.isTankPart = false;
-      this.scene.add(debris);
+      this.worldGroup.add(debris);
       debrisPieces.push({ mesh: debris, lifetime: 0, maxLifetime: 1.5 });
     }
 
@@ -1573,7 +1610,7 @@ class RenderManager {
             piece.lifetime = piece.maxLifetime;
           }
         } else {
-          this.scene.remove(piece.mesh);
+          this.worldGroup.remove(piece.mesh);
           if (piece.mesh.userData && !piece.mesh.userData.isTankPart) {
             if (piece.mesh.geometry) piece.mesh.geometry.dispose();
             if (piece.mesh.material) {
@@ -1586,7 +1623,7 @@ class RenderManager {
           }
           if (piece.mesh.children) {
             piece.mesh.children.forEach((child) => {
-              this.scene.remove(child);
+              piece.mesh.remove(child);
             });
           }
         }
@@ -1614,7 +1651,7 @@ class RenderManager {
   }
 
   _launchTankPart(part, centerPos, debrisPieces, speedMultiplier = 1.0) {
-    this.scene.add(part);
+    this.worldGroup.add(part);
     part.userData.isTankPart = true;
     const angle = Math.random() * Math.PI * 2;
     const elevation = (Math.random() - 0.3) * Math.PI / 3;
@@ -1688,20 +1725,46 @@ class RenderManager {
     }
 
     if (cameraMode === 'first-person') {
-      if (myTank.userData.body) myTank.userData.body.visible = false;
-      if (myTank.userData.turret) myTank.userData.turret.visible = false;
-      const fpOffset = new THREE.Vector3(
-        -Math.sin(playerRotation) * 0.5,
-        2.2,
-        -Math.cos(playerRotation) * 0.5,
-      );
-      this.camera.position.copy(myTank.position).add(fpOffset);
-      const lookTarget = new THREE.Vector3(
-        myTank.position.x - Math.sin(playerRotation) * 10,
-        myTank.position.y + 2,
-        myTank.position.z - Math.cos(playerRotation) * 10,
-      );
-      this.camera.lookAt(lookTarget);
+      if (xrState.enabled) {
+        // In XR mode, keep tank visible and position camera above it
+        if (myTank.userData.body) myTank.userData.body.visible = true;
+        if (myTank.userData.turret) myTank.userData.turret.visible = true;
+
+        // Apply rotation first (around the camera/origin)
+        const q = new THREE.Quaternion();
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -myTank.rotation.y);
+        this.worldGroup.quaternion.copy(q);
+
+        // Calculate where the tank ends up after rotation
+        const tankRotated = myTank.position.clone();
+        tankRotated.applyQuaternion(q);
+
+        // Translate to center the rotated tank at camera origin, with ground 1.6m below
+        this.worldGroup.position.set(
+          -tankRotated.x,
+          -myTank.position.y - 1.6,
+          -tankRotated.z
+        );
+      } else {
+        // In non-XR first-person, hide the tank body/turret
+        if (myTank.userData.body) myTank.userData.body.visible = false;
+        if (myTank.userData.turret) myTank.userData.turret.visible = false;
+        // Reset world group for non-XR
+        this.worldGroup.position.set(0, 0, 0);
+        this.worldGroup.rotation.y = 0;
+        const fpOffset = new THREE.Vector3(
+          -Math.sin(playerRotation) * 0.5,
+          2.2,
+          -Math.cos(playerRotation) * 0.5,
+        );
+        this.camera.position.copy(myTank.position).add(fpOffset);
+        const lookTarget = new THREE.Vector3(
+          myTank.position.x - Math.sin(playerRotation) * 10,
+          myTank.position.y + 2,
+          myTank.position.z - Math.cos(playerRotation) * 10,
+        );
+        this.camera.lookAt(lookTarget);
+      }
     } else {
       if (myTank.userData.body) myTank.userData.body.visible = true;
       if (myTank.userData.turret) myTank.userData.turret.visible = true;
@@ -1717,6 +1780,10 @@ class RenderManager {
         myTank.position.z - Math.cos(playerRotation) * 10,
       ));
     }
+  }
+
+  getRenderer() {
+    return this.renderer;
   }
 }
 
