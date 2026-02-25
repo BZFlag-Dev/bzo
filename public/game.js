@@ -1647,7 +1647,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const slideNewZ = z + slideZ;
 
     const slideCollisionObj = checkCollision(slideNewX, newY, slideNewZ, tankRadius);
-    console.log('Slide collision check:', newX,newY,newZ,slideNewX,slideNewZ,slideCollisionObj);
+    //console.log('Slide collision check:', newX,newY,newZ,slideNewX,slideNewZ,slideCollisionObj);
     if (!slideCollisionObj || slideCollisionObj.type === 'ontop') {
       // If we're on top of an obstacle, that's the landing
       if (slideCollisionObj && slideCollisionObj.type === 'ontop') {
@@ -1729,13 +1729,13 @@ function getCollisionNormal(obs, fromX, fromY, fromZ, toX, toY, toZ, tankRadius 
     const normalZ = normalLocalX * sinRot + normalLocalZ * cosRot;
     const length = Math.sqrt(normalX * normalX + normalZ * normalZ);
     const worldNormal = { x: normalX / length, z: normalZ / length };
-    if (typeof sendToServer === 'function') {
-      sendToServer({
-        type: 'chat',
-        to: -1,
-        text: `[NORMAL-DEBUG] obs:${obs.name} rot:${rotation.toFixed(2)} local:(${localX.toFixed(2)},${localZ.toFixed(2)}) closest:(${closestX.toFixed(2)},${closestZ.toFixed(2)}) normalLocal:(${normalLocalX.toFixed(2)},${normalLocalZ.toFixed(2)}) worldNormal:(${worldNormal.x.toFixed(2)},${worldNormal.z.toFixed(2)}) pos:(${toX.toFixed(2)},${toZ.toFixed(2)})`
-      });
-    }
+    //if (typeof sendToServer === 'function') {
+    //  sendToServer({
+    //    type: 'chat',
+    //    to: -1,
+    //    text: `[NORMAL-DEBUG] obs:${obs.name} rot:${rotation.toFixed(2)} local:(${localX.toFixed(2)},${localZ.toFixed(2)}) closest:(${closestX.toFixed(2)},${closestZ.toFixed(2)}) normalLocal:(${normalLocalX.toFixed(2)},${normalLocalZ.toFixed(2)}) worldNormal:(${worldNormal.x.toFixed(2)},${worldNormal.z.toFixed(2)}) pos:(${toX.toFixed(2)},${toZ.toFixed(2)})`
+    //  });
+    //}
     return worldNormal;
   }
   return null;
@@ -2052,7 +2052,7 @@ function handleMotion(deltaTime) {
     ));
 
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
-    if (debugEnabled) console.log(`[CLIENT] Sending dw: ${reasons.join(', ')}`);
+    //if (debugEnabled) console.log(`[CLIENT] Sending dw: ${reasons.join(', ')}`);
 
     // Round velocities to the precision we send to match server expectations
     // For jump packets, send the intendedForward value used for movement, not calculated forwardSpeed

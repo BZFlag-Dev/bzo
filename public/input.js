@@ -163,7 +163,7 @@ export function updateVirtualInputFromXR() {
   // Debug logging every 60 frames
   vxrFrameCounter++;
   if (vxrFrameCounter % 60 === 0) {
-    debugLog(`virtualInput: forward=${newForward.toFixed(2)}, turn=${virtualInput.turn.toFixed(2)}, fire=${virtualInput.fire}, jump=${virtualInput.jump}`);
+    //debugLog(`virtualInput: forward=${newForward.toFixed(2)}, turn=${virtualInput.turn.toFixed(2)}, fire=${virtualInput.fire}, jump=${virtualInput.jump}`);
   }
 }
 

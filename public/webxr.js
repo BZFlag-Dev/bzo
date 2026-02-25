@@ -213,6 +213,9 @@ export function updateXRControllerInput() {
         controller.thumbstick.x = axes[2] || 0; // left/right (turn)
         controller.thumbstick.y = axes[3] || 0; // up/down (unused in phase 1)
 
+        controller.buttonA = false;
+        controller.buttonB = false;
+
         // Trigger button (index 0) for shooting
         if (buttons[0]) {
           controller.trigger = buttons[0].value; // 0-1
@@ -224,12 +227,12 @@ export function updateXRControllerInput() {
           controller.buttonA = buttons[4].pressed || false;
         }
 
-        // B button (index 3) for jumping
-        if (buttons[3]) {
-          controller.buttonB = buttons[3].pressed || false;
+        // B button (index 5) for jumping
+        if (buttons[5]) {
+          controller.buttonB = buttons[5].pressed || false;
         }
         if (frameCounter % 60 === 0) {
-          debugLog(`Right: axes[2]=${axes[2]?.toFixed(2)}, axes[3]=${axes[3]?.toFixed(2)}, A=${controller.buttonA}, B=${controller.buttonB}, btnCount=${buttons.length}`);
+          //debugLog(`Right: axes[2]=${axes[2]?.toFixed(2)}, axes[3]=${axes[3]?.toFixed(2)}, A=${controller.buttonA}, B=${controller.buttonB}, btnCount=${buttons.length}`);
         }
       }
     }

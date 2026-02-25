@@ -279,12 +279,12 @@ class RenderManager {
 
       if (!this.xrDebugLogged) {
         this.xrDebugLogged = true;
-        debugLog(`[Render] Entered XR mode, scene children: ${this.scene.children.length}, worldGroup children: ${this.worldGroup ? this.worldGroup.children.length : 'NULL'}`);
+        //debugLog(`[Render] Entered XR mode, scene children: ${this.scene.children.length}, worldGroup children: ${this.worldGroup ? this.worldGroup.children.length : 'NULL'}`);
       }
 
       // Log first frame, then every 60 frames to verify rendering is working
       if (this.xrFrameCount === 1 || this.xrFrameCount % 60 === 0) {
-        debugLog(`[Render] XR frame ${this.xrFrameCount}, worldGroup pos: (${this.worldGroup.position.x.toFixed(1)}, ${this.worldGroup.position.y.toFixed(1)}, ${this.worldGroup.position.z.toFixed(1)}), children: ${this.worldGroup.children.length}`);
+        //debugLog(`[Render] XR frame ${this.xrFrameCount}, worldGroup pos: (${this.worldGroup.position.x.toFixed(1)}, ${this.worldGroup.position.y.toFixed(1)}, ${this.worldGroup.position.z.toFixed(1)}), children: ${this.worldGroup.children.length}`);
       }
     } else {
       this.xrDebugLogged = false;
@@ -308,7 +308,7 @@ class RenderManager {
     } else {
       // In XR mode, Three.js handles stereo automatically when we call renderer.render()
       if (xrState.enabled && this.xrFrameCount === 1) {
-        debugLog(`[Render] About to call renderer.render(), scene=${!!this.scene}, camera=${!!this.camera}, renderer.xr.enabled=${this.renderer.xr.enabled}, renderer.xr.isPresenting=${this.renderer.xr.isPresenting}`);
+        //debugLog(`[Render] About to call renderer.render(), scene=${!!this.scene}, camera=${!!this.camera}, renderer.xr.enabled=${this.renderer.xr.enabled}, renderer.xr.isPresenting=${this.renderer.xr.isPresenting}`);
       }
       this.renderer.render(this.scene, this.camera);
       // Note: labelRenderer may not work properly in XR; skip it for now
@@ -589,7 +589,7 @@ class RenderManager {
     // Remove old compass markers if present
     if (!this.compassMarkers) this.compassMarkers = [];
     this.compassMarkers.forEach(marker => {
-      this.scene.remove(marker);
+      this.worldGroup.remove(marker);
       if (marker.material && marker.material.map) marker.material.map.dispose();
       if (marker.material) marker.material.dispose();
     });
@@ -674,7 +674,7 @@ class RenderManager {
     const sprite = new THREE.Sprite(material);
     sprite.position.copy(position);
     sprite.scale.set(20, 20, 1);
-    this.scene.add(sprite);
+    this.worldGroup.add(sprite);
     if (!this.compassMarkers) this.compassMarkers = [];
     this.compassMarkers.push(sprite);
   }
@@ -1739,10 +1739,10 @@ class RenderManager {
         const tankRotated = myTank.position.clone();
         tankRotated.applyQuaternion(q);
 
-        // Translate to center the rotated tank at camera origin, with ground 1.6m below
+        // Translate to center the rotated tank at camera origin, with ground slightly below eye height
         this.worldGroup.position.set(
           -tankRotated.x,
-          -myTank.position.y - 1.6,
+          -myTank.position.y - 1.2,
           -tankRotated.z
         );
       } else {
