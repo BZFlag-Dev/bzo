@@ -1,7 +1,7 @@
 #
 world
 name test
-size 200.0
+size 100.0
 flagHeight 0.0
 end
 
@@ -50,21 +50,21 @@ end
 
 box
 name "platform"
-position 60.0 60.0 10.0
+position 45.0 45.0 10.0
 rotation 0.0
-size     40.0 40.0 5.0
+size     25.0 25.0 5.0
 end
 
 box
 name "r45
-position 60.0 -60.0 0.0
+position 45.0 -45.0 0.0
 rotation 45.0
-size     40.0 40.0 10.0
+size     25.0 25.0 10.0
 end
 
 box
 name "r30
-position -60.0 60.0 0.0
+position -45.0 45.0 0.0
 rotation 30.0
-size     40.0 40.0 10.0
+size     25.0 25.0 10.0
 end
