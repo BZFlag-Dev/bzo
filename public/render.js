@@ -1605,7 +1605,7 @@ class RenderManager {
         // Translate to center the rotated tank at camera origin, with ground slightly below eye height
         this.worldGroup.position.set(
           -tankRotated.x,
-          -myTank.position.y - 1.2,
+          -myTank.position.y - 0.6,
           -tankRotated.z
         );
       } else {
