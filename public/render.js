@@ -119,13 +119,6 @@ class RenderManager {
     this.anaglyphEffect = null;
     this.anaglyphEnabled = false;
 
-    // SBS stereo rendering
-    this.sbsEnabled = false;
-    this.eyeSeparation = 0.064; // 64mm interpupillary distance
-    this.leftCamera = null;
-    this.rightCamera = null;
-    this.sbsClonedElements = new Map(); // Track cloned DOM elements for cleanup
-
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
   }
@@ -176,10 +169,6 @@ class RenderManager {
     // Anaglyph effect setup (not enabled by default)
     this.anaglyphEffect = new AnaglyphEffect(this.renderer);
     this.anaglyphEffect.setSize(window.innerWidth, window.innerHeight);
-
-    // SBS stereo cameras setup
-    this.leftCamera = this.camera.clone();
-    this.rightCamera = this.camera.clone();
 
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
@@ -260,13 +249,6 @@ class RenderManager {
     if (this.anaglyphEffect) {
       this.anaglyphEffect.setSize(window.innerWidth, window.innerHeight);
     }
-    // Update SBS camera aspects (each sees half-width)
-    if (this.leftCamera && this.rightCamera) {
-      this.leftCamera.aspect = (window.innerWidth / 2) / window.innerHeight;
-      this.leftCamera.updateProjectionMatrix();
-      this.rightCamera.aspect = (window.innerWidth / 2) / window.innerHeight;
-      this.rightCamera.updateProjectionMatrix();
-    }
   }
 
   renderFrame() {
@@ -299,10 +281,7 @@ class RenderManager {
       }
     }
 
-    if (this.sbsEnabled) {
-      // Side-by-side stereo rendering
-      this._renderSBS();
-    } else if (this.anaglyphEnabled && this.anaglyphEffect) {
+    if (this.anaglyphEnabled && this.anaglyphEffect) {
       this.anaglyphEffect.render(this.scene, this.camera);
       this.labelRenderer.render(this.scene, this.camera);
     } else {
@@ -318,161 +297,12 @@ class RenderManager {
     }
   }
 
-  _renderSBS() {
-    const width = this.renderer.domElement.width;
-    const height = this.renderer.domElement.height;
-    const halfWidth = width / 2;
-
-    // Update stereo camera positions based on main camera
-    this.leftCamera.position.copy(this.camera.position);
-    this.leftCamera.quaternion.copy(this.camera.quaternion);
-    this.leftCamera.translateX(-this.eyeSeparation / 2);
-
-    this.rightCamera.position.copy(this.camera.position);
-    this.rightCamera.quaternion.copy(this.camera.quaternion);
-    this.rightCamera.translateX(this.eyeSeparation / 2);
-
-    // Render left eye (3D scene only)
-    this.renderer.setViewport(0, 0, halfWidth, height);
-    this.renderer.setScissor(0, 0, halfWidth, height);
-    this.renderer.setScissorTest(true);
-    this.renderer.render(this.scene, this.leftCamera);
-
-    // Render right eye (3D scene only)
-    this.renderer.setViewport(halfWidth, 0, halfWidth, height);
-    this.renderer.setScissor(halfWidth, 0, halfWidth, height);
-    this.renderer.render(this.scene, this.rightCamera);
-
-    // Reset viewport for overlays
-    this.renderer.setViewport(0, 0, width, height);
-    this.renderer.setScissorTest(false);
-
-    // Render 2D overlays identically for both eyes (appears at screen depth)
-    // Left eye overlay
-    this.renderer.setViewport(0, 0, halfWidth, height);
-    this.renderer.setScissor(0, 0, halfWidth, height);
-    this.renderer.setScissorTest(true);
-    this.labelRenderer.render(this.scene, this.camera); // Use main camera for screen-space positioning
-
-    // Right eye overlay (same as left)
-    this.renderer.setViewport(halfWidth, 0, halfWidth, height);
-    this.renderer.setScissor(halfWidth, 0, halfWidth, height);
-    this.labelRenderer.render(this.scene, this.camera); // Use main camera for screen-space positioning
-
-    // Reset viewport and scissor
-    this.renderer.setViewport(0, 0, width, height);
-    this.renderer.setScissorTest(false);
-  }
-
   setAnaglyphEnabled(enabled) {
     this.anaglyphEnabled = !!enabled;
   }
 
   getAnaglyphEnabled() {
     return this.anaglyphEnabled;
-  }
-
-  setSBSEnabled(enabled) {
-    this.sbsEnabled = !!enabled;
-    // Update camera aspects when toggling
-    if (enabled && this.leftCamera && this.rightCamera) {
-      this.leftCamera.aspect = (window.innerWidth / 2) / window.innerHeight;
-      this.leftCamera.updateProjectionMatrix();
-      this.rightCamera.aspect = (window.innerWidth / 2) / window.innerHeight;
-      this.rightCamera.updateProjectionMatrix();
-      this._setupSBSOverlays();
-    } else if (!enabled) {
-      // Restore main camera aspect
-      this.camera.aspect = window.innerWidth / window.innerHeight;
-      this.camera.updateProjectionMatrix();
-      this._removeSBSOverlays();
-    }
-  }
-
-  _setupSBSOverlays() {
-    // Clone and position DOM overlays for both eyes
-    const overlayIds = ['mainhud', 'chatWindow', 'debugHud', 'radar', 'degreeBar', 'altimeter', 'crosshair', 'controlBox'];
-
-    overlayIds.forEach(id => {
-      const original = document.getElementById(id);
-      if (!original) return;
-
-      // Store original styles
-      if (!this.sbsClonedElements.has(id)) {
-        this.sbsClonedElements.set(id, {
-          original,
-          originalTransform: original.style.transform || '',
-          originalLeft: original.style.left || '',
-          originalRight: original.style.right || '',
-          originalWidth: original.style.width || '',
-          clone: null
-        });
-      }
-
-      const data = this.sbsClonedElements.get(id);
-
-      // Create clone for right eye
-      const clone = original.cloneNode(true);
-      clone.id = `${id}-sbs-right`;
-      clone.style.position = 'fixed';
-      original.parentNode.appendChild(clone);
-      data.clone = clone;
-
-      // Position original in left half
-      const rect = original.getBoundingClientRect();
-      const computedStyle = window.getComputedStyle(original);
-
-      // Handle left-positioned elements
-      if (computedStyle.left && computedStyle.left !== 'auto') {
-        const leftVal = parseFloat(computedStyle.left);
-        original.style.left = `${leftVal / 2}px`;
-        clone.style.left = `calc(50% + ${leftVal / 2}px)`;
-      }
-      // Handle right-positioned elements
-      else if (computedStyle.right && computedStyle.right !== 'auto') {
-        const rightVal = parseFloat(computedStyle.right);
-        original.style.right = `calc(50% + ${rightVal / 2}px)`;
-        clone.style.right = `${rightVal / 2}px`;
-      }
-      // Handle centered elements
-      else if (original.style.transform && original.style.transform.includes('translateX')) {
-        // Elements centered with transform (like chatWindow)
-        original.style.left = '25%';
-        clone.style.left = '75%';
-      }
-    });
-  }
-
-  _removeSBSOverlays() {
-    // Remove clones and restore original positions
-    this.sbsClonedElements.forEach((data, id) => {
-      const { original, clone, originalTransform, originalLeft, originalRight, originalWidth } = data;
-
-      // Remove clone
-      if (clone && clone.parentNode) {
-        clone.parentNode.removeChild(clone);
-      }
-
-      // Restore original styles
-      original.style.transform = originalTransform;
-      original.style.left = originalLeft;
-      original.style.right = originalRight;
-      original.style.width = originalWidth;
-    });
-
-    this.sbsClonedElements.clear();
-  }
-
-  getSBSEnabled() {
-    return this.sbsEnabled;
-  }
-
-  setEyeSeparation(distance) {
-    this.eyeSeparation = Math.max(0.01, Math.min(0.15, distance)); // Clamp between 1cm and 15cm
-  }
-
-  getEyeSeparation() {
-    return this.eyeSeparation;
   }
 
   clearGround() {
