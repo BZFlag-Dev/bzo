@@ -5,7 +5,6 @@
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { AnaglyphEffect } from './anaglyph.js';
-import { createTextLabel } from './labelUtil.js';
 import { xrState, debugLog } from './webxr.js';
 import {
   createShootBuffer,
@@ -632,21 +631,31 @@ class RenderManager {
 
   _addDebugLabel(object3D, type) {
     if (!object3D) return;
-    // Always use object3D.name for label text
-    const label = createTextLabel(object3D.name || '', '#fff', '14px', 'bold', true);
+    const labelMaterial = new THREE.SpriteMaterial({ depthTest: true, depthWrite: false });
+    const label = new THREE.Sprite(labelMaterial);
+    label.scale.set(4, 1, 1);
+    this.updateSpriteLabel(label, object3D.name || '', '#ffffff');
     // Ensure boundingBox is computed for label placement
     if (object3D.geometry && !object3D.geometry.boundingBox) object3D.geometry.computeBoundingBox();
     const y = (object3D.geometry && object3D.geometry.boundingBox ? object3D.geometry.boundingBox.max.y : object3D.position.y) + 2;
     label.position.set(0, y, 0);
     object3D.add(label);
-      label.visible = this.debugLabelsEnabled;
+    label.visible = this.debugLabelsEnabled;
     this.debugLabels.push({ label, object3D, type });
   }
 
   _clearDebugLabels(type = null) {
     this.debugLabels = this.debugLabels.filter(({ label, object3D, type: t }) => {
       if (!type || t === type) {
-        if (object3D && label) object3D.remove(label);
+        if (object3D && label) {
+          object3D.remove(label);
+        }
+        if (label && label.material) {
+          if (label.material.map) {
+            label.material.map.dispose();
+          }
+          label.material.dispose();
+        }
         return false;
       }
       return true;
