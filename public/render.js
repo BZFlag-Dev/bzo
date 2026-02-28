@@ -86,6 +86,16 @@ class RenderManager {
         let fogColor = nightColor.clone().lerp(dayColor, t);
         this.scene.fog.color.copy(fogColor);
         this.scene.background.copy(fogColor);
+
+        this._updateCelestialBodies({
+          sunX,
+          sunY,
+          sunZ,
+          moonX,
+          moonY,
+          moonZ,
+          sunColor,
+        });
       }
       // Optionally: add/update sun/moon meshes for visuals (not just lighting)
       // ...
@@ -108,6 +118,9 @@ class RenderManager {
     this.obstacleMeshes = [];
     this.mountainMeshes = [];
     this.celestialMeshes = [];
+    this.sunMesh = null;
+    this.sunGlowMesh = null;
+    this.moonMesh = null;
     this.clouds = [];
 
     this.compassMarkers = [];
@@ -742,37 +755,67 @@ class RenderManager {
       if (mesh.material) mesh.material.dispose();
     });
     this.celestialMeshes = [];
+    this.sunMesh = null;
+    this.sunGlowMesh = null;
+    this.moonMesh = null;
+  }
+
+  _updateCelestialBodies({ sunX, sunY, sunZ, moonX, moonY, moonZ, sunColor, sunVisible = true, moonVisible = true }) {
+    if (!this.scene || !this.worldGroup) return;
+
+    if (!this.sunMesh || !this.sunGlowMesh || !this.moonMesh) {
+      this.clearCelestialBodies();
+
+      const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
+      const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, fog: false, depthTest: true, depthWrite: false, toneMapped: false });
+      this.sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
+      this.sunMesh.renderOrder = 1000;
+      this.worldGroup.add(this.sunMesh);
+      this.celestialMeshes.push(this.sunMesh);
+
+      const glowGeometry = new THREE.SphereGeometry(12, 32, 32);
+      const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.3, fog: false, depthTest: true, depthWrite: false, toneMapped: false });
+      this.sunGlowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+      this.sunGlowMesh.renderOrder = 999;
+      this.worldGroup.add(this.sunGlowMesh);
+      this.celestialMeshes.push(this.sunGlowMesh);
+
+      const moonGeometry = new THREE.SphereGeometry(6, 32, 32);
+      const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, fog: false, depthTest: true, depthWrite: false, toneMapped: false });
+      this.moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
+      this.moonMesh.renderOrder = 1000;
+      this.worldGroup.add(this.moonMesh);
+      this.celestialMeshes.push(this.moonMesh);
+    }
+
+    this.sunMesh.visible = !!sunVisible;
+    this.sunGlowMesh.visible = !!sunVisible;
+    this.moonMesh.visible = !!moonVisible;
+
+    this.sunMesh.position.set(sunX, sunY, sunZ);
+    this.sunGlowMesh.position.set(sunX, sunY, sunZ);
+    this.moonMesh.position.set(moonX, moonY, moonZ);
+
+    if (sunColor) {
+      this.sunMesh.material.color.copy(sunColor);
+      this.sunGlowMesh.material.color.copy(sunColor).lerp(new THREE.Color(0xffffff), 0.2);
+    }
   }
 
   createCelestialBodies(celestialData) {
     if (!this.scene || !celestialData) return;
-    this.clearCelestialBodies();
-    this.updateSunLighting(celestialData);
-
-    if (celestialData.sun && celestialData.sun.visible) {
-      const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
-      const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, fog: false });
-      const sun = new THREE.Mesh(sunGeometry, sunMaterial);
-      sun.position.set(celestialData.sun.x, celestialData.sun.y, celestialData.sun.z);
-      this.worldGroup.add(sun);
-      this.celestialMeshes.push(sun);
-
-      const glowGeometry = new THREE.SphereGeometry(12, 32, 32);
-      const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.3, fog: false });
-      const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-      glow.position.copy(sun.position);
-      this.worldGroup.add(glow);
-      this.celestialMeshes.push(glow);
-    }
-
-    if (celestialData.moon && celestialData.moon.visible) {
-      const moonGeometry = new THREE.SphereGeometry(6, 32, 32);
-      const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, fog: false });
-      const moon = new THREE.Mesh(moonGeometry, moonMaterial);
-      moon.position.set(celestialData.moon.x, celestialData.moon.y, celestialData.moon.z);
-      this.worldGroup.add(moon);
-      this.celestialMeshes.push(moon);
-    }
+    const sun = celestialData.sun || {};
+    const moon = celestialData.moon || {};
+    this._updateCelestialBodies({
+      sunX: sun.x || 0,
+      sunY: sun.y || 0,
+      sunZ: sun.z || 0,
+      moonX: moon.x || 0,
+      moonY: moon.y || 0,
+      moonZ: moon.z || 0,
+      sunVisible: sun.visible !== false,
+      moonVisible: moon.visible !== false,
+    });
   }
 
   clearClouds() {
