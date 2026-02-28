@@ -157,8 +157,8 @@ export function updateVirtualInputFromXR() {
   // Right trigger OR A button: fire
   virtualInput.fire = xrInput.rightTrigger > 0.5 || xrInput.buttonA;
 
-  // B button: jump
-  virtualInput.jump = xrInput.buttonB;
+  // B button OR side grip button: jump
+  virtualInput.jump = xrInput.buttonB || xrInput.buttonGrip;
 
   // Debug logging every 60 frames
   vxrFrameCounter++;

@@ -158,7 +158,8 @@ function setupXRInput() {
         inputSource,
         gamepad: null,
         pressed: false,
-        thumbstick: { x: 0, y: 0 },
+          thumbstick: { x: 0, y: 0 },
+          grip: 0,
       });
     });
 
@@ -186,8 +187,10 @@ export function updateXRControllerInput() {
         gamepad: null,
         thumbstick: { x: 0, y: 0 },
         trigger: 0,
+          grip: 0,
         buttonA: false,
         buttonB: false,
+          buttonGrip: false,
       });
     }
 
@@ -215,12 +218,19 @@ export function updateXRControllerInput() {
 
         controller.buttonA = false;
         controller.buttonB = false;
+          controller.buttonGrip = false;
 
         // Trigger button (index 0) for shooting
         if (buttons[0]) {
           controller.trigger = buttons[0].value; // 0-1
           controller.triggerPressed = buttons[0].pressed;
         }
+
+          // Side grip/squeeze button (index 1) for jumping
+          if (buttons[1]) {
+            controller.grip = buttons[1].value; // 0-1
+            controller.buttonGrip = buttons[1].pressed || false;
+          }
 
         // A button (index 4) for firing
         if (buttons[4]) {
@@ -248,8 +258,10 @@ export function getXRControllerInput() {
     leftThumbstick: { x: 0, y: 0 },
     rightThumbstick: { x: 0, y: 0 },
     rightTrigger: 0,
+      rightGrip: 0,
     buttonA: false,
     buttonB: false,
+      buttonGrip: false,
   };
 
   if (xrState.controllers.get('left')) {
@@ -260,8 +272,10 @@ export function getXRControllerInput() {
     const rightController = xrState.controllers.get('right');
     input.rightThumbstick = { ...rightController.thumbstick };
     input.rightTrigger = rightController.trigger || 0;
+      input.rightGrip = rightController.grip || 0;
     input.buttonA = rightController.buttonA || false;
     input.buttonB = rightController.buttonB || false;
+      input.buttonGrip = rightController.buttonGrip || false;
   }
 
   return input;
