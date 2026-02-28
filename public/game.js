@@ -2608,6 +2608,7 @@ function animate() {
   }
 
   updateProjectiles(deltaTime);
+  renderManager.updateExplosions(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
   if (gameConfig) {

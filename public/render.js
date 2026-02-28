@@ -118,6 +118,7 @@ class RenderManager {
 
     this.anaglyphEffect = null;
     this.anaglyphEnabled = false;
+    this.activeExplosions = [];
 
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
@@ -1291,23 +1292,13 @@ class RenderManager {
 
     // Dynamic lighting flash
     let explosionLight = null;
+    let lightIntensity = 0;
     if (this.dynamicLightingEnabled && typeof THREE !== 'undefined') {
       explosionLight = new THREE.PointLight(0xffe066, 3, 40, 2.5);
       explosionLight.position.copy(position);
+      lightIntensity = 500.0;
+      explosionLight.intensity = lightIntensity;
       this.worldGroup.add(explosionLight);
-      // Animate light fade out
-      let lightIntensity = 500.0;
-      const lightFade = () => {
-        lightIntensity *= 0.85;
-        explosionLight.intensity = lightIntensity;
-        if (lightIntensity > 0.05) {
-          requestAnimationFrame(lightFade);
-        } else {
-          this.worldGroup.remove(explosionLight);
-          explosionLight.dispose && explosionLight.dispose();
-        }
-      };
-      lightFade();
     }
 
     const geometry = new THREE.SphereGeometry(2, 16, 16);
@@ -1315,19 +1306,6 @@ class RenderManager {
     const explosion = new THREE.Mesh(geometry, material);
     explosion.position.copy(position);
     this.worldGroup.add(explosion);
-
-    const animateExplosion = () => {
-      material.opacity -= 0.05;
-      explosion.scale.addScalar(0.1);
-      if (material.opacity > 0) {
-        requestAnimationFrame(animateExplosion);
-      } else {
-        this.worldGroup.remove(explosion);
-        geometry.dispose();
-        material.dispose();
-      }
-    };
-    animateExplosion();
 
     const debrisPieces = [];
     if (tank && tank.userData) {
@@ -1412,12 +1390,50 @@ class RenderManager {
       debrisPieces.push({ mesh: debris, lifetime: 0, maxLifetime: 1.5 });
     }
 
-    const animateDebris = () => {
-      let anyAlive = false;
-      const dt = 0.016;
-      debrisPieces.forEach((piece) => {
+    this.activeExplosions.push({
+      light: explosionLight,
+      lightIntensity,
+      sphere: explosion,
+      sphereGeometry: geometry,
+      sphereMaterial: material,
+      debrisPieces,
+    });
+  }
+
+  updateExplosions(deltaTime) {
+    if (!this.activeExplosions.length) return;
+    const dt = Math.max(0.001, Math.min(0.05, deltaTime || 0.016));
+
+    for (let index = this.activeExplosions.length - 1; index >= 0; index -= 1) {
+      const explosion = this.activeExplosions[index];
+
+      if (explosion.sphere && explosion.sphereMaterial) {
+        explosion.sphereMaterial.opacity -= 3.125 * dt;
+        explosion.sphere.scale.addScalar(6.25 * dt);
+        if (explosion.sphereMaterial.opacity <= 0) {
+          this.worldGroup.remove(explosion.sphere);
+          explosion.sphereGeometry.dispose();
+          explosion.sphereMaterial.dispose();
+          explosion.sphere = null;
+          explosion.sphereGeometry = null;
+          explosion.sphereMaterial = null;
+        }
+      }
+
+      if (explosion.light) {
+        const fade = Math.pow(0.85, dt / 0.016);
+        explosion.lightIntensity *= fade;
+        explosion.light.intensity = explosion.lightIntensity;
+        if (explosion.lightIntensity <= 0.05) {
+          this.worldGroup.remove(explosion.light);
+          explosion.light.dispose && explosion.light.dispose();
+          explosion.light = null;
+        }
+      }
+
+      for (let pieceIndex = explosion.debrisPieces.length - 1; pieceIndex >= 0; pieceIndex -= 1) {
+        const piece = explosion.debrisPieces[pieceIndex];
         if (piece.lifetime < piece.maxLifetime) {
-          anyAlive = true;
           piece.lifetime += dt;
           piece.mesh.velocity.y -= 20 * dt;
           piece.mesh.position.x += piece.mesh.velocity.x * dt;
@@ -1435,33 +1451,23 @@ class RenderManager {
               if (child.material) this._fadeMaterial(child.material, fadeProgress);
             });
           }
+
           if (piece.mesh.position.y < 0) {
             piece.lifetime = piece.maxLifetime;
           }
-        } else {
-          this.worldGroup.remove(piece.mesh);
-          if (piece.mesh.userData && !piece.mesh.userData.isTankPart) {
-            if (piece.mesh.geometry) piece.mesh.geometry.dispose();
-            if (piece.mesh.material) {
-              if (Array.isArray(piece.mesh.material)) {
-                piece.mesh.material.forEach((mat) => mat.dispose());
-              } else {
-                piece.mesh.material.dispose();
-              }
-            }
-          }
-          if (piece.mesh.children) {
-            piece.mesh.children.forEach((child) => {
-              piece.mesh.remove(child);
-            });
-          }
+
+          continue;
         }
-      });
-      if (anyAlive) {
-        requestAnimationFrame(animateDebris);
+
+        this._cleanupDebrisPiece(piece.mesh);
+        explosion.debrisPieces.splice(pieceIndex, 1);
       }
-    };
-    animateDebris();
+
+      const done = !explosion.sphere && !explosion.light && explosion.debrisPieces.length === 0;
+      if (done) {
+        this.activeExplosions.splice(index, 1);
+      }
+    }
   }
 
   _fadeMaterial(material, fadeProgress) {
@@ -1496,6 +1502,25 @@ class RenderManager {
       (Math.random() - 0.5) * 8,
     );
     debrisPieces.push({ mesh: part, lifetime: 0, maxLifetime: 2.0 });
+  }
+
+  _cleanupDebrisPiece(mesh) {
+    this.worldGroup.remove(mesh);
+    if (mesh.userData && !mesh.userData.isTankPart) {
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) {
+        if (Array.isArray(mesh.material)) {
+          mesh.material.forEach((mat) => mat.dispose());
+        } else {
+          mesh.material.dispose();
+        }
+      }
+    }
+    if (mesh.children) {
+      mesh.children.forEach((child) => {
+        mesh.remove(child);
+      });
+    }
   }
 
   updateTreads(tanks, deltaTime, gameConfig) {
