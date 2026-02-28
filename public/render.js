@@ -477,13 +477,13 @@ class RenderManager {
 
   clearGround() {
     if (this.ground && this.scene) {
-      this.scene.remove(this.ground);
+      this.worldGroup.remove(this.ground);
       this.ground.geometry.dispose();
       this.ground.material.dispose();
       this.ground = null;
     }
     if (this.gridHelper && this.scene) {
-      this.scene.remove(this.gridHelper);
+      this.worldGroup.remove(this.gridHelper);
       this.gridHelper = null;
     }
   }
@@ -521,7 +521,7 @@ class RenderManager {
     // Remove old boundary meshes and debug labels if present
     if (!this.boundaryMeshes) this.boundaryMeshes = [];
     this.boundaryMeshes.forEach(mesh => {
-      this.scene.remove(mesh);
+      this.worldGroup.remove(mesh);
       if (mesh.geometry) mesh.geometry.dispose();
       if (Array.isArray(mesh.material)) {
         mesh.material.forEach(mat => mat.dispose());
@@ -682,7 +682,7 @@ class RenderManager {
   clearObstacles() {
     if (!this.scene) return;
     this.obstacleMeshes.forEach((mesh) => {
-      this.scene.remove(mesh);
+      this.worldGroup.remove(mesh);
       if (mesh.geometry) mesh.geometry.dispose();
       if (Array.isArray(mesh.material)) {
         mesh.material.forEach((mat) => mat.dispose());
@@ -833,7 +833,7 @@ class RenderManager {
   clearMountains() {
     if (!this.scene) return;
     this.mountainMeshes.forEach((mesh) => {
-      this.scene.remove(mesh);
+      this.worldGroup.remove(mesh);
       if (mesh.geometry) mesh.geometry.dispose();
       if (mesh.material) {
         if (Array.isArray(mesh.material)) {
@@ -897,7 +897,7 @@ class RenderManager {
   clearCelestialBodies() {
     if (!this.scene) return;
     this.celestialMeshes.forEach((mesh) => {
-      this.scene.remove(mesh);
+      this.worldGroup.remove(mesh);
       if (mesh.geometry) mesh.geometry.dispose();
       if (mesh.material) mesh.material.dispose();
     });
@@ -938,7 +938,7 @@ class RenderManager {
   clearClouds() {
     if (!this.scene) return;
     this.clouds.forEach((cloud) => {
-      this.scene.remove(cloud);
+      this.worldGroup.remove(cloud);
     });
     this.clouds = [];
   }
@@ -1501,8 +1501,7 @@ class RenderManager {
 
     const debrisPieces = [];
     if (tank && tank.userData) {
-      const tankWorldPos = new THREE.Vector3();
-      tank.getWorldPosition(tankWorldPos);
+      const tankWorldPos = tank.position.clone();
       const tankRotation = tank.rotation.y;
 
       if (tank.userData.body) {
