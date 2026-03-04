@@ -29,13 +29,9 @@ class RenderManager {
       // Compute sun/moon positions
       // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
       // We'll use a circle in the X/Y plane for sun/moon
-      const mapSize = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
-      const mountainDistance = mapSize * 1.8;
-      const mountainMaxHalfWidth = 35;
-      const orbitMargin = Math.max(20, mapSize * 0.25);
-      const orbitDistance = mountainDistance + mountainMaxHalfWidth + orbitMargin;
-      const sunDistance = orbitDistance;
-      const moonDistance = orbitDistance;
+      const MAP_SIZE = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
+      const sunDistance = MAP_SIZE * 0.6;
+      const moonDistance = sunDistance;
       const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
       const moonAngle = sunAngle + Math.PI;
       // Sun position
@@ -46,66 +42,20 @@ class RenderManager {
       const moonX = Math.cos(moonAngle) * moonDistance;
       const moonY = Math.sin(moonAngle) * moonDistance * 0.8;
       const moonZ = 0;
-
-      // Keep visual sun/moon far away, but keep directional lights at a closer
-      // distance along the same direction for better shadow precision.
-      const sunLength = Math.sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ) || 1;
-      const moonLength = Math.sqrt(moonX * moonX + moonY * moonY + moonZ * moonZ) || 1;
-      const lightDistance = Math.max(140, mapSize * 1.1);
-      const sunLightX = (sunX / sunLength) * lightDistance;
-      const sunLightY = (sunY / sunLength) * lightDistance;
-      const sunLightZ = (sunZ / sunLength) * lightDistance;
-      const moonLightX = (moonX / moonLength) * lightDistance;
-      const moonLightY = (moonY / moonLength) * lightDistance;
-      const moonLightZ = (moonZ / moonLength) * lightDistance;
-      // Update sun/moon lights
-      if (this.sunLight || this.moonLight) {
-        if (this.sunLight) {
-          this.sunLight.position.set(sunLightX, sunLightY, sunLightZ);
-          this.sunLight.target.position.set(0, 0, 0);
-          this.worldGroup.add(this.sunLight.target);
-        }
-        if (this.moonLight) {
-          this.moonLight.position.set(moonLightX, moonLightY, moonLightZ);
-          this.moonLight.target.position.set(0, 0, 0);
-          this.worldGroup.add(this.moonLight.target);
-        }
+      // Update sun light
+      if (this.sunLight) {
+        this.sunLight.position.set(sunX, sunY, sunZ);
+        this.sunLight.target.position.set(0, 0, 0);
+        this.worldGroup.add(this.sunLight.target);
         // Lighting intensity
         const sunUp = sunY > 0;
-        const moonUp = moonY > 0;
         const sunIntensity = sunUp ? 0.7 : 0.10;
-        const moonIntensity = moonUp ? 0.18 : 0.0;
         const ambientIntensity = sunUp ? 1.00 : 0.50;
-        if (this.sunLight) this.sunLight.intensity = sunIntensity;
-        if (this.moonLight) this.moonLight.intensity = moonIntensity;
+        this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
         this.ambientLight.color.set(0x828293);
         // Enable sun shadow only if sun is above horizon
-        if (this.sunLight) this.sunLight.castShadow = sunUp;
-        // Enable moon shadow only if moon is above horizon
-        if (this.moonLight) this.moonLight.castShadow = moonUp;
-
-        // Keep shadow camera focused on the actual play space for stronger, clearer shadows.
-        const shadowExtent = Math.max(80, mapSize * 0.65);
-        const shadowFar = Math.max(300, lightDistance * 2.0);
-        if (this.sunLight && this.sunLight.shadow && this.sunLight.shadow.camera) {
-          this.sunLight.shadow.camera.left = -shadowExtent;
-          this.sunLight.shadow.camera.right = shadowExtent;
-          this.sunLight.shadow.camera.top = shadowExtent;
-          this.sunLight.shadow.camera.bottom = -shadowExtent;
-          this.sunLight.shadow.camera.near = 1;
-          this.sunLight.shadow.camera.far = shadowFar;
-          this.sunLight.shadow.camera.updateProjectionMatrix();
-        }
-        if (this.moonLight && this.moonLight.shadow && this.moonLight.shadow.camera) {
-          this.moonLight.shadow.camera.left = -shadowExtent;
-          this.moonLight.shadow.camera.right = shadowExtent;
-          this.moonLight.shadow.camera.top = shadowExtent;
-          this.moonLight.shadow.camera.bottom = -shadowExtent;
-          this.moonLight.shadow.camera.near = 1;
-          this.moonLight.shadow.camera.far = shadowFar;
-          this.moonLight.shadow.camera.updateProjectionMatrix();
-        }
+        this.sunLight.castShadow = sunUp;
 
         // Sun color: add a subtle red-orange tint at dawn/dusk
         // Day: #fffbe6 (warm white), Night: #23264a, Dawn/Dusk: #ffb366 (orange tint)
@@ -129,8 +79,7 @@ class RenderManager {
         }
         // Dim at night
         sunColor.lerp(nightColor, 1 - t);
-        if (this.sunLight) this.sunLight.color.copy(sunColor);
-        if (this.moonLight) this.moonLight.color.set(0xccccff);
+        this.sunLight.color.copy(sunColor);
 
         // Fog and background color: as before
         const dayColor = new THREE.Color(0x87ceeb);
@@ -185,9 +134,6 @@ class RenderManager {
 
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
-
-    // Reused scratch vector for XR headset world position
-    this.xrHeadWorldPos = new THREE.Vector3();
   }
 
   init({ container = document.body } = {}) {
@@ -266,8 +212,6 @@ class RenderManager {
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.width = 2048;
     this.sunLight.shadow.mapSize.height = 2048;
-    this.sunLight.shadow.bias = -0.00015;
-    this.sunLight.shadow.normalBias = 0.02;
     this.sunLight.shadow.camera.left = -120;
     this.sunLight.shadow.camera.right = 120;
     this.sunLight.shadow.camera.top = 120;
@@ -277,8 +221,6 @@ class RenderManager {
     this.moonLight.castShadow = true;
     this.moonLight.shadow.mapSize.width = 1024;
     this.moonLight.shadow.mapSize.height = 1024;
-    this.moonLight.shadow.bias = -0.00015;
-    this.moonLight.shadow.normalBias = 0.025;
     this.moonLight.shadow.camera.left = -120;
     this.moonLight.shadow.camera.right = 120;
     this.moonLight.shadow.camera.top = 120;
@@ -404,9 +346,6 @@ class RenderManager {
       side: THREE.DoubleSide,
       roughness: 0.8,
       metalness: 0.1,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
     });
 
     this.ground = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -415,7 +354,6 @@ class RenderManager {
     this.worldGroup.add(this.ground);
 
     this.gridHelper = new THREE.GridHelper(mapSize * 3, mapSize, 0x000000, 0x555555);
-    this.gridHelper.position.y = 0.03;
     this.worldGroup.add(this.gridHelper);
   }
 
@@ -1685,8 +1623,6 @@ class RenderManager {
 
   updateCamera({ cameraMode, myTank, playerRotation }) {
     if (!this.camera) return;
-    const firstPersonEyeHeight = 2.6;
-    const firstPersonLookHeight = firstPersonEyeHeight - 0.2;
     if (cameraMode === 'overview' || !myTank) {
       this.camera.position.set(0, 15, 20);
       this.camera.up.set(0, 1, 0);
@@ -1700,21 +1636,6 @@ class RenderManager {
         if (myTank.userData.body) myTank.userData.body.visible = true;
         if (myTank.userData.turret) myTank.userData.turret.visible = true;
 
-        // Compensate for headset translation so standing/sitting/leaning/walking
-        // does not change the in-game camera offset from the tank.
-        let xrOffsetX = 0;
-        let xrOffsetY = 0;
-        let xrOffsetZ = 0;
-        if (this.renderer && this.renderer.xr && this.renderer.xr.isPresenting) {
-          const xrCamera = this.renderer.xr.getCamera(this.camera);
-          if (xrCamera) {
-            this.xrHeadWorldPos.setFromMatrixPosition(xrCamera.matrixWorld);
-            xrOffsetX = this.xrHeadWorldPos.x;
-            xrOffsetY = this.xrHeadWorldPos.y;
-            xrOffsetZ = this.xrHeadWorldPos.z;
-          }
-        }
-
         // Apply rotation first (around the camera/origin)
         const q = new THREE.Quaternion();
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -myTank.rotation.y);
@@ -1726,9 +1647,9 @@ class RenderManager {
 
         // Translate to center the rotated tank at camera origin, with ground slightly below eye height
         this.worldGroup.position.set(
-          -tankRotated.x + xrOffsetX,
-          -myTank.position.y - firstPersonEyeHeight + xrOffsetY,
-          -tankRotated.z + xrOffsetZ
+          -tankRotated.x,
+          -myTank.position.y - 0.6,
+          -tankRotated.z
         );
       } else {
         // In non-XR first-person, hide the tank body/turret
@@ -1739,13 +1660,13 @@ class RenderManager {
         this.worldGroup.rotation.y = 0;
         const fpOffset = new THREE.Vector3(
           -Math.sin(playerRotation) * 0.5,
-          firstPersonEyeHeight,
+          2.2,
           -Math.cos(playerRotation) * 0.5,
         );
         this.camera.position.copy(myTank.position).add(fpOffset);
         const lookTarget = new THREE.Vector3(
           myTank.position.x - Math.sin(playerRotation) * 10,
-          myTank.position.y + firstPersonLookHeight,
+          myTank.position.y + 2,
           myTank.position.z - Math.cos(playerRotation) * 10,
         );
         this.camera.lookAt(lookTarget);
