@@ -124,6 +124,7 @@ class RenderManager {
     this.clouds = [];
 
     this.compassMarkers = [];
+    this.maxObstacleHeight = 0;
 
     this.debugLabels = [];
     this.debugLabelsEnabled = true;
@@ -448,7 +449,8 @@ class RenderManager {
     northWall.name = 'North Wall';
     this.worldGroup.add(northWall);
     boundaryMeshes.push(northWall);
-    this._addCompassMarker('N', 0xB20000, new THREE.Vector3(0, wallHeight + 8, -mapSize / 2));
+    const markerHeight = Math.max(wallHeight + 8, this.maxObstacleHeight + 5);
+    this._addCompassMarker('N', 0xB20000, new THREE.Vector3(0, markerHeight, -mapSize / 2));
     this._addDebugLabel(northWall, 'boundary');
 
 
@@ -462,7 +464,7 @@ class RenderManager {
     this.worldGroup.add(southWall);
     southWall.name = 'South Wall';
     boundaryMeshes.push(southWall);
-    this._addCompassMarker('S', 0x1976D2, new THREE.Vector3(0, wallHeight + 8, mapSize / 2));
+    this._addCompassMarker('S', 0x1976D2, new THREE.Vector3(0, markerHeight, mapSize / 2));
     this._addDebugLabel(southWall, 'boundary');
 
 
@@ -476,7 +478,7 @@ class RenderManager {
     this.worldGroup.add(eastWall);
     eastWall.name = 'East Wall';
     boundaryMeshes.push(eastWall);
-    this._addCompassMarker('E', 0x388E3C, new THREE.Vector3(mapSize / 2, wallHeight + 8, 0));
+    this._addCompassMarker('E', 0x388E3C, new THREE.Vector3(mapSize / 2, markerHeight, 0));
     this._addDebugLabel(eastWall, 'boundary');
 
 
@@ -490,7 +492,7 @@ class RenderManager {
     this.worldGroup.add(westWall);
     westWall.name = 'West Wall';
     boundaryMeshes.push(westWall);
-    this._addCompassMarker('W', 0xFBC02D, new THREE.Vector3(-mapSize / 2, wallHeight + 8, 0));
+    this._addCompassMarker('W', 0xFBC02D, new THREE.Vector3(-mapSize / 2, markerHeight, 0));
     this._addDebugLabel(westWall, 'boundary');
 
     this.boundaryMeshes = boundaryMeshes;
@@ -517,9 +519,19 @@ class RenderManager {
     const sprite = new THREE.Sprite(material);
     sprite.position.copy(position);
     sprite.scale.set(20, 20, 1);
+    sprite.userData = { letter, initialY: position.y }; // Store metadata
     this.worldGroup.add(sprite);
     if (!this.compassMarkers) this.compassMarkers = [];
     this.compassMarkers.push(sprite);
+  }
+
+  _updateCompassMarkerHeights() {
+    if (!this.compassMarkers || this.compassMarkers.length === 0) return;
+    const wallHeight = 5;
+    const markerHeight = Math.max(wallHeight + 8, this.maxObstacleHeight + 5);
+    this.compassMarkers.forEach(marker => {
+      marker.position.y = markerHeight;
+    });
   }
 
   clearObstacles() {
@@ -540,6 +552,18 @@ class RenderManager {
   setObstacles(obstacles = []) {
     if (!this.scene) return;
     this.clearObstacles();
+
+    // Track max obstacle height for cardinal marker positioning
+    this.maxObstacleHeight = 0;
+    obstacles.forEach((obs) => {
+      const h = obs.h || 4;
+      const baseY = obs.baseY || 0;
+      const topY = baseY + h;
+      if (topY > this.maxObstacleHeight) {
+        this.maxObstacleHeight = topY;
+      }
+    });
+
     obstacles.forEach((obs, i) => {
       const h = obs.h || 4;
       const baseY = obs.baseY || 0;
@@ -635,6 +659,9 @@ class RenderManager {
         this.obstacleMeshes.push(mesh);
       }
     });
+
+    // Update compass marker heights now that we know maxObstacleHeight
+    this._updateCompassMarkerHeights();
   }
 
   setDebugLabelsEnabled(enabled) {

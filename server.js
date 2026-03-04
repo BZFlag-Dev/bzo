@@ -119,12 +119,10 @@ if (MAP_SOURCE !== 'random') {
     // Watch the map file for changes and restart the server if it changes
     try {
       fs.watch(mapPath, (eventType, filename) => {
-        if (eventType === 'change') {
+        if (eventType === 'change' || eventType === 'rename') {
           console.log(`\n📝 Map file changed: ${filename || mapPath}`);
           console.log('🔄 Restarting server due to map file change...\n');
-          setTimeout(() => {
-            process.exit(0);
-          }, 1000);
+          requestServerRestart('map file change');
         }
       });
       // console.log(`  ✓ Watching map file: ${path.basename(mapPath)}`);
@@ -1029,6 +1027,24 @@ function forceClientReload() {
   }, 500);
 }
 
+function requestServerRestart(reason) {
+  log(`Restart requested: ${reason}`);
+  forceClientReload();
+  // Touch server.js to update its timestamp and trigger nodemon file watcher
+  // This causes nodemon to detect the "change" and restart immediately
+  // without the "waiting for changes" message
+  setTimeout(() => {
+    try {
+      const now = new Date();
+      fs.utimesSync(__filename, now, now);
+      log('Triggered nodemon restart via timestamp touch...');
+    } catch (err) {
+      logError('Failed to trigger restart:', err);
+      process.exit(0);
+    }
+  }, 1000);
+}
+
 // WebSocket connection handler
 // When a new player connects, assign a default name and number
 wss.on('connection', (ws, req) => {
@@ -1374,7 +1390,7 @@ wss.on('connection', (ws, req) => {
             fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
             ws.send(JSON.stringify({ success: true }));
             log(`Admin set map to ${mapFile}. Server restart required.`);
-            process.exit(0);
+            requestServerRestart(`admin map change to ${mapFile}`);
           } catch (e) {
             ws.send(JSON.stringify({ error: 'Failed to update config' }));
           }
@@ -1471,10 +1487,9 @@ if (fs.existsSync(serverJsPath)) {
     if (eventType === 'change') {
       console.log(`\n📝 server.js changed: ${filename || serverJsPath}`);
       console.log('🔄 Restarting server...\n');
-      setTimeout(() => {
-        process.exit(0);
-      }, 1000);
+      requestServerRestart('server.js change');
     }
   });
   console.log(`  ✓ Watching: server.js`);
 }
+
