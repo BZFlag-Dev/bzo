@@ -1,0 +1,6 @@
+{
+  "watch": ["server.js", "public/", "maps/", "server-config.json"],
+  "ignore": ["server.log", "node_modules/"],
+  "delay": 0,
+  "exitcrash": false
+}
