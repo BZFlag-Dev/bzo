@@ -73,21 +73,25 @@ end
 
 # top of the world
 box
+name totw1
 position 0.0 0.0 29.0
 rotation 0.0
 size     9.6568542495 4.0 16.0
 end
 box
+name totw2
 position 0.0 0.0 29.0
 rotation 45.0
 size     9.6568542495 4.0 16.0
 end
 box
+name totw3
 position 0.0 0.0 29.0
 rotation 90.0
 size     9.6568542495 4.0 16.0
 end
 box
+name totw4
 position 0.0 0.0 29.0
 rotation 135.0
 size     9.6568542495 4.0 16.0
@@ -95,21 +99,25 @@ end
 
 # roof
 pyramid
+name totwr1
 position 0.0 0.0 52.0
 rotation 0.0
 size     9.6568542495 4.0 5.0
 end
 pyramid
+name totwr2
 position 0.0 0.0 52.0
 rotation 45.0
 size     9.6568542495 4.0 5.0
 end
 pyramid
+name totwr3
 position 0.0 0.0 52.0
 rotation 90.0
 size     9.6568542495 4.0 5.0
 end
 pyramid
+name totwr4
 position 0.0 0.0 52.0
 rotation 135.0
 size     9.6568542495 4.0 5.0
@@ -729,6 +737,7 @@ end
 
 # red team base
 base
+name red W base
 position -340.0 0.0 26.0
 rotation 45.0
 size 35.0 35.0 4.0
@@ -736,6 +745,7 @@ color 1
 end
 # green team base
 base
+name green E base
 position 340.0 0.0 26.0
 rotation 45.0
 size 35.0 35.0 4.0
@@ -743,6 +753,7 @@ color 2
 end
 # blue team base
 base
+name blue N base
 position 0.0 -340.0 26.0
 rotation 45.0
 size 35.0 35.0 4.0
@@ -750,6 +761,7 @@ color 3
 end
 # purple team base
 base
+name purple S base
 position 0.0 340.0 26.0
 rotation 45.0
 size 35.0 35.0 4.0
