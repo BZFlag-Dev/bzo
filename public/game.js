@@ -25,7 +25,10 @@ import {
   toggleMouseMode,
   hideHelpPanel,
   isMobile,
-  updateVirtualInputFromXR
+  updateVirtualInputFromXR,
+  updateVirtualInputFromGamepad,
+  isGamepadConnected,
+  getGamepadInfo
 } from './input.js';
 import {
   updateDebugDisplay,
@@ -222,7 +225,9 @@ function getDebugState() {
     OBSTACLES,
     clouds: renderManager.getClouds(),
     latestOrientation,
-    worldTime
+    worldTime,
+    gamepadConnected: isGamepadConnected(),
+    gamepadInfo: getGamepadInfo()
   };
 }
 
@@ -529,7 +534,7 @@ function init() {
       updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
       showMessage,
       updateDebugDisplay,
-      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation, worldTime })
+      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation, worldTime, gamepadConnected: isGamepadConnected(), gamepadInfo: getGamepadInfo() })
     });
   }
 
@@ -1743,13 +1748,17 @@ function handleInputEvents() {
   // Update virtual input from XR controller if available
   updateVirtualInputFromXR();
 
+  // Update virtual input from gamepad/joystick if available
+  updateVirtualInputFromGamepad();
+
   // Gather intended input from controls
   if (isInAir) {
     // In air: use stored jump values to match what we send in packets
     intendedForward = myTank.userData.jumpForwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
-    if (virtualControlsEnabled || isXREnabled()) {
+    // Use virtual input if gamepad connected, XR enabled, or virtual controls enabled
+    if (isGamepadConnected() || virtualControlsEnabled || isXREnabled()) {
       intendedForward = virtualInput.forward;
       intendedRotation = virtualInput.turn;
       if (jumpDirection === null && virtualInput.jump) {
@@ -2059,7 +2068,8 @@ function handleMotion(deltaTime) {
       myTank.userData.ghostMesh.rotation.y = ghostR;
     }
   }
-  if ((isMobile && virtualInput.fire) || (!isMobile && keys['Space']) || (isXREnabled() && virtualInput.fire)) {
+  // Fire button: keyboard Space, mobile/XR/gamepad virtualInput.fire
+  if ((!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire)) {
     const now = Date.now();
     if (now - lastShotTime > gameConfig.SHOT_COOLDOWN) {
       shoot();

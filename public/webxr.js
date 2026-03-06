@@ -3,13 +3,14 @@
  * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
  */
 
-// WebXR Manager for VR support (Quest 2, etc.)
+// WebXR Manager for VR/AR support (Quest 2, Viture Luma Ultra, etc.)
 
 import * as THREE from 'three';
 
 let xrSession = null;
 let xrSupported = false;
 let xrEnabled = false;
+let xrMode = null; // 'immersive-vr' or 'immersive-ar'
 let xrInputSources = new Map(); // Map of controller input source ID -> controller state
 let xrAnimationCallback = null;
 let sendToServerCallback = null; // For logging debug messages
@@ -52,11 +53,30 @@ async function checkXRSupport() {
   }
 
   try {
-    const supported = await navigator.xr.isSessionSupported('immersive-vr');
-    debugLog('isSessionSupported result: ' + supported);
-    xrSupported = supported;
-    xrState.isSupported = supported;
-    return supported;
+    // Try immersive-ar first (for Viture Luma Ultra on iOS)
+    const arSupported = await navigator.xr.isSessionSupported('immersive-ar');
+    if (arSupported) {
+      debugLog('immersive-ar (AR) supported');
+      xrMode = 'immersive-ar';
+      xrSupported = true;
+      xrState.isSupported = true;
+      return true;
+    }
+
+    // Fall back to immersive-vr (for Quest 2, Valve Index, etc.)
+    const vrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+    if (vrSupported) {
+      debugLog('immersive-vr (VR) supported');
+      xrMode = 'immersive-vr';
+      xrSupported = true;
+      xrState.isSupported = true;
+      return true;
+    }
+
+    debugLog('Neither immersive-ar nor immersive-vr supported');
+    xrSupported = false;
+    xrState.isSupported = false;
+    return false;
   } catch (err) {
     debugLog('Failed to check support: ' + err.message);
     console.error('[WebXR] Full error:', err);
@@ -78,13 +98,14 @@ async function requestXRSession(renderer, animationCallback) {
   }
 
   try {
-    debugLog('About to call navigator.xr.requestSession');
-    // Request immersive VR session with local-floor reference space
-    xrSession = await navigator.xr.requestSession('immersive-vr', {
+    debugLog('About to call navigator.xr.requestSession with mode: ' + xrMode);
+    // Request XR session (AR or VR based on device support)
+    const sessionFeatures = {
       optionalFeatures: ['hand-tracking', 'local-floor'],
-    });
+    };
+    xrSession = await navigator.xr.requestSession(xrMode, sessionFeatures);
 
-    debugLog('XR session created successfully');
+    debugLog('XR session (mode=' + xrMode + ') created successfully');
     xrEnabled = true;
     xrState.enabled = true;
 

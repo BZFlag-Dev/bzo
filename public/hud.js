@@ -105,7 +105,9 @@ export function updateDebugDisplay({
   OBSTACLES,
   clouds,
   latestOrientation,
-  worldTime
+  worldTime,
+  gamepadConnected,
+  gamepadInfo
 }) {
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
@@ -137,6 +139,17 @@ export function updateDebugDisplay({
       html += `<div><span class="label">Orientation γ:</span><span class="value">${latestOrientation.gamma.toFixed(1)}</span></div>`;
     }
   }
+
+  // Gamepad info
+  if (gamepadConnected && gamepadInfo) {
+    html += `<div><span class="label">Gamepad:</span><span class="value">Connected</span></div>`;
+    html += `<div><span class="label">Gamepad ID:</span><span class="value">${gamepadInfo.id.substring(0, 30)}...</span></div>`;
+    html += `<div><span class="label">Mapping:</span><span class="value">${gamepadInfo.mapping || 'unknown'}</span></div>`;
+    html += `<div><span class="label">Buttons/Axes:</span><span class="value">${gamepadInfo.buttons}/${gamepadInfo.axes}</span></div>`;
+  } else {
+    html += `<div><span class="label">Gamepad:</span><span class="value">Not connected</span></div>`;
+  }
+
   // Packets sent/received
   if (packetsSent) {
     html += '<div style="margin: 10px 0; border-top: 1px solid #444; padding-top: 10px; font-weight: bold;">PACKETS SENT:</div>';

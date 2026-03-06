@@ -11,8 +11,166 @@ export let lastVirtualJump = false;
 // Keyboard input state
 export const keys = {};
 
+// Gamepad state
+let gamepadConnected = false;
+let gamepadIndex = -1;
+let gamepadInfo = null;
+let lastGamepadButtonState = { fire: false, jump: false };
+let gamepadFrameCounter = 0;
+
+// Gamepad detection and event listeners
+function setupGamepadListeners() {
+  // Listen for gamepad connections
+  window.addEventListener('gamepadconnected', (e) => {
+    console.log('[Gamepad] Connected:', e.gamepad.id);
+    console.log('[Gamepad] Mapping:', e.gamepad.mapping);
+    gamepadConnected = true;
+    gamepadIndex = e.gamepad.index;
+    gamepadInfo = {
+      id: e.gamepad.id,
+      buttons: e.gamepad.buttons.length,
+      axes: e.gamepad.axes.length,
+      mapping: e.gamepad.mapping,
+    };
+    console.log('[Gamepad] Info:', gamepadInfo);
+  });
+
+  window.addEventListener('gamepaddisconnected', (e) => {
+    console.log('[Gamepad] Disconnected:', e.gamepad.id);
+    if (e.gamepad.index === gamepadIndex) {
+      gamepadConnected = false;
+      gamepadIndex = -1;
+      gamepadInfo = null;
+      // Reset virtual input
+      virtualInput.forward = 0;
+      virtualInput.turn = 0;
+      virtualInput.fire = false;
+      virtualInput.jump = false;
+    }
+  });
+
+  // Initial check for already-connected gamepads
+  const gamepads = navigator.getGamepads();
+  for (let i = 0; i < gamepads.length; i++) {
+    if (gamepads[i]) {
+      console.log('[Gamepad] Found at startup:', gamepads[i].id);
+      console.log('[Gamepad] Mapping:', gamepads[i].mapping);
+      gamepadConnected = true;
+      gamepadIndex = gamepads[i].index;
+      gamepadInfo = {
+        id: gamepads[i].id,
+        buttons: gamepads[i].buttons.length,
+        axes: gamepads[i].axes.length,
+        mapping: gamepads[i].mapping,
+      };
+      console.log('[Gamepad] Info:', gamepadInfo);
+      break;
+    }
+  }
+}
+
+// Update virtualInput from gamepad state (called each frame)
+export function updateVirtualInputFromGamepad() {
+  if (!gamepadConnected || gamepadIndex < 0) return;
+
+  const gamepads = navigator.getGamepads();
+  const gamepad = gamepads[gamepadIndex];
+  if (!gamepad) {
+    gamepadConnected = false;
+    return;
+  }
+
+  const axes = gamepad.axes;
+  const buttons = gamepad.buttons;
+
+  // Apply deadzone to prevent drift
+  const deadzone = 0.2;
+  function applyDeadzone(value) {
+    if (Math.abs(value) < deadzone) {
+      return 0;
+    }
+    // Scale the remaining range to 0-1 for smoother control
+    const sign = value > 0 ? 1 : -1;
+    return sign * ((Math.abs(value) - deadzone) / (1 - deadzone));
+  }
+
+  // Standard gamepad mapping (most USB controllers and iOS MFi controllers):
+  // Axes 0: Left stick X (turn left/right)
+  // Axes 1: Left stick Y (forward/backward)
+  // Axes 2: Right stick X (unused)
+  // Axes 3: Right stick Y (unused)
+  // Button 0: A/X (fire)
+  // Button 1: B/Circle (jump)
+  // Button 6: Left trigger (alternative jump)
+  // Button 7: Right trigger (alternative fire)
+
+  if (axes.length >= 2) {
+    // Left stick Y-axis: forward/backward (inverted because -1 is up)
+    const axisY = axes[1];
+    const axisX = axes[0];
+    
+    virtualInput.forward = -applyDeadzone(axisY);
+    virtualInput.turn = -applyDeadzone(axisX);
+  } else {
+    // No axes available, reset to 0
+    virtualInput.forward = 0;
+    virtualInput.turn = 0;
+  }
+
+  // Fire button: A button (0) or right trigger (7)
+  const firePressed = 
+    (buttons[0] && buttons[0].pressed) ||
+    (buttons[7] && buttons[7].pressed);
+  virtualInput.fire = firePressed;
+
+  // Jump button: B button (1) or left trigger (6)
+  const jumpPressed = 
+    (buttons[1] && buttons[1].pressed) ||
+    (buttons[6] && buttons[6].pressed);
+  virtualInput.jump = jumpPressed;
+
+  // Track button state changes
+  lastGamepadButtonState.fire = firePressed;
+  lastGamepadButtonState.jump = jumpPressed;
+
+  // Debug logging every 120 frames (every 2 seconds at 60fps)
+  gamepadFrameCounter++;
+  if (gamepadFrameCounter % 120 === 0) {
+    // Log active axes and buttons
+    const activeAxes = [];
+    for (let i = 0; i < axes.length; i++) {
+      if (Math.abs(axes[i]) > 0.01) {
+        activeAxes.push(`Axis${i}=${axes[i].toFixed(2)}`);
+      }
+    }
+    const activeButtons = [];
+    for (let i = 0; i < buttons.length; i++) {
+      if (buttons[i].pressed) {
+        activeButtons.push(`Btn${i}`);
+      }
+    }
+    if (activeAxes.length > 0 || activeButtons.length > 0) {
+      console.log('[Gamepad] Active:', activeAxes.join(', '), activeButtons.join(', '));
+      console.log('[Gamepad] virtualInput:', `forward=${virtualInput.forward.toFixed(2)}, turn=${virtualInput.turn.toFixed(2)}, fire=${virtualInput.fire}, jump=${virtualInput.jump}`);
+    }
+  }
+}
+
+// Get gamepad connection status
+export function isGamepadConnected() {
+  return gamepadConnected;
+}
+
+// Get gamepad info
+export function getGamepadInfo() {
+  return gamepadInfo;
+}
+
 // Setup all input event listeners
 export function setupInputHandlers() {
+  // Setup gamepad detection
+  setupGamepadListeners();
+
   // Touch/virtual joystick
   const joystick = document.getElementById('joystick');
   const knob = document.getElementById('joystickKnob');
