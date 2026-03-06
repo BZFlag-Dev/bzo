@@ -515,7 +515,7 @@ class RenderManager {
     ctx.fillText(letter, 128, 128);
 
     const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true, fog: false });
     const sprite = new THREE.Sprite(material);
     sprite.position.copy(position);
     sprite.scale.set(20, 20, 1);
