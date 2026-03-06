@@ -49,7 +49,7 @@ async function checkXRSupport() {
   debugLog('Checking XR support... navigator.xr=' + (navigator.xr ? 'YES' : 'NO'));
   if (!navigator.xr) {
     debugLog('navigator.xr not available - WebXR not supported');
-    return false;
+    return 'none';
   }
 
   try {
@@ -60,7 +60,7 @@ async function checkXRSupport() {
       xrMode = 'immersive-ar';
       xrSupported = true;
       xrState.isSupported = true;
-      return true;
+      return 'ar';
     }
 
     // Fall back to immersive-vr
@@ -70,17 +70,17 @@ async function checkXRSupport() {
       xrMode = 'immersive-vr';
       xrSupported = true;
       xrState.isSupported = true;
-      return true;
+      return 'vr';
     }
 
     debugLog('Neither immersive-ar nor immersive-vr supported');
     xrSupported = false;
     xrState.isSupported = false;
-    return false;
+    return 'none';
   } catch (err) {
     debugLog('Failed to check support: ' + err.message);
     console.error('[WebXR] Full error:', err);
-    return false;
+    return 'none';
   }
 }
 

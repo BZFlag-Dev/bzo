@@ -397,11 +397,11 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // Initialize WebXR support
-  initXR().then(supported => {
-    showMessage(`WebXR: ${supported ? 'SUPPORTED' : 'NOT SUPPORTED'}`, 'info');
+  initXR().then(mode => {
+    showMessage(`WebXR: ${mode}`, 'info');
     const xrBtn = document.getElementById('xrBtn');
     if (xrBtn) {
-      if (!supported) {
+      if (mode === 'none') {
         xrBtn.disabled = true;
         xrBtn.title = 'WebXR not supported on this device';
         xrBtn.classList.add('disabled');
