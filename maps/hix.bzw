@@ -125,11 +125,13 @@ end
 
 # cross bars
 box
+name xbar1
 position 0.0 0.0 29.0
 rotation 45.0
 size     4 550.0 1.0
 end
 box
+name xbar2
 position 0.0 0.0 29.0
 rotation 135.0
 size     4 550.0 1.0
@@ -137,42 +139,51 @@ end
 
 # walls under crossbars
 box
+name xwall_ne
 position 180.0 180.0 14.0
 rotation 135.0
 size     0.5 150.0 16.0
 end
 box
+name xwall_sw
 position -180.0 -180.0 14.0
 rotation 135.0
 size     0.5 150.0 16.0
 end
 box
+name xwall_se
 position 180.0 -180.0 14.0
 rotation 45.0
 size     0.5 150.0 16.0
 end
 box
+name xwall_nw
 position -180.0 180.0 14.0
 rotation 45.0
 size     0.5 150.0 16.0
 end
+
 # first level platforms
 box
+name plat1_ne
 position 180.0 180.0 14.0
 rotation 135.0
 size     8.0 107.0 1.0
 end
 box
+name plat1_sw
 position -180.0 -180.0 14.0
 rotation 135.0
 size     8.0 107.0 1.0
 end
 box
+name plat1_se
 position 180.0 -180.0 14.0
 rotation 45.0
 size     8.0 107.0 1.0
 end
 box
+name plat1_nw
 position -180.0 180.0 14.0
 rotation 45.0
 size     8.0 107.0 1.0
@@ -180,41 +191,49 @@ end
 
 # boxes at wall ends for access
 box
+name wallend_ne1
 position 80.0 80.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_ne2
 position 280.0 280.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_sw1
 position -80.0 -80.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_sw2
 position -280.0 -280.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_nw1
 position -80.0 80.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_nw2
 position -280.0 280.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_se1
 position 80.0 -80.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name wallend_se2
 position 280.0 -280.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
@@ -222,84 +241,100 @@ end
 
 # octagons midplatform
 box
+name oct_ne_0
 position 180.0 180.0 0.0
 rotation 0.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_ne_45
 position 180.0 180.0 0.0
 rotation 45.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_ne_90
 position 180.0 180.0 0.0
 rotation 90.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_ne_135
 position 180.0 180.0 0.0
 rotation 135.0
 size     19.313708499 8.0 15.0
 end
 
 box
+name oct_sw_0
 position -180.0 -180.0 0.0
 rotation 0.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_sw_45
 position -180.0 -180.0 0.0
 rotation 45.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_sw_90
 position -180.0 -180.0 0.0
 rotation 90.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_sw_135
 position -180.0 -180.0 0.0
 rotation 135.0
 size     19.313708499 8.0 15.0
 end
 
 box
+name oct_nw_0
 position -180.0 180.0 0.0
 rotation 0.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_nw_45
 position -180.0 180.0 0.0
 rotation 45.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_nw_90
 position -180.0 180.0 0.0
 rotation 90.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_nw_135
 position -180.0 180.0 0.0
 rotation 135.0
 size     19.313708499 8.0 15.0
 end
 
 box
+name oct_se_0
 position 180.0 -180.0 0.0
 rotation 0.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_se_45
 position 180.0 -180.0 0.0
 rotation 45.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_se_90
 position 180.0 -180.0 0.0
 rotation 90.0
 size     19.313708499 8.0 15.0
 end
 box
+name oct_se_135
 position 180.0 -180.0 0.0
 rotation 135.0
 size     19.313708499 8.0 15.0
@@ -307,204 +342,244 @@ end
 
 # supports
 pyramid
+name sup_ne_in_core
 position 140.0 140.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_ne_in_rib0
 position 140.0 140.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_ne_in_rib90
 position 140.0 140.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_ne_in_cap0
 position 140.0 140.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_ne_in_cap90
 position 140.0 140.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_ne_out_core
 position 220.0 220.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_ne_out_rib0
 position 220.0 220.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_ne_out_rib90
 position 220.0 220.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_ne_out_cap0
 position 220.0 220.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_ne_out_cap90
 position 220.0 220.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 
 pyramid
+name sup_sw_in_core
 position -140.0 -140.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_sw_in_rib0
 position -140.0 -140.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_sw_in_rib90
 position -140.0 -140.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_sw_in_cap0
 position -140.0 -140.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_sw_in_cap90
 position -140.0 -140.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_sw_out_core
 position -220.0 -220.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_sw_out_rib0
 position -220.0 -220.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_sw_out_rib90
 position -220.0 -220.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_sw_out_cap0
 position -220.0 -220.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_sw_out_cap90
 position -220.0 -220.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 
 pyramid
+name sup_nw_in_core
 position -140.0 140.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_nw_in_rib0
 position -140.0 140.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_nw_in_rib90
 position -140.0 140.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_nw_in_cap0
 position -140.0 140.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_nw_in_cap90
 position -140.0 140.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_nw_out_core
 position -220.0 220.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_nw_out_rib0
 position -220.0 220.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_nw_out_rib90
 position -220.0 220.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_nw_out_cap0
 position -220.0 220.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_nw_out_cap90
 position -220.0 220.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 
 pyramid
+name sup_se_in_core
 position 140.0 -140.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_se_in_rib0
 position 140.0 -140.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_se_in_rib90
 position 140.0 -140.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_se_in_cap0
 position 140.0 -140.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_se_in_cap90
 position 140.0 -140.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_se_out_core
 position 220.0 -220.0 0.0
 rotation 45.0
 size     2.0 2.0 18.0
 end
 pyramid
+name sup_se_out_rib0
 position 220.0 -220.0 0.0
 rotation 0.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_se_out_rib90
 position 220.0 -220.0 0.0
 rotation 90.0
 size     8.0 1.0 5.0
 end
 pyramid
+name sup_se_out_cap0
 position 220.0 -220.0 12.0
 rotation 0.0
 size     8.0 -0.5 -2.0
 end
 pyramid
+name sup_se_out_cap90
 position 220.0 -220.0 12.0
 rotation 90.0
 size     8.0 -0.5 -2.0
@@ -512,21 +587,25 @@ end
 
 # base guard posts
 box
+name guard_e
 position 392.5 0.0 29.0
 rotation 0.0
 size     7.5 7.5 16.0
 end
 box
+name guard_w
 position -392.5 0.0 29.0
 rotation 0.0
 size     7.5 7.5 16.0
 end
 box
+name guard_n
 position 0.0 392.5 29.0
 rotation 0.0
 size     7.5 7.5 16.0
 end
 box
+name guard_s
 position 0.0 -392.5 29.0
 rotation 0.0
 size     7.5 7.5 16.0
@@ -535,62 +614,74 @@ end
 # walkways on edges
 #overlap platforms to prevent flag hiding
 box
+name walk_e
 position 392.5 0.0 29.0
 rotation 0.0
 size     7.5 400.0 1.0
 end
 box
+name walk_w
 position -392.5 0.0 29.0
 rotation 0.0
 size     7.5 400.0 1.0
 end
 box
+name walk_n
 position 0.0 392.5 29.0
 rotation 90.0
 size     7.5 400.0 1.0
 end
 box
+name walk_s
 position 0.0 -392.5 29.0
 rotation 90.0
 size     7.5 400.0 1.0
 end
 # boxes for access
 box
+name edge_e_n
 position 400.0 180.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_e_s
 position 400.0 -180.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_w_n
 position -400.0 180.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_w_s
 position -400.0 -180.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_n_e
 position 180.0 400.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_n_w
 position -180.0 400.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_s_e
 position 180.0 -400.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
 end
 box
+name edge_s_w
 position -180.0 -400.0 0.0
 rotation 45.0
 size     30.0 30.0 15.0
@@ -598,21 +689,25 @@ end
 
 # boxes in the middle in front of bases
 box
+name mid_e
 position 200.0 0.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name mid_w
 position -200.0 0.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name mid_n
 position 0.0 200.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
 end
 box
+name mid_s
 position 0.0 -200.0 0.0
 rotation 0.0
 size     30.0 30.0 15.0
@@ -620,12 +715,14 @@ end
 
 # teleporter elevators in the corners
 teleporter
+name tele_ne_low
 position     390.0 390.0 0.0
 rotation     45.0
 size         0.56  4.48  27.7
 border       1.12
 end
 teleporter
+name tele_ne_high
 position     390.0 390.0 30.0
 rotation     45.0
 size         0.56  4.48  15.0
@@ -649,12 +746,14 @@ to 1
 end
 
 teleporter
+name tele_sw_low
 position     -390.0 -390.0 0.0
 rotation     45.0
 size         0.56  4.48  27.7
 border       1.12
 end
 teleporter
+name tele_sw_high
 position     -390.0 -390.0 30.0
 rotation     45.0
 size         0.56  4.48  15.0
@@ -678,12 +777,14 @@ to 5
 end
 
 teleporter
+name tele_se_low
 position     390.0 -390.0 0.0
 rotation     135.0
 size         0.56  4.48  27.7
 border       1.12
 end
 teleporter
+name tele_se_high
 position     390.0 -390.0 30.0
 rotation     135.0
 size         0.56  4.48  15.0
@@ -707,12 +808,14 @@ to 9
 end
 
 teleporter
+name tele_nw_low
 position     -390.0 390.0 0.0
 rotation     135.0
 size         0.56  4.48  27.7
 border       1.12
 end
 teleporter
+name tele_nw_high
 position     -390.0 390.0 30.0
 rotation     135.0
 size         0.56  4.48  15.0
@@ -770,84 +873,100 @@ end
 
 # pyramids under red base
 pyramid
+name red_pyr1
 position -340.0 -45.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name red_pyr2
 position -340.0 45.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name red_pyr3
 position -295.0 0.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name red_pyr4
 position -385.0 0.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 # pyramids under green base
 pyramid
+name green_pyr1
 position 340.0 -45.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name green_pyr2
 position 340.0 45.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name green_pyr3
 position 295.0 0.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name green_pyr4
 position 385.0 0.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 # pyramids under blue base
 pyramid
+name blue_pyr1
 position -45.0 -340.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name blue_pyr2
 position 45.0 -340.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name blue_pyr3
 position 0.0 -295.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name blue_pyr4
 position 0.0 -385.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 # pyramids under purple base
 pyramid
+name purple_pyr1
 position -45.0 340.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name purple_pyr2
 position 45.0 340.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name purple_pyr3
 position 0.0 295.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
 end
 pyramid
+name purple_pyr4
 position 0.0 385.0 0.0
 rotation 0.0
 size     7.5 7.5 26.0
