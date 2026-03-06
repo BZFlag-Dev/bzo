@@ -53,7 +53,7 @@ async function checkXRSupport() {
   }
 
   try {
-    // Try immersive-ar first (for Viture Luma Ultra on iOS)
+    // Try immersive-ar first (sky will be passthrough on AR devices)
     const arSupported = await navigator.xr.isSessionSupported('immersive-ar');
     if (arSupported) {
       debugLog('immersive-ar (AR) supported');
@@ -63,7 +63,7 @@ async function checkXRSupport() {
       return true;
     }
 
-    // Fall back to immersive-vr (for Quest 2, Valve Index, etc.)
+    // Fall back to immersive-vr
     const vrSupported = await navigator.xr.isSessionSupported('immersive-vr');
     if (vrSupported) {
       debugLog('immersive-vr (VR) supported');
