@@ -6,6 +6,7 @@
 
 - **Always prefer code reuse over duplication.** When implementing new features or refactoring, extract and reuse shared logic instead of copying code. This ensures maintainability and consistency across the project.
 - **Always remove trailing whitespace from edits.** Ensure no lines end with spaces or tabs to maintain clean code formatting.
+- **Do not put style information in `public/index.html`.** Keep presentation rules in `public/styles.css` and avoid inline `style` attributes or `<style>` blocks in HTML.
 
 ## Debugging Tips
 

@@ -10,16 +10,16 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div id="operatorOverlay" class="dialog" style="display:none">
+    <div id="operatorOverlay" class="dialog">
       <div class="dialogTitle">Operator Panel <button id="closeOperatorBtn" class="closeBtn">&times;</button></div>
       <div class="dialogContent">
-        <div id="motd" style="margin-bottom: 10px; font-size: 1.1em; color: #4CAF50;">MOTD: </div>
-        <div style="margin-bottom: 10px;">
+        <div id="motd">MOTD: </div>
+        <div class="operatorRow">
           <label for="mapList">Map:</label>
           <select id="mapList"></select>
           <button id="restartBtn" class="btn">Restart with Map</button>
         </div>
-        <div style="margin-bottom: 10px;">
+        <div class="operatorRow">
           <label for="uploadMap">Upload Map:</label>
           <input type="file" id="uploadMap" accept=".bzw,.txt">
           <button id="uploadBtn" class="btn">Upload</button>
@@ -27,10 +27,10 @@
       </div>
     </div>
   <div id="mainhud">
-    <div id="stats" style="display: flex; align-items: center; gap: 12px;">
-      <span id="playerName" style="cursor: pointer; color: #4CAF50; font-weight: bold; font-size: 20px;" title="Click to change name">Player</span>
-      <div id="hudButtons" style="display: inline-flex; gap: 6px; margin-left: 8px;">
-        <button id="settingsBtn" title="Settings"><span style="font-size:1.5em">&#9881;</span></button>
+    <div id="stats">
+      <span id="playerName" title="Click to change name">Player</span>
+      <div id="hudButtons">
+        <button id="settingsBtn" title="Settings"><span class="settingsIcon">&#9881;</span></button>
       </div>
     </div>
     <div id="scoreboard">
@@ -42,9 +42,9 @@
     </div>
   </div>
 
-  <div id="settingsHud" style="display:none">
+  <div id="settingsHud">
     <div class="settingsHudContent">
-      <div id="hudButtons" style="display: inline-flex; gap: 6px; margin-left: 8px;">
+      <div id="hudButtons">
         <button id="virtualControlsBtn" class="settingsHudBtn">Virtual Controls</button>
         <button id="mouseBtn" class="settingsHudBtn">Mouse Mode</button>
         <button id="fullscreenBtn" class="settingsHudBtn">Fullscreen</button>
@@ -74,17 +74,17 @@
     </div>
   </div>
 
-  <div id="debugHud" style="display: none;">
+  <div id="debugHud">
     <h3>Debug Info</h3>
     <div id="debugContent"></div>
   </div>
 
-  <div id="entryDialog" style="display: none;">
+  <div id="entryDialog">
     <h2>Battlezone Online</h2>
-    <div id="serverInfo" style="margin-bottom: 10px; font-size: 1.1em; color: #333;">
+    <div id="serverInfo">
       <span id="serverName">Server:</span><br>
       <span id="serverDescription"></span><br>
-      <span id="serverMotd" style="color: #4CAF50;"></span>
+      <span id="serverMotd"></span>
     </div>
     <input type="text" id="entryInput" maxlength="20" placeholder="Enter your name">
     <div class="entryDialogButtons">
@@ -93,7 +93,7 @@
     </div>
   </div>
 
-  <div id="helpPanel" style="display: none;">
+  <div id="helpPanel">
     <h1>Battlezone Online</h1>
     <div id="helpContent">
       <h2>HUD Buttons</h2>
@@ -168,7 +168,7 @@
   </script>
 </body>
 <!-- Mobile Controls Overlay (only visible on mobile) -->
-<div id="controlsOverlay" style="display:none;">
+<div id="controlsOverlay">
   <div class="mobile-joystick" id="joystick">
     <div class="joystick-knob" id="joystickKnob"></div>
   </div>

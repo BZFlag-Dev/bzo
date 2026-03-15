@@ -181,6 +181,7 @@ canvas {
   top: 0; left: 0; right: 0; bottom: 0;
   pointer-events: none;
   z-index: 9999;
+  display: none;
 }
 
 .mobile-joystick {
@@ -303,7 +304,19 @@ body {
   line-height: 1.6;
   display: flex;
   align-items: center;
+  gap: 12px;
   justify-content: space-between;
+}
+
+#playerName {
+  cursor: pointer;
+  color: #4CAF50;
+  font-weight: bold;
+  font-size: 20px;
+}
+
+.settingsIcon {
+  font-size: 1.5em;
 }
 
 #hudButtons {
@@ -393,6 +406,7 @@ body {
   border-radius: 15px;
   border: 2px solid #4CAF50;
   overflow-y: auto;
+  display: none;
 }
 
 #helpPanel h1 {
@@ -436,6 +450,17 @@ body {
   padding: 30px;
   border-radius: 15px;
   border: 2px solid #4CAF50;
+  display: none;
+}
+
+#motd {
+  margin-bottom: 10px;
+  font-size: 1.1em;
+  color: #4CAF50;
+}
+
+.operatorRow {
+  margin-bottom: 10px;
 }
 
 #operatorOverlay .dialogTitle {
@@ -499,6 +524,17 @@ body {
   padding: 30px;
   border-radius: 15px;
   border: 2px solid #4CAF50;
+  display: none;
+}
+
+#serverInfo {
+  margin-bottom: 10px;
+  font-size: 1.1em;
+  color: #333;
+}
+
+#serverMotd {
+  color: #4CAF50;
 }
 
 #entryDialog h2 {
@@ -588,6 +624,7 @@ body {
   overflow-x: auto;
   max-height: 90vh;
   overflow-y: auto;
+  display: none;
 }
 
 @media (max-width: 600px) {
@@ -753,9 +790,9 @@ canvas {
 @media (max-width: 600px) {
   #radar {
     width: 32vw;
-    height: 32vw;
+    height: 32vh;
     max-width: calc(100vw - 8vw);
-    max-height: calc(100vw - 8vw);
+    max-height: calc(100vh - 8vh);
     right: 2vw;
     min-width: 40px;
     min-height: 40px;
@@ -773,9 +810,9 @@ canvas {
   z-index: 1000;
   box-shadow: 0 0.5vw 2vw #0008;
   min-width: 40vw;
-  min-height: 20vw;
+  min-height: 20vh;
   width: 80vw;
-  height: 40vw;
+  height: 40vh;
   max-width: 95vw;
   max-height: 80vh;
   text-align: center;
@@ -790,9 +827,9 @@ canvas {
 @media (orientation: portrait) {
   #settingsHud {
     width: 90vw;
-    height: 35vw;
+    height: 70vh;
     min-width: 60vw;
-    min-height: 20vw;
+    min-height: 20vh;
     max-width: 98vw;
     max-height: 60vh;
     flex-direction: row;
