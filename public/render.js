@@ -54,8 +54,19 @@ class RenderManager {
         this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
         this.ambientLight.color.set(0x828293);
-        // Enable sun shadow only if sun is above horizon
+        // Sun casts shadows only during day; moon takes over at night
         this.sunLight.castShadow = sunUp;
+      }
+      // Update moon light to track the moon mesh position
+      if (this.moonLight) {
+        this.moonLight.position.set(moonX, moonY, moonZ);
+        this.moonLight.target.position.set(0, 0, 0);
+        this.worldGroup.add(this.moonLight.target);
+        const moonUp = moonY > 0;
+        this.moonLight.castShadow = moonUp;
+        this.moonLight.intensity = moonUp ? 0.3 : 0.0;
+      }
+      if (this.sunLight) {
 
         // Sun color: add a subtle red-orange tint at dawn/dusk
         // Day: #fffbe6 (warm white), Night: #23264a, Dawn/Dusk: #ffb366 (orange tint)
