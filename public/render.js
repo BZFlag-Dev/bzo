@@ -50,7 +50,7 @@ class RenderManager {
         // Lighting intensity
         const sunUp = sunY > 0;
         const sunIntensity = sunUp ? 0.7 : 0.10;
-        const ambientIntensity = sunUp ? 1.00 : 0.50;
+        const ambientIntensity = sunUp ? 1.50 : 0.80;
         this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
         this.ambientLight.color.set(0x828293);
@@ -207,7 +207,7 @@ class RenderManager {
   _initDynamicLights() {
     if (!this.scene) return;
     // Ambient, sun, and moon light will be updated dynamically
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.3); // Start dimmer
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Brighter baseline for cartoon-like visibility
     this.worldGroup.add(this.ambientLight);
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
     this.sunLight.castShadow = true;
