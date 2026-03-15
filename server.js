@@ -73,15 +73,15 @@ const wss = new WebSocketServer({ server });
 // Game constants
 const GAME_CONFIG = {
   MAP_SIZE: 400,
-  TANK_SPEED: 10, // units per second
-  TANK_ROTATION_SPEED: 2, // radians per second
-  SHOT_SPEED: 30,
+  TANK_SPEED: 12.5, // BZ-like default at this world scale (units per second)
+  TANK_ROTATION_SPEED: 1.57, // BZ-like default at this world scale (radians per second)
+  SHOT_SPEED: 50, // BZ-like default at this world scale (units per second)
   SHOT_COOLDOWN: 1000, // ms
-  SHOT_DISTANCE: 50, // Max distance a shot can travel
+  SHOT_DISTANCE: 175, // Derived from default shot duration (3.5s) at SHOT_SPEED
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
   SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
   PAUSE_COUNTDOWN: 2000, // ms
-  JUMP_VELOCITY: 30, // Initial upward velocity
+  JUMP_VELOCITY: 22, // HiX-reachable jump baseline with current gravity
   GRAVITY: 30, // Gravity acceleration (units per second squared)
   JUMP_COOLDOWN: 500, // ms between jumps
 };
@@ -109,7 +109,42 @@ const ANTICHEAT_CONFIG = {
   linearDriftThresholdVelocityChanged: serverConfig.antiCheat?.linearDriftThresholdVelocityChanged || 20.0,
   angularDriftThreshold: serverConfig.antiCheat?.angularDriftThreshold || 0.5,
 };
+
+// Optional gameplay overrides from server-config.json
+const configTankSpeed = Number(serverConfig.tankSpeed);
+if (Number.isFinite(configTankSpeed) && configTankSpeed > 0) {
+  GAME_CONFIG.TANK_SPEED = configTankSpeed;
+}
+
+const configTankRotationSpeed = Number(serverConfig.tankRotationSpeed);
+if (Number.isFinite(configTankRotationSpeed) && configTankRotationSpeed > 0) {
+  GAME_CONFIG.TANK_ROTATION_SPEED = configTankRotationSpeed;
+}
+
+const configJumpVelocity = Number(serverConfig.jumpVelocity);
+if (Number.isFinite(configJumpVelocity) && configJumpVelocity >= 0) {
+  GAME_CONFIG.JUMP_VELOCITY = configJumpVelocity;
+}
+
+const configShotSpeed = Number(serverConfig.shotSpeed);
+if (Number.isFinite(configShotSpeed) && configShotSpeed > 0) {
+  GAME_CONFIG.SHOT_SPEED = configShotSpeed;
+}
+
+const configShotDuration = Number(serverConfig.shotDuration);
+if (Number.isFinite(configShotDuration) && configShotDuration > 0) {
+  GAME_CONFIG.SHOT_DISTANCE = GAME_CONFIG.SHOT_SPEED * configShotDuration;
+}
+
+const configShotDistance = Number(serverConfig.shotDistance);
+if (Number.isFinite(configShotDistance) && configShotDistance > 0) {
+  GAME_CONFIG.SHOT_DISTANCE = configShotDistance;
+}
+
 log(`Anti-cheat mode: ${ANTICHEAT_CONFIG.mode}`);
+log(
+  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
+);
 if (MAP_SOURCE !== 'random') {
   mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
   if (!fs.existsSync(mapPath)) {
@@ -173,7 +208,7 @@ function parseBZWMap(filename) {
       current.z = parseFloat(y) * 0.5; // BZFlag Y -> our Z
       current.baseY = (parseFloat(z) || 0) * 0.5;
     } else if (current && line.startsWith('size')) {
-      // size w d h (scale w and d by 0.5)
+      // size w d h (BZFlag counts center to edge so this effectively scales by 0.5)
       const [, w, d, h] = line.split(/\s+/);
       const rawW = parseFloat(w);
       const rawD = parseFloat(d);

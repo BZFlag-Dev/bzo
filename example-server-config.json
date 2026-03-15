@@ -5,6 +5,12 @@
   "motd": "Welcome to the test server!",
   "maxPlayers": 16,
   "port": 3000,
+  "tankSpeed": 12.5,
+  "tankRotationSpeed": 1.57,
+  "jumpVelocity": 22,
+  "shotSpeed": 50,
+  "shotDuration": 3.5,
+  "shotDistance": 175,
   "antiCheat": {
     "mode": "strict",
     "linearDriftThreshold": 3.0,
