@@ -6,10 +6,6 @@
 html, body {
   margin: 0;
   padding: 0;
-  padding-left: max(0px, env(safe-area-inset-left));
-  padding-right: max(0px, env(safe-area-inset-right));
-  padding-top: max(0px, env(safe-area-inset-top));
-  padding-bottom: max(0px, env(safe-area-inset-bottom));
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -91,7 +87,7 @@ canvas {
 #chatWindow {
   position: fixed;
   left: 50%;
-  bottom: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
   width: 95vw;
   max-height: 33vh;
@@ -186,7 +182,7 @@ canvas {
 
 .mobile-joystick {
   position: absolute;
-  left: 2vw;
+  left: max(2vw, env(safe-area-inset-left));
   bottom: 10vh;
   width: 120px;
   height: 120px;
@@ -210,7 +206,7 @@ canvas {
 
 .mobile-btn {
   position: absolute;
-  right: 2vw;
+  right: max(2vw, env(safe-area-inset-right));
   width: 80px;
   height: 80px;
   background: rgba(76,175,80,0.85);
@@ -234,8 +230,8 @@ canvas {
   transition: filter 0.1s, transform 0.1s, opacity 0.1s;
 }
 
-#jumpBtn { bottom: 25vh; }
-#fireBtn { bottom: 2vh; background: rgba(244,67,54,0.85); }
+#jumpBtn { bottom: calc(max(2vw, env(safe-area-inset-bottom)) + 80px + 10px); }
+#fireBtn { bottom: max(2vw, env(safe-area-inset-bottom)); background: rgba(244,67,54,0.85); }
 
 @media (min-width: 900px) {
   #controlsOverlay { display: none; }
@@ -275,8 +271,8 @@ body {
 
 #mainhud {
   position: fixed;
-  top: 10px;
-  left: 10px;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
   padding: 1vw;
   border-radius: 10px;
   box-sizing: border-box;
@@ -611,8 +607,8 @@ body {
 
 #debugHud {
   position: fixed;
-  bottom: 10px;
-  right: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  right: max(10px, env(safe-area-inset-right));
   z-index: 100;
   background: var(--color-panel-bg);
   padding: 15px;
@@ -768,8 +764,8 @@ canvas {
 
 #radar {
   position: fixed;
-  top: 10px;
-  right: 10px;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
   z-index: 120;
   border: none;
   border-radius: 50%;
@@ -793,7 +789,7 @@ canvas {
     height: 32vh;
     max-width: calc(100vw - 8vw);
     max-height: calc(100vh - 8vh);
-    right: 2vw;
+    right: max(2vw, env(safe-area-inset-right));
     min-width: 40px;
     min-height: 40px;
   }
