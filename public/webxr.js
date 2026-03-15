@@ -53,17 +53,7 @@ async function checkXRSupport() {
   }
 
   try {
-    // Try immersive-ar first (sky will be passthrough on AR devices)
-    const arSupported = await navigator.xr.isSessionSupported('immersive-ar');
-    if (arSupported) {
-      debugLog('immersive-ar (AR) supported');
-      xrMode = 'immersive-ar';
-      xrSupported = true;
-      xrState.isSupported = true;
-      return 'ar';
-    }
-
-    // Fall back to immersive-vr
+    // Try immersive-vr
     const vrSupported = await navigator.xr.isSessionSupported('immersive-vr');
     if (vrSupported) {
       debugLog('immersive-vr (VR) supported');
@@ -71,6 +61,16 @@ async function checkXRSupport() {
       xrSupported = true;
       xrState.isSupported = true;
       return 'vr';
+    }
+
+    // Fall back to immersive-ar
+    const arSupported = await navigator.xr.isSessionSupported('immersive-ar');
+    if (arSupported) {
+      debugLog('immersive-ar (AR) supported');
+      xrMode = 'immersive-ar';
+      xrSupported = true;
+      xrState.isSupported = true;
+      return 'ar';
     }
 
     debugLog('Neither immersive-ar nor immersive-vr supported');
