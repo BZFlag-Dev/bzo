@@ -659,6 +659,7 @@ export function toggleVirtualControls(forceState) {
   const next = typeof forceState === 'boolean' ? forceState : !current;
   hudContext.setVirtualControlsEnabled(next);
   domRefs.controlsOverlay.style.display = next ? 'block' : 'none';
+  document.body.classList.toggle('virtual-controls-active', next);
   updateVirtualControlsBtn();
   hudContext.showMessage(`Virtual Controls: ${next ? 'Enabled' : 'Disabled'}`);
 }

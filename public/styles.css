@@ -141,6 +141,15 @@ canvas {
   max-width: 160px;
 }
 /* Responsive chat area for small screens */
+@media (orientation: landscape) and (min-width: 801px) {
+  body.virtual-controls-active #chatWindow {
+    left: calc(max(2vw, env(safe-area-inset-left)) + 120px + 10px);
+    right: calc(max(2vw, env(safe-area-inset-right)) + 80px + 10px);
+    width: auto;
+    transform: none;
+  }
+}
+
 @media (max-width: 800px) {
   #chatWindow {
     width: 98vw;
@@ -183,7 +192,7 @@ canvas {
 .mobile-joystick {
   position: absolute;
   left: max(2vw, env(safe-area-inset-left));
-  bottom: 10vh;
+  bottom: 5vh;
   width: 120px;
   height: 120px;
   background: rgba(60,60,60,0.18);
