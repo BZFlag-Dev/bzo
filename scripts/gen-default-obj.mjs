@@ -218,6 +218,7 @@ const wheelCenterOffset = TARGET_HALF_MODEL_WIDTH - (WHEEL_THICKNESS / 2);
 const wheelCenterZStart = treadMiddleLength / 2;
 const wheelCenterZStep = treadMiddleLength / 3;
 const CAP_MATS = ['tread_side', 'tread_cap', 'tread_cap'];
+const WHEEL_MATS = ['tread_side', 'tread_cap', 'tread_cap'];
 const BOX_MATS = ['bm0', 'bm1', 'bm2', 'bm3', 'bm4', 'bm5'];
 
 const builder = new OBJBuilder();
@@ -269,12 +270,12 @@ for (let i = 0; i < wheelZ.length; i += 1) {
     x: -wheelCenterOffset,
     y: 0.5,
     z: wheelZ[i],
-  }));
+  }), WHEEL_MATS);
   builder.addObject(`rightWheel${i + 1}`, transformedGeometry(makeWheelGeometry(), {
     x: wheelCenterOffset,
     y: 0.5,
     z: wheelZ[i],
-  }));
+  }), WHEEL_MATS);
 }
 
 const objText = builder.build();

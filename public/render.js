@@ -1123,6 +1123,8 @@ class RenderManager {
     tankGroup.userData.rightTreadTextures = [];
     tankGroup.userData.leftWheelTextures = [];
     tankGroup.userData.rightWheelTextures = [];
+    tankGroup.userData.leftWheelSideTextures = [];
+    tankGroup.userData.rightWheelSideTextures = [];
 
     const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
     const treadCapMatSide = new THREE.MeshLambertMaterial({ map: treadCapTextureSide });
@@ -1222,6 +1224,8 @@ class RenderManager {
       wheelFaceTexture.rotation = (index * 0.17) * Math.PI * 2;
       wheelFaceTexture.center.set(0.5, 0.5);
       wheelFaceTexture.needsUpdate = true;
+      wheelSideTexture.offset.x = index * 0.17;
+      wheelSideTexture.needsUpdate = true;
       const wheel = this._cloneTemplateMesh(templateWheel, [
         new THREE.MeshLambertMaterial({ map: wheelSideTexture }),
         new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
@@ -1230,6 +1234,7 @@ class RenderManager {
       tankGroup.add(wheel);
       tankGroup.userData.leftWheels.push(wheel);
       tankGroup.userData.leftWheelTextures.push(wheelFaceTexture);
+      tankGroup.userData.leftWheelSideTextures.push(wheelSideTexture);
     });
     rightWheelParts.forEach((templateWheel, index) => {
       const wheelSideTexture = this._createWheelTexture();
@@ -1237,6 +1242,8 @@ class RenderManager {
       wheelFaceTexture.rotation = (index * 0.17) * Math.PI * 2;
       wheelFaceTexture.center.set(0.5, 0.5);
       wheelFaceTexture.needsUpdate = true;
+      wheelSideTexture.offset.x = index * 0.17;
+      wheelSideTexture.needsUpdate = true;
       const wheel = this._cloneTemplateMesh(templateWheel, [
         new THREE.MeshLambertMaterial({ map: wheelSideTexture }),
         new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
@@ -1245,6 +1252,7 @@ class RenderManager {
       tankGroup.add(wheel);
       tankGroup.userData.rightWheels.push(wheel);
       tankGroup.userData.rightWheelTextures.push(wheelFaceTexture);
+      tankGroup.userData.rightWheelSideTextures.push(wheelSideTexture);
     });
 
     const sampleWheel = tankGroup.userData.leftWheels[0] || tankGroup.userData.rightWheels[0];
@@ -2148,16 +2156,27 @@ class RenderManager {
 
       const wheelRadius = tank.userData.wheelRadius || 0.42;
       if (wheelRadius > 0) {
-        const leftWheelAngleDelta = -leftDistance / wheelRadius;
+        const leftWheelAngleDelta = leftDistance / wheelRadius;
         const rightWheelAngleDelta = -rightDistance / wheelRadius;
+        const wheelSideOffsetScale = 1 / (Math.PI * 2 * wheelRadius);
         if (tank.userData.leftWheelTextures) {
           tank.userData.leftWheelTextures.forEach((texture) => {
             texture.rotation += leftWheelAngleDelta;
           });
         }
+        if (tank.userData.leftWheelSideTextures) {
+          tank.userData.leftWheelSideTextures.forEach((texture) => {
+            texture.offset.x -= leftDistance * wheelSideOffsetScale;
+          });
+        }
         if (tank.userData.rightWheelTextures) {
           tank.userData.rightWheelTextures.forEach((texture) => {
             texture.rotation += rightWheelAngleDelta;
+          });
+        }
+        if (tank.userData.rightWheelSideTextures) {
+          tank.userData.rightWheelSideTextures.forEach((texture) => {
+            texture.offset.x -= rightDistance * wheelSideOffsetScale;
           });
         }
       }
