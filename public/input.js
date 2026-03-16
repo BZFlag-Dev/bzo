@@ -290,9 +290,23 @@ export function setupInputHandlers() {
 
   // Keyboard
   document.addEventListener('keydown', (e) => {
+    const activeElement = document.activeElement;
+    const isEditableElement = activeElement && (
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      activeElement.isContentEditable
+    );
+    if (isEditableElement) return;
     keys[e.code] = true;
   });
   document.addEventListener('keyup', (e) => {
+    const activeElement = document.activeElement;
+    const isEditableElement = activeElement && (
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      activeElement.isContentEditable
+    );
+    if (isEditableElement) return;
     keys[e.code] = false;
   });
 }

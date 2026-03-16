@@ -61,6 +61,42 @@ app.use(express.static('public'));
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
+
+function getAvailableTankModels() {
+  const objDir = path.join(__dirname, 'public', 'obj');
+  try {
+    return fs.readdirSync(objDir)
+      .filter((fileName) => fileName.toLowerCase().endsWith('.obj'))
+      .map((fileName) => {
+        const id = fileName.slice(0, -4).toLowerCase();
+        const label = id
+          .split(/[-_\s]+/)
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(' ');
+        return {
+          id,
+          path: `/obj/${fileName}`,
+          label: label || id,
+        };
+      })
+      .sort((left, right) => left.id.localeCompare(right.id));
+  } catch (error) {
+    logError('Failed to list tank models:', error.message || error);
+    return [];
+  }
+}
+
+function isAllowedTankModel(modelId) {
+  if (typeof modelId !== 'string') return false;
+  const normalized = modelId.trim().toLowerCase();
+  if (!/^[a-z0-9_-]+$/.test(normalized)) return false;
+  return getAvailableTankModels().some((model) => model.id === normalized);
+}
+
+app.get('/api/tank-models', (req, res) => {
+  res.json({ models: getAvailableTankModels() });
+});
 // --- Admin API Endpoints ---
 
 const server = app.listen(PORT, '::', () => {
@@ -420,6 +456,7 @@ class Player {
     this.connectDate = new Date();
     // Assign a random color for the tank (as a hex int)
     this.color = Player.pickRandomColor();
+    this.tankModel = 'default';
 
     // Extrapolation state
     this.forwardSpeed = 0;
@@ -484,6 +521,7 @@ class Player {
       verticalVelocity: this.verticalVelocity,
       connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
       color: this.color,
+      tankModel: this.tankModel,
     };
   }
 
@@ -1338,7 +1376,13 @@ wss.on('connection', (ws, req) => {
 
         case 'joinGame':
           let joinName = nameCheck(message.name, player.id);
+          const requestedTankModel = typeof message.tankModel === 'string'
+            ? message.tankModel.toLowerCase()
+            : 'default';
           player.name = joinName;
+          player.tankModel = isAllowedTankModel(requestedTankModel)
+            ? requestedTankModel
+            : 'default';
           player.health = 100;
           // spawn at valid position
           const spawnPos = findValidSpawnPosition();

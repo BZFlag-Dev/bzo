@@ -40,6 +40,8 @@ import {
   updateDegreeBar
 } from './hud.js';
 import { renderManager } from './render.js';
+import * as THREE from 'three';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { initXR, toggleXRSession, isXRSupported, updateXRControllerInput, setNormalAnimationLoop, isXREnabled, setSendToServer, debugLog } from './webxr.js';
 
 // FPS
@@ -92,10 +94,15 @@ function toggleEntryDialog(name = '') {
   if (!entryDialog || !entryInput) return;
   const isentryDialogOpen = entryDialog.style.display !== 'block';
   entryDialog.style.display = isentryDialogOpen ? 'block' : 'none';
+  if (isentryDialogOpen) {
+    startTankPreviewAnimation();
+  } else {
+    stopTankPreviewAnimation();
+  }
   isPaused = isentryDialogOpen;
   if (isentryDialogOpen) {
     if (name === '') name = myPlayerName;
-    lastCameraMode = cameraMode;
+    entryDialogReturnCameraMode = cameraMode;
     cameraMode = 'overview';
     entryInput.value = name;
     entryInput.focus();
@@ -110,7 +117,7 @@ function toggleEntryDialog(name = '') {
       }
     }
   } else {
-    cameraMode = 'first-person';
+    cameraMode = entryDialogReturnCameraMode === 'overview' ? 'first-person' : entryDialogReturnCameraMode;
   }
 }
 
@@ -121,6 +128,7 @@ let OBSTACLES = [];
 // Camera mode
 let cameraMode = 'first-person'; // 'first-person', 'third-person', or 'overview'
 let lastCameraMode = 'first-person';
+let entryDialogReturnCameraMode = 'first-person';
 
 // Pause state
 let isPaused = false;
@@ -132,6 +140,240 @@ let mouseControlEnabled = false;
 let hasInteracted = false;
 let mouseX = 0; // Percentage from center (-1 to 1)
 let mouseY = 0; // Percentage from center (-1 to 1)
+
+let TANK_MODELS = [
+  { id: 'default', path: '/obj/default.obj' },
+  { id: 'simple', path: '/obj/simple.obj' },
+  { id: 'bzflag-tank', path: '/obj/bzflag-tank.obj', label: 'Bzflag Tank' },
+];
+let selectedTankModelId = localStorage.getItem('tankModelId') || 'default';
+let tankPreviewCard = null;
+const tankPreviewModelCache = new Map();
+let tankPreviewLoader = null;
+let tankPreviewAnimating = false;
+let tankPreviewRafId = null;
+
+function getDefaultTankModel() {
+  if (!Array.isArray(TANK_MODELS) || TANK_MODELS.length === 0) {
+    return { id: 'default', path: '/obj/default.obj', label: 'Default' };
+  }
+  return TANK_MODELS.find((model) => model.id === 'default') || TANK_MODELS[0];
+}
+
+function getTankModelById(modelId) {
+  const normalized = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';
+  return TANK_MODELS.find((model) => model.id === normalized) || null;
+}
+
+function getSelectedTankModelPath() {
+  return getTankModelPathById(selectedTankModelId);
+}
+
+function normalizeTankModelId(modelId) {
+  let normalized = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';
+  if (normalized === 'bzflag') normalized = 'bzflag-tank';
+  const selected = getTankModelById(normalized);
+  return selected ? selected.id : getDefaultTankModel().id;
+}
+
+function getTankModelPathById(modelId) {
+  const normalizedId = normalizeTankModelId(modelId);
+  const selected = getTankModelById(normalizedId);
+  return selected ? selected.path : getDefaultTankModel().path;
+}
+
+function getTankModelIdFromPlayer(player) {
+  return normalizeTankModelId(player && player.tankModel);
+}
+
+function updateSelectedTankOptionUI() {
+  const currentModel = getTankModelById(selectedTankModelId) || getDefaultTankModel();
+  const optionLabel = document.getElementById('tankOptionLabel');
+  if (optionLabel) {
+    optionLabel.textContent = currentModel.label || currentModel.id;
+  }
+
+  const currentOption = document.getElementById('tankCurrentOption');
+  if (currentOption) {
+    currentOption.classList.add('selected');
+    currentOption.dataset.modelId = currentModel.id;
+  }
+
+  const disableArrows = TANK_MODELS.length <= 1;
+  const prevBtn = document.getElementById('tankPrevBtn');
+  const nextBtn = document.getElementById('tankNextBtn');
+  if (prevBtn) prevBtn.disabled = disableArrows;
+  if (nextBtn) nextBtn.disabled = disableArrows;
+}
+
+function setSelectedTankModel(modelId, { persist = true, applyToRender = true } = {}) {
+  const selectedId = normalizeTankModelId(modelId);
+  const selected = getTankModelById(selectedId);
+  if (!selected) return;
+  selectedTankModelId = selected.id;
+  if (persist) {
+    localStorage.setItem('tankModelId', selectedTankModelId);
+  }
+  if (applyToRender) {
+    renderManager.setTankModel(selected.path);
+  }
+  if (tankPreviewCard) {
+    loadTankPreviewModel(selected.path);
+  }
+  updateSelectedTankOptionUI();
+}
+
+function cycleTankModel(step) {
+  if (!Array.isArray(TANK_MODELS) || TANK_MODELS.length === 0) return;
+  const currentIndex = TANK_MODELS.findIndex((model) => model.id === selectedTankModelId);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + step + TANK_MODELS.length) % TANK_MODELS.length;
+  setSelectedTankModel(TANK_MODELS[nextIndex].id);
+}
+
+function loadTankPreviewModel(modelPath) {
+  if (!tankPreviewCard || !modelPath) return;
+
+  const { scene } = tankPreviewCard;
+  tankPreviewCard.requestedModelPath = modelPath;
+
+  const applyLoadedModel = (baseObject) => {
+    if (!tankPreviewCard || tankPreviewCard.requestedModelPath !== modelPath) return;
+
+    if (tankPreviewCard.modelRoot) {
+      scene.remove(tankPreviewCard.modelRoot);
+      tankPreviewCard.modelRoot = null;
+    }
+
+    const source = baseObject.clone(true);
+    const root = new THREE.Group();
+    root.add(source);
+
+    const bounds = new THREE.Box3().setFromObject(root);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const maxAxis = Math.max(size.x, size.y, size.z) || 1;
+    const scale = 2.7 / maxAxis;
+    root.scale.setScalar(scale);
+    root.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+
+    scene.add(root);
+    tankPreviewCard.modelRoot = root;
+  };
+
+  const cached = tankPreviewModelCache.get(modelPath);
+  if (cached) {
+    applyLoadedModel(cached);
+    return;
+  }
+
+  if (!tankPreviewLoader) {
+    tankPreviewLoader = new OBJLoader();
+  }
+
+  tankPreviewLoader.load(modelPath, (obj) => {
+    tankPreviewModelCache.set(modelPath, obj);
+    applyLoadedModel(obj);
+  });
+}
+
+async function fetchTankModels() {
+  try {
+    const response = await fetch('/api/tank-models', { cache: 'no-store' });
+    if (!response.ok) return;
+    const payload = await response.json();
+    if (!payload || !Array.isArray(payload.models)) return;
+
+    const models = payload.models
+      .filter((model) => model && typeof model.id === 'string' && typeof model.path === 'string')
+      .map((model) => ({
+        id: model.id.trim().toLowerCase(),
+        path: model.path,
+        label: model.label || model.id,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id));
+
+    if (models.length > 0) {
+      TANK_MODELS = models;
+      if (renderManager && typeof renderManager.preloadTankModel === 'function') {
+        TANK_MODELS.forEach((model) => {
+          if (model && model.path) {
+            renderManager.preloadTankModel(model.path);
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to fetch tank model list:', error);
+  }
+}
+
+function animateTankPreviews() {
+  if (!tankPreviewAnimating) return;
+  if (tankPreviewCard) {
+    if (tankPreviewCard.modelRoot) {
+      tankPreviewCard.modelRoot.rotation.y += 0.015;
+    }
+    tankPreviewCard.renderer.render(tankPreviewCard.scene, tankPreviewCard.camera);
+  }
+  tankPreviewRafId = requestAnimationFrame(animateTankPreviews);
+}
+
+function startTankPreviewAnimation() {
+  if (tankPreviewAnimating) return;
+  tankPreviewAnimating = true;
+  animateTankPreviews();
+}
+
+function stopTankPreviewAnimation() {
+  tankPreviewAnimating = false;
+  if (tankPreviewRafId !== null) {
+    cancelAnimationFrame(tankPreviewRafId);
+    tankPreviewRafId = null;
+  }
+}
+
+async function initTankSelector() {
+  const canvas = document.getElementById('tankPreviewCanvas');
+  if (!canvas) return;
+
+  const width = Math.max(120, Math.floor(canvas.clientWidth || 120));
+  const height = Math.max(80, Math.floor(canvas.clientHeight || 80));
+
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setSize(width, height, false);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
+  camera.position.set(0, 2.4, 7.2);
+  camera.lookAt(0, 0.8, 0);
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+  scene.add(ambient);
+  const keyLight = new THREE.DirectionalLight(0xffffff, 0.7);
+  keyLight.position.set(3, 5, 4);
+  scene.add(keyLight);
+
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(2.3, 20),
+    new THREE.MeshBasicMaterial({ color: 0x123018, transparent: true, opacity: 0.35 }),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.05;
+  scene.add(floor);
+
+  tankPreviewCard = { renderer, scene, camera, modelRoot: null, requestedModelPath: null };
+
+  const prevBtn = document.getElementById('tankPrevBtn');
+  const nextBtn = document.getElementById('tankNextBtn');
+  if (prevBtn) prevBtn.addEventListener('click', () => cycleTankModel(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => cycleTankModel(1));
+
+  await fetchTankModels();
+  selectedTankModelId = normalizeTankModelId(selectedTankModelId);
+  setSelectedTankModel(selectedTankModelId, { persist: true, applyToRender: true });
+}
 
 // Watch for mouseControlEnabled toggle to reset orientation center
 Object.defineProperty(window, 'mouseControlEnabled', {
@@ -542,6 +784,9 @@ function init() {
   scene = renderContext.scene;
   camera = renderContext.camera;
 
+  initTankSelector();
+  renderManager.setTankModel(getTankModelPathById(selectedTankModelId));
+
   // Radar map
   radarCanvas = document.getElementById('radar');
   radarCtx = radarCanvas.getContext('2d');
@@ -596,6 +841,7 @@ function init() {
       // Close name dialog if open
       if (isentryDialogOpen) {
         entryDialog.style.display = 'none';
+        stopTankPreviewAnimation();
         return;
       }
       // Close help dialog if open
@@ -703,6 +949,7 @@ function init() {
         type: 'joinGame',
         name: myPlayerName,
         isMobile,
+        tankModel: selectedTankModelId,
       });
       toggleEntryDialog();
     });
@@ -715,13 +962,14 @@ function init() {
         type: 'joinGame',
         name: myPlayerName,
         isMobile,
+        tankModel: selectedTankModelId,
       });
       toggleEntryDialog();
     });
 
     entryInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
-        entrykButton.click();
+        entryOkButton.click();
       } else if (e.key === 'Escape') {
         entryDefaultButton.click();
       }
@@ -872,6 +1120,7 @@ function handleServerMessage(message) {
           type: 'joinGame',
           name: myPlayerName,
           isMobile,
+          tankModel: selectedTankModelId,
         });
       } else {
         // Show name entry dialog
@@ -920,6 +1169,8 @@ function handleServerMessage(message) {
 
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
+        addPlayer(message.player);
+
         // This is our join confirmation, update our tank and finish join
         myPlayerName = message.player.name;
         playerX = message.player.x;
@@ -1133,11 +1384,24 @@ function handleServerMessage(message) {
 }
 
 function addPlayer(player) {
+  const playerTankModelId = getTankModelIdFromPlayer(player);
+  const playerTankModelPath = getTankModelPathById(playerTankModelId);
   let tank = tanks.get(player.id);
+
+  if (tank && tank.userData && tank.userData.tankModel !== playerTankModelId) {
+    if (tank.userData.ghostMesh) {
+      renderManager.getWorldGroup().remove(tank.userData.ghostMesh);
+      tank.userData.ghostMesh = null;
+    }
+    renderManager.getWorldGroup().remove(tank);
+    tanks.delete(player.id);
+    tank = null;
+  }
+
   if (!tank) {
     // Use player.color if present, else fallback to green
     const tankColor = (typeof player.color === 'number') ? player.color : 0x4caf50;
-    tank = renderManager.createTank(tankColor, player.name);
+    tank = renderManager.createTank(tankColor, player.name, playerTankModelPath);
     renderManager.getWorldGroup().add(tank);
     tanks.set(player.id, tank);
 
@@ -1155,6 +1419,7 @@ function addPlayer(player) {
   // Always update tank state
   tank.position.set(player.x, player.y, player.z);
   tank.rotation.y = player.rotation;
+  tank.userData.tankModel = playerTankModelId;
   tank.userData.playerState = player; // Store player state for scoreboard
   tank.userData.verticalVelocity = player.verticalVelocity;
   tank.visible = player.health > 0;

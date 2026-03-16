@@ -571,6 +571,79 @@ body {
   border-color: #66bb6a;
 }
 
+#tankSelector {
+  margin: 0 0 16px 0;
+}
+
+#tankSelectorTitle {
+  color: #4CAF50;
+  font-weight: bold;
+  margin: 0 0 8px 0;
+  text-align: center;
+}
+
+#tankSelectorCarousel {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+}
+
+.tankOption {
+  width: 140px;
+  border: 2px solid #4CAF50;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #4CAF50;
+  padding: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tankOption.selected {
+  border-color: #66bb6a;
+  background: rgba(76, 175, 80, 0.28);
+  box-shadow: 0 0 14px rgba(76, 175, 80, 0.4);
+}
+
+.tankArrowBtn {
+  width: 38px;
+  height: 38px;
+  border: 2px solid #4CAF50;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #4CAF50;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tankArrowBtn:hover {
+  border-color: #66bb6a;
+  background: rgba(76, 175, 80, 0.2);
+}
+
+.tankArrowBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tankPreviewCanvas {
+  width: 120px;
+  height: 80px;
+  display: block;
+  margin: 0 auto 6px auto;
+  border-radius: 6px;
+  background: radial-gradient(circle at 50% 65%, rgba(76, 175, 80, 0.2), rgba(0, 0, 0, 0.5));
+}
+
+.tankOptionLabel {
+  display: block;
+  text-align: center;
+  font-weight: bold;
+}
+
 .entryDialogButtons {
   display: flex;
   gap: 10px;

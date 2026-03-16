@@ -87,6 +87,17 @@
       <span id="serverMotd"></span>
     </div>
     <input type="text" id="entryInput" maxlength="20" placeholder="Enter your name">
+    <div id="tankSelector">
+      <div id="tankSelectorTitle">Choose Tank</div>
+      <div id="tankSelectorCarousel">
+        <button id="tankPrevBtn" class="tankArrowBtn" type="button" aria-label="Previous tank">◀</button>
+        <div class="tankOption" id="tankCurrentOption">
+          <canvas class="tankPreviewCanvas" id="tankPreviewCanvas"></canvas>
+          <span class="tankOptionLabel" id="tankOptionLabel">Default</span>
+        </div>
+        <button id="tankNextBtn" class="tankArrowBtn" type="button" aria-label="Next tank">▶</button>
+      </div>
+    </div>
     <div class="entryDialogButtons">
       <button id="entryOkButton">OK</button>
       <button id="entryDefaultButton">Default</button>

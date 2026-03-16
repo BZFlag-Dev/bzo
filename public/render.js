@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { AnaglyphEffect } from './anaglyph.js';
 import { xrState, debugLog } from './webxr.js';
 import {
@@ -146,6 +147,17 @@ class RenderManager {
 
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
+
+    // Tank geometry loaded from public/obj/simple.obj (keyed by object name)
+    this._tankGeoCache = null;
+    this._tankTemplate = null;
+    this._tankGeoCacheByPath = new Map();
+    this._tankTemplateByPath = new Map();
+    this._tankModelLoadsInFlight = new Set();
+    this._tankModelPath = '/obj/default.obj';
+    this._preloadTankModel('/obj/default.obj');
+    this._preloadTankModel('/obj/simple.obj');
+    this._preloadTankModel('/obj/bzflag-tank.obj');
   }
 
   init({ container = document.body } = {}) {
@@ -896,7 +908,186 @@ class RenderManager {
     return this.clouds;
   }
 
-  createTank(color = 0x4caf50, name = '') {
+  _preloadTankModel(modelPath = this._tankModelPath) {
+    const loadPath = modelPath || '/obj/default.obj';
+    if (this._tankTemplateByPath.has(loadPath) || this._tankModelLoadsInFlight.has(loadPath)) {
+      return;
+    }
+
+    const loader = new OBJLoader();
+    this._tankModelLoadsInFlight.add(loadPath);
+    const onLoad = (obj) => {
+      const cache = {};
+      obj.traverse((child) => {
+        if (child.isMesh) cache[child.name] = child.geometry;
+      });
+      this._tankTemplateByPath.set(loadPath, obj);
+      this._tankGeoCacheByPath.set(loadPath, cache);
+      if (loadPath === this._tankModelPath) {
+        this._tankTemplate = obj;
+        this._tankGeoCache = cache;
+      }
+      this._tankModelLoadsInFlight.delete(loadPath);
+    };
+
+    loader.load(loadPath, onLoad, undefined, () => {
+      this._tankModelLoadsInFlight.delete(loadPath);
+      if (loadPath !== '/obj/simple.obj') {
+        this._preloadTankModel('/obj/simple.obj');
+      }
+    });
+  }
+
+  setTankModel(modelPath = '/obj/default.obj') {
+    const normalizedPath = modelPath || '/obj/default.obj';
+    if (this._tankModelPath === normalizedPath && this._tankTemplateByPath.has(normalizedPath)) return;
+    this._tankModelPath = normalizedPath;
+    const template = this._tankTemplateByPath.get(normalizedPath) || null;
+    const cache = this._tankGeoCacheByPath.get(normalizedPath) || null;
+    this._tankTemplate = template;
+    this._tankGeoCache = cache;
+    this._preloadTankModel(normalizedPath);
+  }
+
+  preloadTankModel(modelPath) {
+    this._preloadTankModel(modelPath);
+  }
+
+  getTankModel() {
+    return this._tankModelPath;
+  }
+
+  _findTankTemplateMesh(name, modelPath = this._tankModelPath) {
+    const template = this._tankTemplateByPath.get(modelPath);
+    if (!template) return null;
+    let found = null;
+    template.traverse((child) => {
+      if (!found && child.isMesh && child.name === name) {
+        found = child;
+      }
+    });
+    return found;
+  }
+
+  _cloneTemplateMesh(templateMesh, material) {
+    let geometry = templateMesh.geometry;
+    let resolvedMaterial = material;
+    if (Array.isArray(material) && (!geometry.groups || geometry.groups.length === 0)) {
+      if (material.length >= 6) {
+        geometry = geometry.clone();
+        geometry.clearGroups();
+
+        const position = geometry.attributes.position;
+        const index = geometry.index ? geometry.index.array : null;
+        const triangleCount = index ? index.length / 3 : position.count / 3;
+
+        const getVertex = (vertexIndex, target) => {
+          target.set(
+            position.getX(vertexIndex),
+            position.getY(vertexIndex),
+            position.getZ(vertexIndex),
+          );
+          return target;
+        };
+
+        const a = new THREE.Vector3();
+        const b = new THREE.Vector3();
+        const c = new THREE.Vector3();
+        const ab = new THREE.Vector3();
+        const ac = new THREE.Vector3();
+        const normal = new THREE.Vector3();
+
+        for (let triangleIndex = 0; triangleIndex < triangleCount; triangleIndex += 1) {
+          const base = triangleIndex * 3;
+          const ia = index ? index[base] : base;
+          const ib = index ? index[base + 1] : base + 1;
+          const ic = index ? index[base + 2] : base + 2;
+
+          getVertex(ia, a);
+          getVertex(ib, b);
+          getVertex(ic, c);
+
+          ab.subVectors(b, a);
+          ac.subVectors(c, a);
+          normal.crossVectors(ab, ac).normalize();
+
+          let materialIndex = 0;
+          if (Math.abs(normal.y) >= Math.abs(normal.x) && Math.abs(normal.y) >= Math.abs(normal.z)) {
+            materialIndex = normal.y >= 0 ? 2 : 3;
+          }
+
+          geometry.addGroup(base, 3, materialIndex);
+        }
+      } else {
+        resolvedMaterial = material[0];
+      }
+    }
+    const mesh = new THREE.Mesh(geometry, resolvedMaterial);
+    mesh.name = templateMesh.name;
+    mesh.position.copy(templateMesh.position);
+    mesh.rotation.copy(templateMesh.rotation);
+    mesh.scale.copy(templateMesh.scale);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  _getTemplateMeshesByPrefix(prefix, modelPath = this._tankModelPath) {
+    const template = this._tankTemplateByPath.get(modelPath);
+    if (!template) return [];
+    const meshes = [];
+    template.traverse((child) => {
+      if (child.isMesh && child.name && child.name.startsWith(prefix)) {
+        meshes.push(child);
+      }
+    });
+    meshes.sort((a, b) => {
+      const ai = parseInt(a.name.slice(prefix.length), 10);
+      const bi = parseInt(b.name.slice(prefix.length), 10);
+      const aNum = Number.isFinite(ai) ? ai : 0;
+      const bNum = Number.isFinite(bi) ? bi : 0;
+      return aNum - bNum;
+    });
+    return meshes;
+  }
+
+  _createTankFromTemplate(color = 0x4caf50, name = '', modelPath = this._tankModelPath) {
+    const template = this._tankTemplateByPath.get(modelPath);
+    if (!template) {
+      this._preloadTankModel(modelPath);
+      return null;
+    }
+
+    const templateParts = {
+      body: this._findTankTemplateMesh('body', modelPath),
+      leftTreadMiddle: this._findTankTemplateMesh('leftTreadMiddle', modelPath)
+        || this._findTankTemplateMesh('leftTrack', modelPath)
+        || this._findTankTemplateMesh('ltread', modelPath),
+      leftTreadFrontCap: this._findTankTemplateMesh('leftTreadFrontCap', modelPath)
+        || this._findTankTemplateMesh('leftTrack', modelPath)
+        || this._findTankTemplateMesh('ltread', modelPath),
+      leftTreadRearCap: this._findTankTemplateMesh('leftTreadRearCap', modelPath)
+        || this._findTankTemplateMesh('leftTrack', modelPath)
+        || this._findTankTemplateMesh('ltread', modelPath),
+      rightTreadMiddle: this._findTankTemplateMesh('rightTreadMiddle', modelPath)
+        || this._findTankTemplateMesh('rightTrack', modelPath)
+        || this._findTankTemplateMesh('rtread', modelPath),
+      rightTreadFrontCap: this._findTankTemplateMesh('rightTreadFrontCap', modelPath)
+        || this._findTankTemplateMesh('rightTrack', modelPath)
+        || this._findTankTemplateMesh('rtread', modelPath),
+      rightTreadRearCap: this._findTankTemplateMesh('rightTreadRearCap', modelPath)
+        || this._findTankTemplateMesh('rightTrack', modelPath)
+        || this._findTankTemplateMesh('rtread', modelPath),
+      turret: this._findTankTemplateMesh('turret', modelPath),
+      barrel: this._findTankTemplateMesh('barrel', modelPath),
+    };
+    const leftWheelParts = this._getTemplateMeshesByPrefix('leftWheel', modelPath);
+    const rightWheelParts = this._getTemplateMeshesByPrefix('rightWheel', modelPath);
+
+    if (Object.values(templateParts).some((part) => !part)) {
+      return null;
+    }
+
     const tankGroup = new THREE.Group();
 
     if (name) {
@@ -915,7 +1106,7 @@ class RenderManager {
     treadTextureRotated.rotation = Math.PI / 2;
     treadTextureRotated.center.set(0.5, 0.5);
     treadTextureRotated.needsUpdate = true;
-    const treadCapTexture = this._createTreadCapTexture();
+    const treadCapTexture = this._createTreadCapTexture(color);
 
     const treadCapTextureSide = treadCapTexture.clone();
     treadCapTextureSide.repeat.set(3.0, 1.0);
@@ -923,7 +1114,215 @@ class RenderManager {
     treadCapTextureSide.wrapT = THREE.RepeatWrapping;
     treadCapTextureSide.needsUpdate = true;
 
-    const bodyGeometry = new THREE.BoxGeometry(3, 1, 4);
+    const bodyMaterial = new THREE.MeshLambertMaterial({ map: bodyTexture });
+    const body = this._cloneTemplateMesh(templateParts.body, bodyMaterial);
+    tankGroup.add(body);
+    tankGroup.userData.body = body;
+
+    tankGroup.userData.leftTreadTextures = [];
+    tankGroup.userData.rightTreadTextures = [];
+    tankGroup.userData.leftWheelTextures = [];
+    tankGroup.userData.rightWheelTextures = [];
+
+    const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
+    const treadCapMatSide = new THREE.MeshLambertMaterial({ map: treadCapTextureSide });
+
+    const leftTreadGroup = new THREE.Group();
+    const rightTreadGroup = new THREE.Group();
+
+    const leftTreadRotatedTex = treadTextureRotated.clone();
+    leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
+    leftTreadRotatedTex.wrapT = THREE.RepeatWrapping;
+    const leftTreadRotatedMat = new THREE.MeshLambertMaterial({ map: leftTreadRotatedTex });
+    const leftTreadMiddle = this._cloneTemplateMesh(templateParts.leftTreadMiddle, [
+      treadCapMatSide,
+      treadCapMatSide,
+      leftTreadRotatedMat,
+      leftTreadRotatedMat,
+      treadCapMatSide,
+      treadCapMatSide,
+    ]);
+    leftTreadGroup.add(leftTreadMiddle);
+    tankGroup.userData.leftTreadTextures.push(leftTreadRotatedTex);
+
+    const leftCapGroups = templateParts.leftTreadFrontCap.geometry.groups.length;
+    const leftTreadFrontTex = treadTexture.clone();
+    leftTreadFrontTex.wrapS = THREE.RepeatWrapping;
+    leftTreadFrontTex.wrapT = THREE.RepeatWrapping;
+    const leftTreadFrontMat = new THREE.MeshLambertMaterial({ map: leftTreadFrontTex });
+    const leftTreadFront = this._cloneTemplateMesh(
+      templateParts.leftTreadFrontCap,
+      leftCapGroups === 2
+        ? [leftTreadFrontMat, treadCapMat]
+        : [leftTreadFrontMat, treadCapMat, treadCapMat],
+    );
+    leftTreadGroup.add(leftTreadFront);
+    tankGroup.userData.leftTreadTextures.push(leftTreadFrontTex);
+
+    const leftTreadRearTex = treadTexture.clone();
+    leftTreadRearTex.wrapS = THREE.RepeatWrapping;
+    leftTreadRearTex.wrapT = THREE.RepeatWrapping;
+    const leftTreadRearMat = new THREE.MeshLambertMaterial({ map: leftTreadRearTex });
+    const leftTreadRear = this._cloneTemplateMesh(
+      templateParts.leftTreadRearCap,
+      leftCapGroups === 2
+        ? [leftTreadRearMat, treadCapMat]
+        : [leftTreadRearMat, treadCapMat, treadCapMat],
+    );
+    leftTreadGroup.add(leftTreadRear);
+    tankGroup.userData.leftTreadTextures.push(leftTreadRearTex);
+
+    const rightTreadRotatedTex = treadTextureRotated.clone();
+    rightTreadRotatedTex.wrapS = THREE.RepeatWrapping;
+    rightTreadRotatedTex.wrapT = THREE.RepeatWrapping;
+    const rightTreadRotatedMat = new THREE.MeshLambertMaterial({ map: rightTreadRotatedTex });
+    const rightTreadMiddle = this._cloneTemplateMesh(templateParts.rightTreadMiddle, [
+      treadCapMatSide,
+      treadCapMatSide,
+      rightTreadRotatedMat,
+      rightTreadRotatedMat,
+      treadCapMatSide,
+      treadCapMatSide,
+    ]);
+    rightTreadGroup.add(rightTreadMiddle);
+    tankGroup.userData.rightTreadTextures.push(rightTreadRotatedTex);
+
+    const rightCapGroups = templateParts.rightTreadFrontCap.geometry.groups.length;
+    const rightTreadFrontTex = treadTexture.clone();
+    rightTreadFrontTex.wrapS = THREE.RepeatWrapping;
+    rightTreadFrontTex.wrapT = THREE.RepeatWrapping;
+    const rightTreadFrontMat = new THREE.MeshLambertMaterial({ map: rightTreadFrontTex });
+    const rightTreadFront = this._cloneTemplateMesh(
+      templateParts.rightTreadFrontCap,
+      rightCapGroups === 2
+        ? [rightTreadFrontMat, treadCapMat]
+        : [rightTreadFrontMat, treadCapMat, treadCapMat],
+    );
+    rightTreadGroup.add(rightTreadFront);
+    tankGroup.userData.rightTreadTextures.push(rightTreadFrontTex);
+
+    const rightTreadRearTex = treadTexture.clone();
+    rightTreadRearTex.wrapS = THREE.RepeatWrapping;
+    rightTreadRearTex.wrapT = THREE.RepeatWrapping;
+    const rightTreadRearMat = new THREE.MeshLambertMaterial({ map: rightTreadRearTex });
+    const rightTreadRear = this._cloneTemplateMesh(
+      templateParts.rightTreadRearCap,
+      rightCapGroups === 2
+        ? [rightTreadRearMat, treadCapMat]
+        : [rightTreadRearMat, treadCapMat, treadCapMat],
+    );
+    rightTreadGroup.add(rightTreadRear);
+    tankGroup.userData.rightTreadTextures.push(rightTreadRearTex);
+
+    tankGroup.userData.leftWheels = [];
+    tankGroup.userData.rightWheels = [];
+    leftWheelParts.forEach((templateWheel, index) => {
+      const wheelSideTexture = this._createWheelTexture();
+      const wheelFaceTexture = this._createWheelTreadTexture();
+      wheelFaceTexture.rotation = (index * 0.17) * Math.PI * 2;
+      wheelFaceTexture.center.set(0.5, 0.5);
+      wheelFaceTexture.needsUpdate = true;
+      const wheel = this._cloneTemplateMesh(templateWheel, [
+        new THREE.MeshLambertMaterial({ map: wheelSideTexture }),
+        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
+        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
+      ]);
+      tankGroup.add(wheel);
+      tankGroup.userData.leftWheels.push(wheel);
+      tankGroup.userData.leftWheelTextures.push(wheelFaceTexture);
+    });
+    rightWheelParts.forEach((templateWheel, index) => {
+      const wheelSideTexture = this._createWheelTexture();
+      const wheelFaceTexture = this._createWheelTreadTexture();
+      wheelFaceTexture.rotation = (index * 0.17) * Math.PI * 2;
+      wheelFaceTexture.center.set(0.5, 0.5);
+      wheelFaceTexture.needsUpdate = true;
+      const wheel = this._cloneTemplateMesh(templateWheel, [
+        new THREE.MeshLambertMaterial({ map: wheelSideTexture }),
+        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
+        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
+      ]);
+      tankGroup.add(wheel);
+      tankGroup.userData.rightWheels.push(wheel);
+      tankGroup.userData.rightWheelTextures.push(wheelFaceTexture);
+    });
+
+    const sampleWheel = tankGroup.userData.leftWheels[0] || tankGroup.userData.rightWheels[0];
+    if (sampleWheel && sampleWheel.geometry) {
+      if (!sampleWheel.geometry.boundingBox) sampleWheel.geometry.computeBoundingBox();
+      const box = sampleWheel.geometry.boundingBox;
+      const radiusY = (box.max.y - box.min.y) * 0.5;
+      const radiusZ = (box.max.z - box.min.z) * 0.5;
+      tankGroup.userData.wheelRadius = Math.max(0.05, Math.max(radiusY, radiusZ));
+    } else {
+      tankGroup.userData.wheelRadius = 0.42;
+    }
+
+    tankGroup.add(leftTreadGroup);
+    tankGroup.add(rightTreadGroup);
+    tankGroup.userData.treadGroups = [leftTreadGroup, rightTreadGroup];
+
+    const turretTexture = bodyTexture.clone();
+    turretTexture.wrapS = THREE.RepeatWrapping;
+    turretTexture.wrapT = THREE.RepeatWrapping;
+    turretTexture.repeat.set(6.28 / 4, 0.8 / 4);
+    turretTexture.needsUpdate = true;
+    const turretMaterial = new THREE.MeshLambertMaterial({ map: turretTexture });
+    const turret = this._cloneTemplateMesh(templateParts.turret, turretMaterial);
+    tankGroup.add(turret);
+    tankGroup.userData.turret = turret;
+
+    const barrelMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    const barrel = this._cloneTemplateMesh(templateParts.barrel, barrelMaterial);
+    tankGroup.add(barrel);
+    tankGroup.userData.barrel = barrel;
+
+    tankGroup.userData.explodableParts = [
+      body,
+      turret,
+      barrel,
+      leftTreadGroup,
+      rightTreadGroup,
+      ...tankGroup.userData.leftWheels,
+      ...tankGroup.userData.rightWheels,
+    ];
+
+    return tankGroup;
+  }
+
+  createTank(color = 0x4caf50, name = '', modelPath = this._tankModelPath) {
+    const templateTank = this._createTankFromTemplate(color, name, modelPath);
+    if (templateTank) {
+      return templateTank;
+    }
+
+    const tankGroup = new THREE.Group();
+
+    if (name) {
+      const spriteMaterial = new THREE.SpriteMaterial({ depthTest: true, depthWrite: false });
+      const sprite = new THREE.Sprite(spriteMaterial);
+      sprite.position.set(0, 3, 0);
+      sprite.scale.set(2, 0.5, 1);
+      tankGroup.add(sprite);
+      tankGroup.userData.nameLabel = sprite;
+      this.updateSpriteLabel(sprite, name, color);
+    }
+
+    const bodyTexture = this._createTankTexture(color);
+    const treadTexture = this._createTreadTexture();
+    const treadTextureRotated = treadTexture.clone();
+    treadTextureRotated.rotation = Math.PI / 2;
+    treadTextureRotated.center.set(0.5, 0.5);
+    treadTextureRotated.needsUpdate = true;
+    const treadCapTexture = this._createTreadCapTexture(color);
+
+    const treadCapTextureSide = treadCapTexture.clone();
+    treadCapTextureSide.repeat.set(3.0, 1.0);
+    treadCapTextureSide.wrapS = THREE.RepeatWrapping;
+    treadCapTextureSide.wrapT = THREE.RepeatWrapping;
+    treadCapTextureSide.needsUpdate = true;
+
+    const bodyGeometry = this._tankGeoCache?.body ?? new THREE.BoxGeometry(3, 1, 4);
     const bodyMaterial = new THREE.MeshLambertMaterial({ map: bodyTexture });
     const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
     body.position.y = 0.8;
@@ -945,7 +1344,7 @@ class RenderManager {
     const treadWidth = 1.0;
     const treadCapRadius = treadHeight / 2;
     const treadMiddleLength = 3.0;
-    const treadMiddleGeom = new THREE.BoxGeometry(treadWidth, treadHeight, treadMiddleLength);
+    const treadMiddleGeom = this._tankGeoCache?.treadMiddle ?? new THREE.BoxGeometry(treadWidth, treadHeight, treadMiddleLength);
     const leftTreadRotatedTex = treadTextureRotated.clone();
     leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
     leftTreadRotatedTex.wrapT = THREE.RepeatWrapping;
@@ -959,13 +1358,15 @@ class RenderManager {
     leftTreadGroup.add(leftTreadMiddle);
     tankGroup.userData.leftTreadTextures.push(leftTreadRotatedTex);
 
-    const treadCapGeom = new THREE.CylinderGeometry(treadCapRadius, treadCapRadius, treadWidth, 16, 1, false, 0, Math.PI);
-    const treadCapGeomRear = new THREE.CylinderGeometry(treadCapRadius, treadCapRadius, treadWidth, 16, 1, false, Math.PI, Math.PI);
+    const treadCapGeom = this._tankGeoCache?.treadFrontCap ?? new THREE.CylinderGeometry(treadCapRadius, treadCapRadius, treadWidth, 16, 1, false, 0, Math.PI);
+    const treadCapGeomRear = this._tankGeoCache?.treadRearCap ?? new THREE.CylinderGeometry(treadCapRadius, treadCapRadius, treadWidth, 16, 1, false, Math.PI, Math.PI);
+    // OBJ-loaded caps have 2 groups (tread_side, tread_cap); procedural have 3
+    const capGroups = treadCapGeom.groups.length;
     const leftTreadFrontTex = treadTexture.clone();
     leftTreadFrontTex.wrapS = THREE.RepeatWrapping;
     leftTreadFrontTex.wrapT = THREE.RepeatWrapping;
     const leftTreadFrontMat = new THREE.MeshLambertMaterial({ map: leftTreadFrontTex });
-    const leftTreadFront = new THREE.Mesh(treadCapGeom, [leftTreadFrontMat, treadCapMat, treadCapMat]);
+    const leftTreadFront = new THREE.Mesh(treadCapGeom, capGroups === 2 ? [leftTreadFrontMat, treadCapMat] : [leftTreadFrontMat, treadCapMat, treadCapMat]);
     leftTreadFront.rotation.x = Math.PI / 2;
     leftTreadFront.rotation.z = Math.PI / 2;
     leftTreadFront.position.z = treadMiddleLength / 2;
@@ -977,7 +1378,7 @@ class RenderManager {
     leftTreadRearTex.wrapS = THREE.RepeatWrapping;
     leftTreadRearTex.wrapT = THREE.RepeatWrapping;
     const leftTreadRearMat = new THREE.MeshLambertMaterial({ map: leftTreadRearTex });
-    const leftTreadRear = new THREE.Mesh(treadCapGeomRear, [leftTreadRearMat, treadCapMat, treadCapMat]);
+    const leftTreadRear = new THREE.Mesh(treadCapGeomRear, capGroups === 2 ? [leftTreadRearMat, treadCapMat] : [leftTreadRearMat, treadCapMat, treadCapMat]);
     leftTreadRear.rotation.x = Math.PI / 2;
     leftTreadRear.rotation.z = Math.PI / 2;
     leftTreadRear.position.z = -treadMiddleLength / 2;
@@ -1006,7 +1407,7 @@ class RenderManager {
     rightTreadFrontTex.wrapS = THREE.RepeatWrapping;
     rightTreadFrontTex.wrapT = THREE.RepeatWrapping;
     const rightTreadFrontMat = new THREE.MeshLambertMaterial({ map: rightTreadFrontTex });
-    const rightTreadFront = new THREE.Mesh(treadCapGeom, [rightTreadFrontMat, treadCapMat, treadCapMat]);
+    const rightTreadFront = new THREE.Mesh(treadCapGeom, capGroups === 2 ? [rightTreadFrontMat, treadCapMat] : [rightTreadFrontMat, treadCapMat, treadCapMat]);
     rightTreadFront.rotation.x = Math.PI / 2;
     rightTreadFront.rotation.z = Math.PI / 2;
     rightTreadFront.position.z = treadMiddleLength / 2;
@@ -1018,7 +1419,7 @@ class RenderManager {
     rightTreadRearTex.wrapS = THREE.RepeatWrapping;
     rightTreadRearTex.wrapT = THREE.RepeatWrapping;
     const rightTreadRearMat = new THREE.MeshLambertMaterial({ map: rightTreadRearTex });
-    const rightTreadRear = new THREE.Mesh(treadCapGeomRear, [rightTreadRearMat, treadCapMat, treadCapMat]);
+    const rightTreadRear = new THREE.Mesh(treadCapGeomRear, capGroups === 2 ? [rightTreadRearMat, treadCapMat] : [rightTreadRearMat, treadCapMat, treadCapMat]);
     rightTreadRear.rotation.x = Math.PI / 2;
     rightTreadRear.rotation.z = Math.PI / 2;
     rightTreadRear.position.z = -treadMiddleLength / 2;
@@ -1028,7 +1429,7 @@ class RenderManager {
 
     tankGroup.add(rightTreadGroup);
 
-    const turretGeometry = new THREE.CylinderGeometry(1, 1, 0.8, 32);
+    const turretGeometry = this._tankGeoCache?.turret ?? new THREE.CylinderGeometry(1, 1, 0.8, 32);
     const turretTexture = bodyTexture.clone();
     turretTexture.wrapS = THREE.RepeatWrapping;
     turretTexture.wrapT = THREE.RepeatWrapping;
@@ -1041,7 +1442,7 @@ class RenderManager {
     tankGroup.add(turret);
     tankGroup.userData.turret = turret;
 
-    const barrelGeometry = new THREE.CylinderGeometry(0.2, 0.2, 3, 8);
+    const barrelGeometry = this._tankGeoCache?.barrel ?? new THREE.CylinderGeometry(0.2, 0.2, 3, 8);
     const barrelMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
     const barrel = new THREE.Mesh(barrelGeometry, barrelMaterial);
     barrel.rotation.x = Math.PI / 2;
@@ -1049,6 +1450,21 @@ class RenderManager {
     barrel.castShadow = true;
     tankGroup.add(barrel);
     tankGroup.userData.barrel = barrel;
+
+    tankGroup.userData.leftWheels = [];
+    tankGroup.userData.rightWheels = [];
+    tankGroup.userData.leftWheelTextures = [];
+    tankGroup.userData.rightWheelTextures = [];
+    tankGroup.userData.wheelRadius = 0.42;
+
+    tankGroup.userData.treadGroups = [leftTreadGroup, rightTreadGroup];
+    tankGroup.userData.explodableParts = [
+      body,
+      turret,
+      barrel,
+      leftTreadGroup,
+      rightTreadGroup,
+    ];
 
     return tankGroup;
   }
@@ -1196,15 +1612,17 @@ class RenderManager {
     return texture;
   }
 
-  _createTreadCapTexture() {
+  _createTreadCapTexture(baseColor = 0x646464) {
     const canvas = document.createElement('canvas');
     canvas.width = 128;
     canvas.height = 128;
     const ctx = canvas.getContext('2d');
 
-    const r = 100;
-    const g = 100;
-    const b = 100;
+    const color = new THREE.Color(baseColor);
+    const darkened = color.clone().multiplyScalar(0.5);
+    const r = Math.round(darkened.r * 255);
+    const g = Math.round(darkened.g * 255);
+    const b = Math.round(darkened.b * 255);
 
     ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.fillRect(0, 0, 128, 128);
@@ -1247,6 +1665,98 @@ class RenderManager {
     }
 
     const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  _createWheelTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#303030';
+    ctx.fillRect(0, 0, 128, 32);
+
+    ctx.fillStyle = '#202020';
+    for (let x = 0; x < 128; x += 16) {
+      ctx.fillRect(x, 0, 10, 32);
+    }
+
+    ctx.fillStyle = 'rgba(120, 120, 120, 0.55)';
+    for (let x = 0; x < 128; x += 32) {
+      ctx.fillRect(x + 2, 5, 3, 22);
+    }
+
+    ctx.strokeStyle = 'rgba(10, 10, 10, 0.6)';
+    ctx.lineWidth = 1;
+    for (let x = 8; x < 128; x += 16) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 32);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1, 1);
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  _createWheelTreadTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const outerRadius = 58;
+    const innerRadius = 18;
+    const segmentCount = 24;
+
+    ctx.fillStyle = '#181818';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#333333';
+    ctx.fill();
+
+    for (let i = 0; i < segmentCount; i += 1) {
+      const start = (i / segmentCount) * Math.PI * 2;
+      const end = start + ((Math.PI * 2) / segmentCount) * 0.62;
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerRadius, start, end);
+      ctx.arc(cx, cy, innerRadius, end, start, true);
+      ctx.closePath();
+      ctx.fillStyle = i % 2 === 0 ? '#222222' : '#2a2a2a';
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = '#111111';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < segmentCount; i += 1) {
+      const angle = (i / segmentCount) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(angle) * innerRadius, cy + Math.sin(angle) * innerRadius);
+      ctx.lineTo(cx + Math.cos(angle) * outerRadius, cy + Math.sin(angle) * outerRadius);
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerRadius - 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#202020';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.center.set(0.5, 0.5);
     texture.needsUpdate = true;
     return texture;
   }
@@ -1400,50 +1910,41 @@ class RenderManager {
     const debrisPieces = [];
     if (tank && tank.userData) {
       const tankWorldPos = tank.position.clone();
-      const tankRotation = tank.rotation.y;
+      const explodableParts = Array.isArray(tank.userData.explodableParts)
+        ? tank.userData.explodableParts
+        : [];
 
-      if (tank.userData.body) {
-        const part = tank.userData.body.clone();
-        if (part.material) part.material = Array.isArray(part.material) ? part.material.map(m => m.clone()) : part.material.clone();
-        part.position.copy(tankWorldPos);
-        part.position.y = tank.userData.body.position.y;
-        part.rotation.y = tankRotation;
-        this._launchTankPart(part, tankWorldPos, debrisPieces, 1.0);
-      }
-      if (tank.userData.turret) {
-        const part = tank.userData.turret.clone();
-        if (part.material) part.material = Array.isArray(part.material) ? part.material.map(m => m.clone()) : part.material.clone();
-        part.position.copy(tankWorldPos);
-        part.position.y = tank.userData.turret.position.y;
-        part.rotation.y = tankRotation;
-        this._launchTankPart(part, tankWorldPos, debrisPieces, 0.8);
-      }
-      if (tank.userData.barrel) {
-        const part = tank.userData.barrel.clone();
-        if (part.material) part.material = Array.isArray(part.material) ? part.material.map(m => m.clone()) : part.material.clone();
-        part.position.copy(tankWorldPos);
-        part.position.y = tank.userData.barrel.position.y;
-        part.position.z += 1.5 * Math.cos(tankRotation);
-        part.position.x += 1.5 * Math.sin(tankRotation);
-        part.rotation.copy(tank.userData.barrel.rotation);
-        part.rotation.y += tankRotation;
-        this._launchTankPart(part, tankWorldPos, debrisPieces, 0.6);
-      }
-      tank.children.forEach((child) => {
-        if (child instanceof THREE.Group && child.children.length > 0) {
-          const treadGroup = child.clone();
-          treadGroup.traverse((mesh) => {
-            if (mesh.isMesh && mesh.material) {
-              mesh.material = Array.isArray(mesh.material) ? mesh.material.map(m => m.clone()) : mesh.material.clone();
-            }
-          });
-          treadGroup.position.copy(tankWorldPos);
-          treadGroup.position.x += child.position.x * Math.cos(tankRotation);
-          treadGroup.position.z += child.position.x * Math.sin(tankRotation);
-          treadGroup.position.y = child.position.y;
-          treadGroup.rotation.y = tankRotation;
-          this._launchTankPart(treadGroup, tankWorldPos, debrisPieces, 0.9);
-        }
+      const worldPos = new THREE.Vector3();
+      const worldQuat = new THREE.Quaternion();
+      const worldScale = new THREE.Vector3();
+
+      explodableParts.forEach((sourcePart) => {
+        if (!sourcePart) return;
+
+        const part = sourcePart.clone(true);
+        part.traverse((node) => {
+          if (node.isMesh && node.material) {
+            node.material = Array.isArray(node.material)
+              ? node.material.map((material) => material.clone())
+              : node.material.clone();
+          }
+        });
+
+        sourcePart.updateWorldMatrix(true, false);
+        sourcePart.getWorldPosition(worldPos);
+        sourcePart.getWorldQuaternion(worldQuat);
+        sourcePart.getWorldScale(worldScale);
+
+        part.position.copy(worldPos);
+        part.quaternion.copy(worldQuat);
+        part.scale.copy(worldScale);
+
+        let speedMultiplier = 0.9;
+        if (sourcePart === tank.userData.body) speedMultiplier = 1.0;
+        else if (sourcePart === tank.userData.turret) speedMultiplier = 0.8;
+        else if (sourcePart === tank.userData.barrel) speedMultiplier = 0.6;
+
+        this._launchTankPart(part, tankWorldPos, debrisPieces, speedMultiplier);
       });
     }
 
@@ -1631,6 +2132,22 @@ class RenderManager {
       const treadSpeed = 0.5;
       tank.userData.leftTreadOffset -= leftDistance * treadSpeed;
       tank.userData.rightTreadOffset -= rightDistance * treadSpeed;
+
+      const wheelRadius = tank.userData.wheelRadius || 0.42;
+      if (wheelRadius > 0) {
+        const leftWheelAngleDelta = -leftDistance / wheelRadius;
+        const rightWheelAngleDelta = -rightDistance / wheelRadius;
+        if (tank.userData.leftWheelTextures) {
+          tank.userData.leftWheelTextures.forEach((texture) => {
+            texture.rotation += leftWheelAngleDelta;
+          });
+        }
+        if (tank.userData.rightWheelTextures) {
+          tank.userData.rightWheelTextures.forEach((texture) => {
+            texture.rotation += rightWheelAngleDelta;
+          });
+        }
+      }
 
       if (tank.userData.leftTreadTextures) {
         tank.userData.leftTreadTextures.forEach((texture) => {
