@@ -1917,6 +1917,15 @@ class RenderManager {
       const worldPos = new THREE.Vector3();
       const worldQuat = new THREE.Quaternion();
       const worldScale = new THREE.Vector3();
+      const worldMatrix = new THREE.Matrix4();
+      const localMatrix = new THREE.Matrix4();
+      const parentInverseMatrix = new THREE.Matrix4();
+      const localPos = new THREE.Vector3();
+      const localQuat = new THREE.Quaternion();
+      const localScale = new THREE.Vector3();
+
+      this.worldGroup.updateWorldMatrix(true, false);
+      parentInverseMatrix.copy(this.worldGroup.matrixWorld).invert();
 
       explodableParts.forEach((sourcePart) => {
         if (!sourcePart) return;
@@ -1935,9 +1944,13 @@ class RenderManager {
         sourcePart.getWorldQuaternion(worldQuat);
         sourcePart.getWorldScale(worldScale);
 
-        part.position.copy(worldPos);
-        part.quaternion.copy(worldQuat);
-        part.scale.copy(worldScale);
+        worldMatrix.compose(worldPos, worldQuat, worldScale);
+        localMatrix.multiplyMatrices(parentInverseMatrix, worldMatrix);
+        localMatrix.decompose(localPos, localQuat, localScale);
+
+        part.position.copy(localPos);
+        part.quaternion.copy(localQuat);
+        part.scale.copy(localScale);
 
         let speedMultiplier = 0.9;
         if (sourcePart === tank.userData.body) speedMultiplier = 1.0;
