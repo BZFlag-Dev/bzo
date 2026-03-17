@@ -31,7 +31,7 @@ class RenderManager {
       // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
       // We'll use a circle in the X/Y plane for sun/moon
       const MAP_SIZE = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
-      const sunDistance = MAP_SIZE * 0.6;
+      const sunDistance = MAP_SIZE;
       const moonDistance = sunDistance;
       const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
       const moonAngle = sunAngle + Math.PI;
@@ -50,7 +50,7 @@ class RenderManager {
         this.worldGroup.add(this.sunLight.target);
         // Lighting intensity
         const sunUp = sunY > 0;
-        const sunIntensity = sunUp ? 0.7 : 0.10;
+        const sunIntensity = sunUp ? 0.7 : 0.0;
         const ambientIntensity = sunUp ? 1.50 : 0.80;
         this.sunLight.intensity = sunIntensity;
         this.ambientLight.intensity = ambientIntensity;
@@ -538,7 +538,14 @@ class RenderManager {
     ctx.fillText(letter, 128, 128);
 
     const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, depthTest: true, fog: false });
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+      alphaTest: 0.1,
+      fog: false,
+    });
     const sprite = new THREE.Sprite(material);
     sprite.position.copy(position);
     sprite.scale.set(20, 20, 1);
@@ -694,7 +701,12 @@ class RenderManager {
 
   _addDebugLabel(object3D, type) {
     if (!object3D) return;
-    const labelMaterial = new THREE.SpriteMaterial({ depthTest: true, depthWrite: false });
+    const labelMaterial = new THREE.SpriteMaterial({
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+      alphaTest: 0.1,
+    });
     const label = new THREE.Sprite(labelMaterial);
     label.scale.set(4, 1, 1);
     this.updateSpriteLabel(label, object3D.name || '', '#ffffff');
@@ -1091,7 +1103,12 @@ class RenderManager {
     const tankGroup = new THREE.Group();
 
     if (name) {
-      const spriteMaterial = new THREE.SpriteMaterial({ depthTest: true, depthWrite: false });
+      const spriteMaterial = new THREE.SpriteMaterial({
+        depthTest: true,
+        depthWrite: false,
+        transparent: true,
+        alphaTest: 0.1,
+      });
       const sprite = new THREE.Sprite(spriteMaterial);
       sprite.position.set(0, 3, 0);
       sprite.scale.set(2, 0.5, 1);
@@ -1307,7 +1324,12 @@ class RenderManager {
     const tankGroup = new THREE.Group();
 
     if (name) {
-      const spriteMaterial = new THREE.SpriteMaterial({ depthTest: true, depthWrite: false });
+      const spriteMaterial = new THREE.SpriteMaterial({
+        depthTest: true,
+        depthWrite: false,
+        transparent: true,
+        alphaTest: 0.1,
+      });
       const sprite = new THREE.Sprite(spriteMaterial);
       sprite.position.set(0, 3, 0);
       sprite.scale.set(2, 0.5, 1);
