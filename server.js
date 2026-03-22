@@ -57,10 +57,6 @@ const PORT = process.env.PORT || 3000;
 
 // Serve static files
 app.use(express.static('public'));
-// Serve admin panel for /admin route
-app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
 
 function getAvailableTankModels() {
   const objDir = path.join(__dirname, 'public', 'obj');
@@ -1571,4 +1567,3 @@ if (fs.existsSync(serverJsPath)) {
   });
   console.log(`  ✓ Watching: server.js`);
 }
-

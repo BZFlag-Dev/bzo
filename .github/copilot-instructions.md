@@ -12,6 +12,7 @@
 
 - **Client-side logging to server**: Send debug messages from the client to the server using `ws.send(JSON.stringify({ type: 'debug', message: 'your debug info' }))` and they will appear in `server.log`. This is especially useful for headsets like Quest 2 where browser console access is limited.
 - Never use `tail`, `grep`, or terminal commands on `server.log` - it's always open in the editor. Use `read_file` instead.
+- `server.log` is the primary runtime output surface during development. Prefer reading it from the editor/workspace instead of asking for terminal output.
 
 ## Repo Snapshot
 - Real-time BZFlag-inspired arena: Node/Express/WS server in `server.js`, browser-side Three.js client under `public/`.
@@ -23,6 +24,8 @@
 - `npm run dev` starts `server.js` via nodemon; `npm start` runs it without auto-restart.
 - The server watches all files in `public/` and `server.js`, forcing connected clients to reload on any change in `public/` and restarting itself if `server.js` changes.
 - Gameplay logs stream to `server.log`, which is cleared on each server boot.
+- The development server is typically already running inside GNU Screen session `0`.
+- Because `npm run dev` is used, edits to watched files usually restart/reload the running server automatically; avoid starting duplicate dev servers unless explicitly needed.
 
 ## Server Architecture (`server.js`)
 - Single Express app serves static assets and hosts a `ws` WebSocket server that drives gameplay.
@@ -51,6 +54,12 @@
 - No automated tests are present; manual play sessions via the browser are the de-facto regression check.
 - When adding network messages, document them in both server switch statements and client handlers, and update debug HUD counters if needed.
 - **NEVER use `tail`, `grep`, or terminal commands on `server.log`** - it's always open in the editor. Use `read_file` instead.
+
+## Persistent Project Decisions
+
+- The operator controls are part of the single-page app and should remain in-game. Do not reintroduce a separate `/admin` page for operator tools because navigating away from the SPA drops active game state and the WebSocket connection.
+- The old `/admin` server route was an abandoned experiment and has been removed. Keep future operator/admin UX inside the existing overlay/HUD flow unless the user requests a different architecture.
+- During development, it is intentional that any connected player may use operator controls such as map switching. OAuth or stronger authorization may come later, but it is not a current priority.
 
 # Player Join/Entry/Scoreboard Flow (Persistent Project Memory)
 
@@ -261,4 +270,3 @@ WebXR support enables VR gameplay on headsets like Meta Quest 2. Phase 1 impleme
 2. Add all tanks to `renderManager.getWorldGroup()` instead of scene directly
 3. updateCamera() checks `xrState.enabled` and translates worldGroup or camera accordingly
 4. Result: Same game world appears same from player perspective in both VR and desktop
-
