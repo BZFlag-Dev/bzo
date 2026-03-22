@@ -1,12 +1,11 @@
 // input.js
 // Handles keyboard, mouse, and touch input for the game.
-// Exports: setupInputHandlers, virtualInput, keys, lastVirtualJump
+// Exports: setupInputHandlers, virtualInput, keys
 
-import { getXRControllerInput, xrState, debugLog } from './webxr.js';
+import { getXRControllerInput, xrState } from './webxr.js';
 
 // Virtual input state (for mobile/touch)
 export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
-export let lastVirtualJump = false;
 
 // Keyboard input state
 export const keys = {};
@@ -362,7 +361,7 @@ const defaultHudContext = {
   getMouseControlEnabled: () => false,
   setMouseControlEnabled: () => {},
   getVirtualControlsEnabled: () => false,
-  setVirtualControlsEnabled: (isMobile) => {},
+  setVirtualControlsEnabled: () => {},
   pushChatMessage: () => {},
   updateChatWindow: () => {},
   sendToServer: () => {},
@@ -394,7 +393,6 @@ const domRefs = {
 
 let wireframeEnabled = false;
 let orientationMode = null;
-let orientationCenter = null;
 let orientationListenersAttached = false;
 let keyboardListenerAttached = false;
 let orientationDebugInitialized = false;
@@ -415,7 +413,6 @@ function detectOrientationMode() {
 }
 
 function resetOrientationCenter(status) {
-  orientationCenter = null;
   if (status) {
     latestOrientation.status = status;
   }
@@ -636,7 +633,7 @@ function cycleCameraMode() {
   hudContext.setCameraMode(next);
   try {
     localStorage.setItem('cameraMode', next);
-  } catch (_) {
+  } catch {
     /* ignore storage errors */
   }
   hudContext.showMessage(`Camera: ${cameraModeLabel(next)}`);
@@ -650,7 +647,7 @@ export function toggleMouseMode(forceState) {
   hudContext.setMouseControlEnabled(next);
   try {
     localStorage.setItem('mouseControlEnabled', next ? 'true' : 'false');
-  } catch (_) {
+  } catch {
     /* ignore storage errors */
   }
   if (next && hudContext.isMobile) {
@@ -865,7 +862,7 @@ function bindHudElements() {
     if (savedCameraMode === 'first-person' || savedCameraMode === 'third-person' || savedCameraMode === 'overview') {
       hudContext.setCameraMode(savedCameraMode);
     }
-  } catch (_) {
+  } catch {
     /* ignore storage errors */
   }
   try {
@@ -873,7 +870,7 @@ function bindHudElements() {
     if (savedMouseMode === 'true') {
       hudContext.setMouseControlEnabled(true);
     }
-  } catch (_) {
+  } catch {
     /* ignore storage errors */
   }
 

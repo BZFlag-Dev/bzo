@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { AnaglyphEffect } from './anaglyph.js';
-import { xrState, debugLog } from './webxr.js';
+import { xrState } from './webxr.js';
 import {
   createShootBuffer,
   createExplosionBuffer,
@@ -252,7 +252,7 @@ class RenderManager {
     this.worldGroup.add(this.moonLight);
   }
 
-  updateSunLighting(celestial) {
+  updateSunLighting() {
     // Deprecated: use setWorldTime instead
     return;
   }
@@ -1361,7 +1361,6 @@ class RenderManager {
     tankGroup.add(body);
     tankGroup.userData.body = body;
 
-    const treadMat = new THREE.MeshLambertMaterial({ map: treadTexture.clone() });
     const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
 
     const leftTreadGroup = new THREE.Group();
@@ -2297,9 +2296,6 @@ class RenderManager {
     }
   }
 
-  getRenderer() {
-    return this.renderer;
-  }
 }
 
 export const renderManager = new RenderManager();

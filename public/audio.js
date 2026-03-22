@@ -4,7 +4,6 @@
  */
 
 // audio.js - Handles sound buffer creation and exposes buffers for positional audio
-import * as THREE from 'three';
 
 // Pop/Mini-explosion for projectile removal
 export function createProjectilePopBuffer(audioContext) {

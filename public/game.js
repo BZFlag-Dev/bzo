@@ -19,7 +19,6 @@ import {
   setupInputHandlers,
   virtualInput,
   keys,
-  lastVirtualJump,
   initHudControls,
   latestOrientation,
   toggleMouseMode,
@@ -42,7 +41,7 @@ import {
 import { renderManager } from './render.js';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { initXR, toggleXRSession, isXRSupported, updateXRControllerInput, setNormalAnimationLoop, isXREnabled, setSendToServer, debugLog } from './webxr.js';
+import { initXR, toggleXRSession, updateXRControllerInput, setNormalAnimationLoop, isXREnabled, setSendToServer, debugLog } from './webxr.js';
 
 // FPS
 let fps = 0;
@@ -80,7 +79,6 @@ let myTank = null;
 let tanks = new Map();
 let projectiles = new Map();
 let ws = null;
-let wsReady = false; // Flag to track if WebSocket is connected and ready
 let gameConfig = null;
 let radarCanvas, radarCtx;
 
@@ -92,15 +90,15 @@ function toggleEntryDialog(name = '') {
   const entryDialog = document.getElementById('entryDialog');
   const entryInput = document.getElementById('entryInput');
   if (!entryDialog || !entryInput) return;
-  const isentryDialogOpen = entryDialog.style.display !== 'block';
-  entryDialog.style.display = isentryDialogOpen ? 'block' : 'none';
-  if (isentryDialogOpen) {
+  const entryDialogWillOpen = entryDialog.style.display !== 'block';
+  entryDialog.style.display = entryDialogWillOpen ? 'block' : 'none';
+  if (entryDialogWillOpen) {
     startTankPreviewAnimation();
   } else {
     stopTankPreviewAnimation();
   }
-  isPaused = isentryDialogOpen;
-  if (isentryDialogOpen) {
+  isPaused = entryDialogWillOpen;
+  if (entryDialogWillOpen) {
     if (name === '') name = myPlayerName;
     entryDialogReturnCameraMode = cameraMode;
     cameraMode = 'overview';
@@ -137,7 +135,6 @@ let playerShields = new Map(); // Map of playerId to shield mesh
 
 // Mouse control
 let mouseControlEnabled = false;
-let hasInteracted = false;
 let mouseX = 0; // Percentage from center (-1 to 1)
 let mouseY = 0; // Percentage from center (-1 to 1)
 
@@ -163,10 +160,6 @@ function getDefaultTankModel() {
 function getTankModelById(modelId) {
   const normalized = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';
   return TANK_MODELS.find((model) => model.id === normalized) || null;
-}
-
-function getSelectedTankModelPath() {
-  return getTankModelPathById(selectedTankModelId);
 }
 
 function normalizeTankModelId(modelId) {
@@ -379,15 +372,11 @@ async function initTankSelector() {
 Object.defineProperty(window, 'mouseControlEnabled', {
   get() { return mouseControlEnabled; },
   set(val) {
-    if (val && isMobile) {
-      orientationCenter = null; // recenter on enable
-    }
     mouseControlEnabled = val;
   }
 });
 
 // Orientation analog control state
-let orientationCenter = null;
 let orientationMode = null; // 'portrait' or 'landscape'
 
 function detectOrientationMode() {
@@ -401,7 +390,6 @@ detectOrientationMode();
 window.addEventListener('orientationchange', () => {
   detectOrientationMode();
   if (isMobile && mouseControlEnabled) {
-    orientationCenter = null; // recenter analog controls
     if (latestOrientation) latestOrientation.status = 'Orientation changed, recentered';
   }
 });
@@ -410,7 +398,6 @@ window.addEventListener('resize', () => {
   const prev = orientationMode;
   detectOrientationMode();
   if (orientationMode !== prev && isMobile && mouseControlEnabled) {
-    orientationCenter = null;
     if (latestOrientation) latestOrientation.status = 'Orientation changed (resize), recentered';
   }
 });
@@ -448,7 +435,6 @@ if (savedDebugLabels !== null) {
 renderManager.setDebugLabelsEnabled(debugLabelsEnabled);
 const packetsSent = new Map();
 const packetsReceived = new Map();
-let debugUpdateInterval = null;
 
 function getDebugState() {
   return {
@@ -770,6 +756,10 @@ function init() {
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
   if (savedDebugState === 'true') {
+    const mouseBtn = document.getElementById('mouseBtn');
+    const debugBtn = document.getElementById('debugBtn');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const cameraBtn = document.getElementById('cameraBtn');
     toggleDebugHud({
       debugEnabled,
       setDebugEnabled: v => { debugEnabled = v; },
@@ -798,6 +788,7 @@ function init() {
   document.addEventListener('keydown', (e) => {
     // Check if name dialog is open (declare once at top)
     const entryDialog = document.getElementById('entryDialog');
+    const helpPanel = document.getElementById('helpPanel');
     const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
 
     // Allow pause/unpause with P key even when paused
@@ -928,7 +919,6 @@ function init() {
   const savedName = localStorage.getItem('playerName');
   const entryDialog = document.getElementById('entryDialog');
   const entryInput = document.getElementById('entryInput');
-  let isentryDialogOpen = false;
   if (savedName && savedName.trim().length > 0) {
     const trimmed = savedName.trim();
     myPlayerName = trimmed;
@@ -1017,7 +1007,6 @@ function connectToServer() {
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
   ws.onopen = () => {
-    wsReady = true;
     showMessage('Connected to server!');
     // Now enable debug logging to server
     setSendToServer(sendToServer);
@@ -1037,7 +1026,6 @@ function connectToServer() {
   };
 
   ws.onclose = (event) => {
-    wsReady = false;
     let kills = 0;
     let deaths = 0;
     if (myTank && myTank.userData && myTank.userData.playerState) {
@@ -1062,7 +1050,7 @@ function connectToServer() {
 
 function handleServerMessage(message) {
   switch (message.type) {
-    case 'init':
+    case 'init': {
       // Show server info in entryDialog
       const serverNameEl = document.getElementById('serverName');
       const serverDescriptionEl = document.getElementById('serverDescription');
@@ -1072,7 +1060,7 @@ function handleServerMessage(message) {
       if (serverMotdEl) serverMotdEl.textContent = message.motd || '';
       worldTime = message.worldTime;
       // Clear any existing tanks from previous connections
-      tanks.forEach((tank, id) => {
+      tanks.forEach((tank) => {
         // Remove ghost mesh if it exists
         if (tank.userData.ghostMesh) {
           renderManager.getWorldGroup().remove(tank.userData.ghostMesh);
@@ -1089,7 +1077,7 @@ function handleServerMessage(message) {
       projectiles.clear();
 
       // Clear any existing shields
-      playerShields.forEach((shield, id) => {
+      playerShields.forEach((shield) => {
         renderManager.removeShield(shield);
       });
       playerShields.clear();
@@ -1166,6 +1154,7 @@ function handleServerMessage(message) {
       myTank = tanks.get(myPlayerId);
       callUpdateScoreboard();
       break;
+    }
 
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
@@ -1228,7 +1217,7 @@ function handleServerMessage(message) {
       }
       break;
 
-    case 'playerLeft':
+    case 'playerLeft': {
       // Show the player's name before removing
       let leftName = 'Player';
       const leftTank = tanks.get(message.id);
@@ -1238,12 +1227,12 @@ function handleServerMessage(message) {
       showMessage(`${leftName} left the game`);
       removePlayer(message.id);
       break;
+    }
 
-    case 'pm':
+    case 'pm': {
       // Compact playerMoved message
       const tank = tanks.get(message.id);
       if (tank) {
-        const oldY = tank.position.y;
         const oldVerticalVel = tank.userData.verticalVelocity || 0;
         const oldJumpDirection = tank.userData.jumpDirection;
 
@@ -1289,6 +1278,7 @@ function handleServerMessage(message) {
         }
       }
       break;
+    }
 
     case 'positionCorrection':
       // Server corrected our position - update dead reckoning state
@@ -1301,7 +1291,6 @@ function handleServerMessage(message) {
       // Only update lastSentTime to prevent immediate heartbeat trigger
       lastSentTime = performance.now();
       if (myTank) {
-        const y = message.y !== undefined ? message.y : 0;
         myTank.position.set(playerX, playerY, playerZ);
         myTank.rotation.y = playerRotation;
         myTank.userData.verticalVelocity = message.vv || 0;
@@ -1349,7 +1338,7 @@ function handleServerMessage(message) {
       removeShield(message.playerId);
       break;
 
-    case 'chat':
+    case 'chat': {
       // Format: { type: 'chat', from, to, text, id }
       // Lookup names for from/to
       function getPlayerName(id) {
@@ -1365,12 +1354,13 @@ function handleServerMessage(message) {
       if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
       updateChatWindow();
       break;
+    }
 
     case 'mapList':
       handleMapsList(message);
       break;
 
-      case 'reload':
+    case 'reload':
       showMessage('Server updated - reloading...', 'death');
       setTimeout(() => {
         window.location.reload();
@@ -1537,7 +1527,6 @@ function handlePlayerHit(message) {
 function handlePlayerRespawn(message) {
   const tank = tanks.get(message.player.id);
   if (tank) {
-    const y = 0;
     tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
     tank.userData.verticalVelocity = message.player.verticalVelocity;
@@ -1602,51 +1591,12 @@ function handleMapsList(message) {
   }
 }
 
-function updateStats(player) {
-  callUpdateScoreboard();
-}
-
-function showMessage(text, type = '') {
+function showMessage(text) {
   // Show a message in the chat window as if from SERVER
   const prefix = 'local: ';
   chatMessages.push(prefix + text);
   if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
   updateChatWindow();
-}
-
-function checkIfOnObstacle(x, z, tankRadius = 2, y = null) {
-  // Check if tank is positioned on top of an obstacle
-  // Returns the obstacle if found, null otherwise
-  for (const obs of OBSTACLES) {
-    const halfW = obs.w / 2;
-    const halfD = obs.d / 2;
-    const rotation = obs.rotation || 0;
-    const obstacleBase = obs.baseY || 0;
-    const obstacleHeight = obs.h || 4;
-    const obstacleTop = obstacleBase + obstacleHeight;
-
-    // If Y provided, only check obstacles near that height
-    if (y !== null && (y < obstacleTop - 1 || y > obstacleTop + 1)) {
-      continue;
-    }
-
-    // Transform tank position to obstacle's local space
-    const dx = x - obs.x;
-    const dz = z - obs.z;
-
-    // Rotate point to align with obstacle's axes
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const localX = dx * cos - dz * sin;
-    const localZ = dx * sin + dz * cos;
-
-    // Check if tank center is above obstacle (with some margin for edges)
-    const margin = tankRadius * 0.7; // Allow tank to be partially over edge
-    if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
-      return obs;
-    }
-  }
-  return null;
 }
 
 // Returns: null (no collision), { type: 'boundary' }, { type: 'collision', obstacle }, or { type: 'ontop', obstacle }
@@ -1817,20 +1767,25 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   const collisionObj = checkCollision(newX, newY, newZ, tankRadius);
   // If we hit a collision while moving upward (jumping into obstacle bottom), start falling
   if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY > 0) {
-    // Hit obstacle bottom while jumping - immediately start falling
-    // Keep horizontal position at current location, start falling from current height
-    return {
-      x: x,
-      y: y,
-      z: z,
-      moved: false,
-      altered: false,
-      landedOn: null,
-      landedType: null,
-      startedFalling: false,
-      fallingFromObstacle: null,
-      hitObstacleBottom: true  // Signal to reverse vertical velocity
-    };
+    const horizontalOnlyCollision = checkCollision(newX, y, newZ, tankRadius);
+    const verticalOnlyCollision = checkCollision(x, newY, z, tankRadius);
+
+    if (verticalOnlyCollision && (!horizontalOnlyCollision || horizontalOnlyCollision.type === 'ontop')) {
+      // Hit obstacle bottom while jumping - immediately start falling
+      // Keep horizontal position at current location, start falling from current height
+      return {
+        x: x,
+        y: y,
+        z: z,
+        moved: false,
+        altered: false,
+        landedOn: null,
+        landedType: null,
+        startedFalling: false,
+        fallingFromObstacle: null,
+        hitObstacleBottom: true  // Signal to reverse vertical velocity
+      };
+    }
   }
 
   if (!collisionObj || collisionObj.type === 'ontop') {
@@ -1881,7 +1836,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
 
     const slideCollisionObj = checkCollision(slideNewX, newY, slideNewZ, tankRadius);
     //console.log('Slide collision check:', newX,newY,newZ,slideNewX,slideNewZ,slideCollisionObj);
-    if (!slideCollisionObj || slideCollisionObj.type === 'ontop') {
+  if (!slideCollisionObj || slideCollisionObj.type === 'ontop') {
       // If we're on top of an obstacle, that's the landing
       if (slideCollisionObj && slideCollisionObj.type === 'ontop') {
         landedOn = slideCollisionObj.obstacle;
@@ -1905,6 +1860,26 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   const zSlideCollisionObj = checkCollision(x, newY, newZ, tankRadius);
   if (!zSlideCollisionObj || zSlideCollisionObj.type === 'ontop') {
     return { x: x, y: newY, z: newZ, moved: true, altered: true, landedOn: null, landedType: null };
+  }
+
+  // If horizontal movement is blocked, still allow pure vertical movement when possible.
+  const verticalOnlyCollisionObj = checkCollision(x, newY, z, tankRadius);
+  if (!verticalOnlyCollisionObj || verticalOnlyCollisionObj.type === 'ontop') {
+    if (verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop') {
+      landedOn = verticalOnlyCollisionObj.obstacle;
+      landedType = 'obstacle';
+    }
+    return {
+      x,
+      y: newY,
+      z,
+      moved: true,
+      altered: true,
+      landedOn,
+      landedType,
+      startedFalling: false,
+      fallingFromObstacle: null,
+    };
   }
 
   // No movement possible
@@ -2073,10 +2048,10 @@ function handleMotion(deltaTime) {
     myJumpDirection = null;
     myTank.userData.jumpForwardSpeed = undefined;
     myTank.userData.fallForwardSpeed = undefined;
+    myTank.userData.slideDirection = undefined;
     myTank.userData.verticalVelocity = 0;
   }
 
-  let moved = false;
   const oldX = playerX;
   const oldZ = playerZ;
   const oldRotation = playerRotation;
@@ -2086,21 +2061,30 @@ function handleMotion(deltaTime) {
   const speed = gameConfig.TANK_SPEED * deltaTime;
   const rotSpeed = gameConfig.TANK_ROTATION_SPEED * deltaTime;
   let moveRotation = playerRotation;
-  let intendedDeltaX, intendedDeltaY = 0, intendedDeltaZ, intendedDeltaRot;
+  let intendedDeltaX, intendedDeltaY = 0, intendedDeltaZ;
 
   // Determine forward speed for movement calculation
   let movementForwardSpeed = intendedForward;
   if (isInAir && jumpDirection !== null) {
-    moveRotation = jumpDirection;
-    // Use frozen forward speed from jump or fall start
-    movementForwardSpeed = myTank.userData.fallForwardSpeed !== undefined
-      ? myTank.userData.fallForwardSpeed
-      : myTank.userData.jumpForwardSpeed || 0;
+    moveRotation = myTank.userData.slideDirection !== undefined
+      ? myTank.userData.slideDirection
+      : jumpDirection;
+    // Use frozen forward speed from jump or fall start.
+    // If we are sliding in air, keep moving along the stored slide direction
+    // using the reduced tangential speed from the collision response.
+    if (myTank.userData.slideDirection !== undefined) {
+      movementForwardSpeed = myTank.userData.fallForwardSpeed !== undefined
+        ? Math.abs(myTank.userData.fallForwardSpeed)
+        : Math.abs(myTank.userData.jumpForwardSpeed || 0);
+    } else {
+      movementForwardSpeed = myTank.userData.fallForwardSpeed !== undefined
+        ? myTank.userData.fallForwardSpeed
+        : myTank.userData.jumpForwardSpeed || 0;
+    }
   }
 
   intendedDeltaX = -Math.sin(moveRotation) * movementForwardSpeed * speed;
   intendedDeltaZ = -Math.cos(moveRotation) * movementForwardSpeed * speed;
-  intendedDeltaRot = intendedRotation * rotSpeed;
   if (myTank.userData.verticalVelocity !== 0) {
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
   }
@@ -2124,6 +2108,7 @@ function handleMotion(deltaTime) {
     jumpStarted = true; // Mark that jump started this frame
     // Store intendedForward at jump time for use in jump packet
     myTank.userData.jumpForwardSpeed = intendedForward;
+    myTank.userData.slideDirection = undefined;
     forceMoveSend = true; // Force send on jump
     if (myTank) renderManager.playLocalJumpSound(myTank.position);
   }
@@ -2147,6 +2132,7 @@ function handleMotion(deltaTime) {
     // Freeze forward speed at fall start (same as jump)
     const frozenForwardSpeed = myTank.userData.forwardSpeed || 0;
     myTank.userData.fallForwardSpeed = frozenForwardSpeed;
+    myTank.userData.slideDirection = undefined;
 
     // Immediately re-validate with air physics since this frame's movement was calculated wrong
     // Recalculate movement with frozen direction and frozen forward speed
@@ -2192,6 +2178,7 @@ function handleMotion(deltaTime) {
 
   // Calculate actual movement direction for slide detection (BEFORE using it in forwardSpeed calc)
   let slideDirection = null;
+  let slideSpeed = null;
   if (result.moved && result.altered) {
     // Slide occurred - calculate actual movement direction
     const actualDeltaX = playerX - oldX;
@@ -2211,6 +2198,20 @@ function handleMotion(deltaTime) {
       // If actual direction differs from expected by more than 0.01 radians, include it
       if (angleDiff > 0.01) {
         slideDirection = actualDirection;
+        if (deltaTime > 0) {
+          slideSpeed = Math.max(0, Math.min(1, (actualDistance / deltaTime) / gameConfig.TANK_SPEED));
+        }
+      }
+    }
+  }
+
+  if (isInAir && slideDirection !== null) {
+    myTank.userData.slideDirection = slideDirection;
+    if (slideSpeed !== null) {
+      if (myTank.userData.fallForwardSpeed !== undefined) {
+        myTank.userData.fallForwardSpeed = slideSpeed;
+      } else {
+        myTank.userData.jumpForwardSpeed = slideSpeed;
       }
     }
   }
@@ -2242,8 +2243,15 @@ function handleMotion(deltaTime) {
         forwardSpeed = Math.max(-1, Math.min(1, forwardSpeed));
       }
     } else {
-      // In air: use last known forwardSpeed from userData
-      forwardSpeed = myTank.userData.forwardSpeed || 0;
+      // In air: preserve the frozen air speed, including any reduced tangential
+      // speed after sliding into a wall.
+      if (myTank.userData.slideDirection !== undefined) {
+        forwardSpeed = myTank.userData.fallForwardSpeed !== undefined
+          ? Math.abs(myTank.userData.fallForwardSpeed)
+          : Math.abs(myTank.userData.jumpForwardSpeed || 0);
+      } else {
+        forwardSpeed = myTank.userData.forwardSpeed || 0;
+      }
     }
     // Calculate rotation speed when not in air (on ground or obstacle)
     if (!isInAir) {
@@ -2311,8 +2319,11 @@ function handleMotion(deltaTime) {
     };
 
     // Add optional direction field if sliding
-    if (slideDirection !== null) {
-      movePacket.d = Number(slideDirection.toFixed(2));
+    const packetSlideDirection = isInAir
+      ? myTank.userData.slideDirection
+      : slideDirection;
+    if (packetSlideDirection !== null && packetSlideDirection !== undefined) {
+      movePacket.d = Number(packetSlideDirection.toFixed(2));
     }
 
     sendToServer(movePacket);
@@ -2368,7 +2379,7 @@ function shoot() {
 
 function updateProjectiles(deltaTime) {
   const projectileSpeed = 18; // units per second (adjust as needed)
-  projectiles.forEach((projectile, id) => {
+  projectiles.forEach((projectile) => {
     projectile.position.x += projectile.userData.dirX * projectileSpeed * deltaTime;
     projectile.position.z += projectile.userData.dirZ * projectileSpeed * deltaTime;
   });
@@ -2557,7 +2568,7 @@ function updateRadar() {
 
   // Draw projectiles (shots) within SHOT_DISTANCE
   if (typeof projectiles !== 'undefined' && projectiles.forEach) {
-    projectiles.forEach((proj, id) => {
+    projectiles.forEach((proj) => {
       const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       if (pos.distance > SHOT_DISTANCE) return;
 
@@ -2751,10 +2762,13 @@ function extrapolatePosition(player, dt) {
   const isInAir = jumpDirection !== null && jumpDirection !== undefined;
 
   if (isInAir) {
-    // In air: straight-line motion in frozen jumpDirection
+    // In air: continue along the stored air movement direction.
+    // This starts as jumpDirection, but may become a slide direction after
+    // hitting a wall mid-jump.
     const speed = gameConfig.TANK_SPEED || 15;
-    const dx = -Math.sin(jumpDirection) * (forwardSpeed || 0) * speed * dt;
-    const dz = -Math.cos(jumpDirection) * (forwardSpeed || 0) * speed * dt;
+    const moveDirection = slideDirection !== undefined ? slideDirection : jumpDirection;
+    const dx = -Math.sin(moveDirection) * (forwardSpeed || 0) * speed * dt;
+    const dz = -Math.cos(moveDirection) * (forwardSpeed || 0) * speed * dt;
 
     // Apply gravity to vertical velocity
     const gravity = gameConfig.GRAVITY || 9.8;

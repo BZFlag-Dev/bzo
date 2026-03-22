@@ -63,7 +63,7 @@ export function toggleDebugHud({ debugEnabled, setDebugEnabled, updateHudButtons
 }
 
 // Toggle settings HUD
-export function toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updateSettingsBtn }) {
+export function toggleSettingsHud({ settingsHud, showMessage, updateSettingsBtn }) {
   if (!settingsHud) return;
   if (settingsHud.style.display === 'block') {
     settingsHud.style.display = 'none';
@@ -76,7 +76,7 @@ export function toggleSettingsHud({ settingsHud, settingsBtn, showMessage, updat
 }
 
 // Toggle help panel
-export function toggleHelpPanel({ helpPanel, helpBtn, showMessage, updateHelpBtn }) {
+export function toggleHelpPanel({ helpPanel, showMessage, updateHelpBtn }) {
   if (!helpPanel) return;
   if (helpPanel.style.display === 'block') {
     helpPanel.style.display = 'none';
@@ -116,7 +116,7 @@ export function updateDebugDisplay({
   if (typeof latency !== 'undefined') {
     html += `<div><span class="label">FPS/Ping:</span><span class="value">${fps?.toFixed(1) ?? ''}/${Math.round(latency)} ms</span></div>`;
   }
-  html += `<div><span class=\"label\">Bytes Sent/Recv/s:</span><span class=\"value\">${sentBps ?? ''}/${receivedBps ?? ''}</span></div>`;
+  html += `<div><span class="label">Bytes Sent/Recv/s:</span><span class="value">${sentBps ?? ''}/${receivedBps ?? ''}</span></div>`;
   if (myTank && myTank.userData) {
     html += `<div><span class="label">Linear/Angular:</span><span class="value">${myTank.userData.forwardSpeed?.toFixed(2) ?? '0'}u/${myTank.userData.rotationSpeed?.toFixed(2) ?? '0'}rad</span></div>`;
     if (myTank.userData.verticalSpeed !== undefined) {
@@ -190,12 +190,7 @@ export function updateScoreboard({
   const scoreboardList = document.getElementById('scoreboardList');
   if (!scoreboardList) return;
   scoreboardList.innerHTML = '';
-  // Fix: declare playerData array
   const playerData = [];
-
-  // Collect all player data
-    // Align degreeBar bottom exactly to controlBox top (avoid rounding gap)
-    degreeBar.style.top = (controlBox.getBoundingClientRect().top - degreeBar.height + 1) + 'px';
 
   // Add current player
   if (myPlayerId && myTank && myTank.userData.playerState) {

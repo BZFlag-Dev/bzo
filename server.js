@@ -50,7 +50,6 @@ function logError(...args) {
 
 const app = express();
 const bodyParser = require('body-parser');
-const { type } = require('os');
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
@@ -665,10 +664,6 @@ function normalizeAngle(angle) {
   return angle;
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function checkCollision(x, y, z, tankRadius = 2) {
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
 
@@ -708,9 +703,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
       const distZ = localZ - closestZ;
       const distSquared = distX * distX + distZ * distZ;
       if (distSquared < tankRadius * tankRadius) {
-        try {
-          log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${rotation.toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
-        } catch (e) {}
+        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${rotation.toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         return obs;
       }
     } else if (obs.type === 'pyramid') {
@@ -889,14 +882,6 @@ function validateShot(player, shotX, shotY, shotZ) {
   return true;
 }
 
-// send message to a specific player
-function sendToPlayer(ws, message) {
-  const data = JSON.stringify(message);
-  if (ws.readyState === 1) {
-    ws.send(data);
-  }
-}
-
 // Broadcast to all players except sender
 function broadcast(message, excludeWs = null) {
   const data = JSON.stringify(message);
@@ -917,45 +902,12 @@ function broadcastAll(message) {
   });
 }
 
-// Helper function to check if position is on top of an obstacle
-function checkObstacleCollision(x, y, z) {
-  const tankRadius = 2;
-  for (const obs of OBSTACLES) {
-    const halfW = obs.w / 2;
-    const halfD = obs.d / 2;
-    const rotation = obs.rotation || 0;
-
-    // Transform position to obstacle's local space
-    const dx = x - obs.x;
-    const dz = z - obs.z;
-
-    const cos = Math.cos(-rotation);
-    const sin = Math.sin(-rotation);
-    const localX = dx * cos - dz * sin;
-    const localZ = dx * sin + dz * cos;
-
-    // Check if tank center is above this obstacle (with some margin for tank size)
-    const margin = tankRadius * 0.7;
-    if (Math.abs(localX) <= halfW + margin && Math.abs(localZ) <= halfD + margin) {
-      const obstacleBase = obs.baseY || 0;
-      const obstacleHeight = obs.h || 4;
-      const obstacleTop = obstacleBase + obstacleHeight;
-      // Check if tank is at or falling toward the top of obstacle
-      if (y >= obstacleTop - 1 && y <= obstacleTop + 2) {
-        return { onObstacle: true, obstacleHeight: obstacleTop };
-      }
-    }
-  }
-  return { onObstacle: false, obstacleHeight: 0 };
-}
-
 // Game loop - update projectiles and check collisions
 function gameLoop() {
 
   // Advance world time (20 ticks/sec, 24000 ticks/day)
   worldTime = (worldTime + 1) % 24000;
   const now = Date.now();
-  const deltaTime = 0.016; // ~60fps
   // No need to broadcast worldTime periodically; clients track it locally at 20 ticks/sec.
 
   // Update projectiles
@@ -1142,7 +1094,6 @@ wss.on('connection', (ws, req) => {
   const clientIP = forwardedFor ? forwardedFor.split(',')[0].trim() : req.socket.remoteAddress;
   const clientPort = forwardedPort ? forwardedPort : req.socket.remotePort;
   const ipDisplay = forwardedFor ? `${clientIP} (via ${req.socket.remoteAddress})` : clientIP;
-  const userAgent = req.headers['user-agent'] || 'unknown';
   if (forwardedFor && forwardedPort) {
     log(`Player ${player.playerNumber} connect from ${ipDisplay}:${clientPort} (x-forwarded-for + x-forwarded-port)`);
   } else if (forwardedFor) {
@@ -1231,10 +1182,6 @@ wss.on('connection', (ws, req) => {
           // Calculate deltaTime based on server's last update time
           const deltaTime = (now - player.lastUpdate) / 1000;
           // DON'T update player.lastUpdate here - it breaks extrapolation in validateMovement!
-
-          // Clamp deltaTime to reasonable values (prevent abuse and handle reconnects)
-          // With velocity-based dead reckoning, we allow longer intervals (up to 10 seconds)
-          const clampedDeltaTime = Math.min(Math.max(deltaTime, 0.001), 10.0);
 
           // Only accept new compact field names
           const x = Number(message.x);
@@ -1370,7 +1317,7 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
-        case 'joinGame':
+        case 'joinGame': {
           let joinName = nameCheck(message.name, player.id);
           const requestedTankModel = typeof message.tankModel === 'string'
             ? message.tankModel.toLowerCase()
@@ -1403,6 +1350,7 @@ wss.on('connection', (ws, req) => {
             player: player.getState(),
           });
           break;
+        }
 
         case 'pause':
           if (!player.paused && player.pauseCountdownStart === 0) {
@@ -1466,7 +1414,7 @@ wss.on('connection', (ws, req) => {
             ws.send(JSON.stringify({ success: true }));
             log(`Admin set map to ${mapFile}. Server restart required.`);
             requestServerRestart(`admin map change to ${mapFile}`);
-          } catch (e) {
+          } catch {
             ws.send(JSON.stringify({ error: 'Failed to update config' }));
           }
           break;

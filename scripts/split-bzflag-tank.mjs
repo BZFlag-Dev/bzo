@@ -181,18 +181,6 @@ for (const face of bodyFaces) {
   }
 }
 
-const leftTrackCoverFaces = coverFaces.filter((face) => {
-  const points = face.map((ref) => vertices[ref.v - 1]);
-  const centroidY = (points[0][1] + points[1][1] + points[2][1]) / 3;
-  return centroidY <= 0;
-});
-
-const rightTrackCoverFaces = coverFaces.filter((face) => {
-  const points = face.map((ref) => vertices[ref.v - 1]);
-  const centroidY = (points[0][1] + points[1][1] + points[2][1]) / 3;
-  return centroidY > 0;
-});
-
 const outputVertices = [...rotatedVertices];
 const outputTexcoords = [...texcoords];
 const outputNormals = [...rotatedNormals];

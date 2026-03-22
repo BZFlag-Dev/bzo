@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check:server": "node --check server.js",
+    "check": "npm run check:server && npm run lint"
   },
   "keywords": [
     "game",
@@ -21,6 +25,8 @@
     "ws": "^8.14.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "eslint": "^9.22.0",
     "nodemon": "^3.0.1"
   }
 }

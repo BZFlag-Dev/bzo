@@ -5,14 +5,11 @@
 
 // WebXR Manager for VR/AR support (Quest 2, Viture Luma Ultra, etc.)
 
-import * as THREE from 'three';
-
 let xrSession = null;
 let xrSupported = false;
 let xrEnabled = false;
 let xrMode = null; // 'immersive-vr' or 'immersive-ar'
 let xrInputSources = new Map(); // Map of controller input source ID -> controller state
-let xrAnimationCallback = null;
 let sendToServerCallback = null; // For logging debug messages
 
 export const xrState = {
@@ -40,8 +37,8 @@ export function debugLog(message) {
 }
 
 // Register callback for frame updates (will be called from renderer.setAnimationLoop)
-export function setXRFrameCallback(callback) {
-  xrAnimationCallback = callback;
+export function setXRFrameCallback() {
+  // Reserved hook for future external XR frame handlers.
 }
 
 // Check if WebXR is available
