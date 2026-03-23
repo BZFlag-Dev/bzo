@@ -75,17 +75,17 @@ export function createJumpBuffer(audioContext) {
 
 export function createLandBuffer(audioContext) {
   const sampleRate = audioContext.sampleRate;
-  const duration = 0.1;
-  const length = sampleRate * duration;
+  const duration = 0.16;
+  const length = Math.floor(sampleRate * duration);
   const buffer = audioContext.createBuffer(1, length, sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < length; i++) {
     const t = i / sampleRate;
-    const frequency = 80 - (t * 60);
-    const decay = Math.exp(-t * 30);
-    const noise = (Math.random() * 2 - 1) * 0.2;
-    const tone = Math.sin(2 * Math.PI * frequency * t) * 0.8;
-    data[i] = (tone + noise) * decay * 0.3;
+    const body = Math.sin(2 * Math.PI * (118 - t * 120) * t) * Math.exp(-t * 18) * 0.58;
+    const thump = Math.sin(2 * Math.PI * (72 - t * 48) * t) * Math.exp(-t * 24) * 0.45;
+    const smack = (Math.random() * 2 - 1) * Math.exp(-t * 34) * 0.22;
+    const click = Math.sin(2 * Math.PI * 700 * t) * Math.exp(-t * 42) * 0.05;
+    data[i] = (body + thump + smack + click) * 0.92;
   }
   return buffer;
 }

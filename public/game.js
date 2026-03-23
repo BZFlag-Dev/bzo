@@ -1883,7 +1883,7 @@ function handleServerMessage(message) {
         if (oldJumpDirection !== null && message.vv === 0) {
           tank.userData.jumpDirection = null;
           if (Math.abs(oldVerticalVel) >= MIN_LANDING_FEEDBACK_SPEED) {
-            triggerLandingFeedback(tank, Math.abs(oldVerticalVel));
+            triggerLandingFeedback(tank, Math.abs(oldVerticalVel), { local: message.id === myPlayerId });
           }
         }
 
@@ -3489,11 +3489,11 @@ function formatDebugNumber(value) {
   return Number.isFinite(value) ? value.toFixed(2) : 'NaN';
 }
 
-function triggerLandingFeedback(tank, impactSpeed = 0) {
+function triggerLandingFeedback(tank, impactSpeed = 0, { local = false } = {}) {
   if (!tank?.position) return;
   const clampedImpact = Math.max(0, impactSpeed || 0);
   const intensity = Math.max(0.5, Math.min(1.5, 0.55 + clampedImpact / 8));
-  renderManager.createLandingEffect(tank.position, intensity);
+  renderManager.createLandingEffect(tank.position, intensity, { local });
 }
 
 function handleInputEvents() {
@@ -3607,7 +3607,7 @@ function handleMotion(deltaTime) {
     setAirVelocity(myTank, 0, 0);
     clearJumpPredictionDebug(myTank);
     if (landingImpactSpeed >= MIN_LANDING_FEEDBACK_SPEED) {
-      triggerLandingFeedback(myTank, landingImpactSpeed);
+      triggerLandingFeedback(myTank, landingImpactSpeed, { local: true });
     }
   }
 

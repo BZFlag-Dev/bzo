@@ -1865,10 +1865,24 @@ class RenderManager {
     sound.source.onended = () => { this.worldGroup.remove(sound); };
   }
 
-  createLandingEffect(position, intensity = 1) {
+  playLocalLandSound(intensity = 1) {
+    if (!this.landBuffer) return;
+    const sound = new THREE.Audio(this.audioListener);
+    sound.setBuffer(this.landBuffer);
+    sound.setVolume(Math.max(0.45, Math.min(1.25, 0.55 + (intensity || 1) * 0.35)));
+    this.camera.add(sound);
+    sound.play();
+    sound.source.onended = () => {
+      this.camera.remove(sound);
+      sound.disconnect();
+    };
+  }
+
+  createLandingEffect(position, intensity = 1, { local = false } = {}) {
     if (!this.scene || !position) return;
     const clampedIntensity = Math.max(0.4, Math.min(1.6, intensity || 1));
-    this.playLandSound(position);
+    if (local) this.playLocalLandSound(clampedIntensity);
+    else this.playLandSound(position);
 
     const ringGeometry = new THREE.TorusGeometry(0.7, 0.05, 8, 32);
     const ringMaterial = new THREE.MeshBasicMaterial({
