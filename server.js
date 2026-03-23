@@ -449,8 +449,8 @@ class Player {
     this.lastJumpTime = 0;
     this.onObstacle = false;
     this.connectDate = new Date();
-    // Assign a random color for the tank (as a hex int)
-    this.color = Player.pickRandomColor();
+    // Spread new tank colors away from currently connected players.
+    this.color = Player.pickDistinctColor();
     this.tankModel = 'default';
 
     // Extrapolation state
@@ -474,22 +474,136 @@ class Player {
     };
   }
 
-  // Pick a random color suitable for tanks (avoid too dark/light)
-  static pickRandomColor() {
-    // Use HSL to pick vibrant, distinct colors
-    const hue = Math.floor(Math.random() * 360);
-    const sat = 60 + Math.random() * 30; // 60-90%
-    const light = 35 + Math.random() * 25; // 35-60%
-    // Convert HSL to RGB
-    function hslToRgb(h, s, l) {
-      s /= 100; l /= 100;
-      const k = n => (n + h / 30) % 12;
-      const a = s * Math.min(l, 1 - l);
-      const f = n => l - a * Math.max(-1, Math.min(Math.min(k(n) - 3, 9 - k(n)), 1));
-      return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
-    }
-    const [r, g, b] = hslToRgb(hue, sat, light);
+  static colorIntToRgb(color) {
+    return {
+      r: (color >> 16) & 0xff,
+      g: (color >> 8) & 0xff,
+      b: color & 0xff
+    };
+  }
+
+  static hslToRgb(h, s, l) {
+    s /= 100;
+    l /= 100;
+    const k = (n) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n) => l - a * Math.max(-1, Math.min(Math.min(k(n) - 3, 9 - k(n)), 1));
+    return {
+      r: Math.round(255 * f(0)),
+      g: Math.round(255 * f(8)),
+      b: Math.round(255 * f(4))
+    };
+  }
+
+  static rgbToColorInt({ r, g, b }) {
     return (r << 16) | (g << 8) | b;
+  }
+
+  static rgbToHsl(r, g, b) {
+    const rn = r / 255;
+    const gn = g / 255;
+    const bn = b / 255;
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const light = (max + min) / 2;
+    const delta = max - min;
+
+    if (delta === 0) {
+      return { hue: 0, sat: 0, light: light * 100 };
+    }
+
+    const sat = delta / (1 - Math.abs(2 * light - 1));
+    let hue;
+    switch (max) {
+      case rn:
+        hue = 60 * (((gn - bn) / delta) % 6);
+        break;
+      case gn:
+        hue = 60 * ((bn - rn) / delta + 2);
+        break;
+      default:
+        hue = 60 * ((rn - gn) / delta + 4);
+        break;
+    }
+    if (hue < 0) hue += 360;
+    return { hue, sat: sat * 100, light: light * 100 };
+  }
+
+  static hueDistance(a, b) {
+    const diff = Math.abs(a - b) % 360;
+    return Math.min(diff, 360 - diff);
+  }
+
+  static scoreCandidateColor(candidate, existingColors) {
+    if (existingColors.length === 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    let minScore = Number.POSITIVE_INFINITY;
+    for (const existing of existingColors) {
+      const dr = candidate.rgb.r - existing.rgb.r;
+      const dg = candidate.rgb.g - existing.rgb.g;
+      const db = candidate.rgb.b - existing.rgb.b;
+      const rgbDistanceSq = dr * dr + dg * dg + db * db;
+      const hueDistance = Player.hueDistance(candidate.hue, existing.hue);
+      const satDistance = Math.abs(candidate.sat - existing.sat);
+      const lightDistance = Math.abs(candidate.light - existing.light);
+      const separationScore = rgbDistanceSq + hueDistance * 64 + satDistance * 12 + lightDistance * 10;
+      if (separationScore < minScore) {
+        minScore = separationScore;
+      }
+    }
+    return minScore;
+  }
+
+  // Pick a pastel-ish color that is as far as practical from current players.
+  static pickDistinctColor() {
+    const existingColors = Array.from(players.values())
+      .map((player) => player.color)
+      .filter((color) => Number.isFinite(color))
+      .map((color) => {
+        const rgb = Player.colorIntToRgb(color);
+        const hsl = Player.rgbToHsl(rgb.r, rgb.g, rgb.b);
+        return {
+          rgb,
+          hue: hsl.hue,
+          sat: hsl.sat,
+          light: hsl.light
+        };
+      });
+
+    const saturationOptions = [58, 66, 74];
+    const lightnessOptions = [58, 64, 70];
+    const hueStep = 12;
+    const scoredCandidates = [];
+    let bestScore = -1;
+
+    for (let hue = 0; hue < 360; hue += hueStep) {
+      for (const sat of saturationOptions) {
+        for (const light of lightnessOptions) {
+          const rgb = Player.hslToRgb(hue, sat, light);
+          const candidate = { hue, sat, light, rgb };
+          const score = Player.scoreCandidateColor(candidate, existingColors);
+          scoredCandidates.push({ candidate, score });
+          if (score > bestScore) {
+            bestScore = score;
+          }
+        }
+      }
+    }
+
+    if (scoredCandidates.length === 0) {
+      const fallbackRgb = Player.hslToRgb(Math.floor(Math.random() * 360), 66, 64);
+      return Player.rgbToColorInt(fallbackRgb);
+    }
+
+    const scoreThreshold = bestScore * 0.72;
+    const topCandidates = scoredCandidates
+      .filter(({ score }) => score >= scoreThreshold)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 28);
+    const chosen = topCandidates[Math.floor(Math.random() * topCandidates.length)] || scoredCandidates[0];
+    return Player.rgbToColorInt(chosen.candidate.rgb);
   }
 
   respawn() {

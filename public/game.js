@@ -82,6 +82,18 @@ let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
 
+function lightenHexColor(colorValue, mix = 0.45) {
+  const color = new THREE.Color(typeof colorValue === 'number' ? colorValue : (colorValue || 0x4caf50));
+  color.lerp(new THREE.Color(0xffffff), Math.max(0, Math.min(1, mix)));
+  return color;
+}
+
+function getPlayerShotColor(playerId) {
+  const tank = tanks.get(playerId);
+  const playerColor = tank?.userData?.playerState?.color;
+  return lightenHexColor(typeof playerColor === 'number' ? playerColor : 0x4caf50, 0.45);
+}
+
 // Input state
 let lastShotTime = 0;
 
@@ -416,6 +428,9 @@ let lastSentAirVelocityX = 0;
 let lastSentAirVelocityZ = 0;
 let lastSentTime = 0;
 let worldTime = 0;
+let chatWindowDirty = true;
+let cachedWorldBorderColliders = [];
+let cachedCollisionColliders = [];
 // Velocity-based thresholds: only send when velocity changes significantly
 // Thresholds must be large enough to avoid noise from frame-to-frame velocity calculation variations
 const VELOCITY_THRESHOLD = 0.15; // Send if forward/rotation speed changes by 15%
@@ -437,6 +452,9 @@ const CORNER_STICK_MIN_INTENT = 0.2;
 const CORNER_STICK_MAX_PROGRESS = 0.08;
 const CORNER_STICK_FRAMES = 3;
 const CORNER_ESCAPE_DISTANCE = 0.2;
+const JUMP_PATH_MAX_TIME = 4.0;
+const JUMP_PATH_STEP_TIME = 0.12;
+const JUMP_PATH_POINT_COUNT = 24;
 
 // Extrapolation state
 let myJumpDirection = null; // null when on ground, rotation when in air
@@ -519,6 +537,331 @@ function ensureSupportSurfaceDebugMarker() {
   return supportSurfaceDebugMarker;
 }
 
+function clearJumpPredictionDebug(tank) {
+  if (!tank?.userData?.jumpPredictionDebug) return;
+  const debugGroup = tank.userData.jumpPredictionDebug;
+  renderManager.getWorldGroup().remove(debugGroup);
+  debugGroup.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) {
+        child.material.forEach((material) => material.dispose());
+      } else {
+        child.material.dispose();
+      }
+    }
+  });
+  tank.userData.jumpPredictionDebug = null;
+}
+
+function ensureJumpPredictionDebug(tank, mode = 'received') {
+  if (!tank) return null;
+  if (tank.userData.jumpPredictionDebug) return tank.userData.jumpPredictionDebug;
+
+  const playerColor = tank.userData?.playerState?.color;
+  const baseColor = lightenHexColor(
+    typeof playerColor === 'number' ? playerColor : (mode === 'sent' ? 0x7cf29a : 0x7cd6ff),
+    mode === 'sent' ? 0.25 : 0.35
+  );
+  const landingColor = baseColor.clone().lerp(new THREE.Color(0xffffff), 0.25);
+
+  const group = new THREE.Group();
+  const lineGeometry = new THREE.BufferGeometry();
+  const lineMaterial = new THREE.LineBasicMaterial({
+    color: baseColor.getHex(),
+    transparent: true,
+    opacity: 0.8,
+    depthWrite: false
+  });
+  const line = new THREE.Line(lineGeometry, lineMaterial);
+
+  const landingRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.9, 0.08, 8, 24),
+    new THREE.MeshBasicMaterial({
+      color: landingColor.getHex(),
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false
+    })
+  );
+  landingRing.rotation.x = Math.PI / 2;
+
+  const landingPillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 1.2, 10),
+    new THREE.MeshBasicMaterial({
+      color: landingColor.getHex(),
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false
+    })
+  );
+  landingPillar.position.y = 0.6;
+
+  group.add(line);
+  group.add(landingRing);
+  group.add(landingPillar);
+  group.userData = { line, landingRing, landingPillar, mode };
+  group.visible = false;
+  renderManager.getWorldGroup().add(group);
+  tank.userData.jumpPredictionDebug = group;
+  return group;
+}
+
+function samplePredictedAirPath(state) {
+  if (!state || !gameConfig) return null;
+  const points = [];
+  const stepTime = JUMP_PATH_STEP_TIME;
+  const maxSteps = Math.max(4, Math.floor(JUMP_PATH_MAX_TIME / stepTime));
+  const gravity = gameConfig.GRAVITY || 30;
+  let landed = false;
+  let landingPoint = null;
+
+  for (let step = 0; step <= maxSteps && points.length < JUMP_PATH_POINT_COUNT; step += 1) {
+    const t = step * stepTime;
+    const pos = extrapolatePosition(state, t);
+    const vvAtT = (state.verticalVelocity || 0) - gravity * t;
+    let pointY = pos.y;
+    let landedType = null;
+
+    if (pos.y <= 0) {
+      pointY = 0;
+      landed = true;
+      landedType = 'ground';
+    } else if (vvAtT <= 0) {
+      const support = findSupportSurface(pos.x, pos.y, pos.z);
+      if (support && pos.y <= support.surfaceY + ONTOP_TOLERANCE) {
+        pointY = support.surfaceY;
+        landed = true;
+        landedType = 'support';
+      }
+    }
+
+    points.push(new THREE.Vector3(pos.x, pointY, pos.z));
+    if (landed) {
+      landingPoint = { x: pos.x, y: pointY, z: pos.z, type: landedType };
+      break;
+    }
+  }
+
+  if (points.length < 2) {
+    const pos = extrapolatePosition(state, 0);
+    points.push(new THREE.Vector3(pos.x, pos.y, pos.z));
+    points.push(new THREE.Vector3(pos.x, Math.max(0, pos.y - 0.01), pos.z));
+  }
+
+  return {
+    points,
+    landingPoint: landingPoint || {
+      x: points[points.length - 1].x,
+      y: points[points.length - 1].y,
+      z: points[points.length - 1].z,
+      type: 'projected'
+    }
+  };
+}
+
+function updateJumpPredictionDebug(tank, state, mode = 'received') {
+  if (!tank) return;
+  const airborne = state && state.jumpDirection !== null && state.jumpDirection !== undefined;
+  if (!airborne) {
+    if (tank.userData.jumpPredictionDebug) {
+      tank.userData.jumpPredictionDebug.visible = false;
+    }
+    return;
+  }
+
+  const prediction = samplePredictedAirPath(state);
+  if (!prediction) return;
+
+  const debugGroup = ensureJumpPredictionDebug(tank, mode);
+  if (!debugGroup) return;
+  const { line, landingRing, landingPillar } = debugGroup.userData;
+  if (!line) return;
+
+  if (line.geometry) {
+    line.geometry.dispose();
+  }
+  line.geometry = new THREE.BufferGeometry().setFromPoints(prediction.points);
+  line.geometry.computeBoundingSphere();
+
+  const landing = prediction.landingPoint;
+  if (landingRing) {
+    landingRing.position.set(landing.x, landing.y + 0.05, landing.z);
+  }
+  if (landingPillar) {
+    landingPillar.position.set(landing.x, landing.y + 0.6, landing.z);
+  }
+  debugGroup.visible = showDebugGeometry;
+}
+
+function ensurePacketMotionDebug(targetObject, mode = 'received') {
+  if (!showDebugGeometry || !targetObject) return null;
+  if (targetObject.userData.packetMotionDebug) return targetObject.userData.packetMotionDebug;
+
+  const motionGroup = new THREE.Group();
+  motionGroup.position.set(0, 3.1, 0);
+
+  const linearGroup = new THREE.Group();
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 1.4, 10),
+    new THREE.MeshBasicMaterial({ color: mode === 'sent' ? 0x7cf29a : 0x7cd6ff, transparent: true, opacity: 0.9 })
+  );
+  shaft.rotation.x = Math.PI / 2;
+  shaft.position.z = -0.7;
+  shaft.userData.baseLength = 1.4;
+  const head = new THREE.Mesh(
+    new THREE.ConeGeometry(0.22, 0.55, 12),
+    new THREE.MeshBasicMaterial({ color: mode === 'sent' ? 0xc9ff6a : 0xfff36a, transparent: true, opacity: 0.95 })
+  );
+  head.rotation.x = -Math.PI / 2;
+  head.position.z = -1.55;
+  head.userData.baseOffset = 1.55;
+  linearGroup.add(shaft);
+  linearGroup.add(head);
+
+  const verticalGroup = new THREE.Group();
+  const verticalShaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.07, 0.07, 1.2, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff9f43, transparent: true, opacity: 0.9 })
+  );
+  verticalShaft.userData.baseLength = 1.2;
+  verticalShaft.position.y = 0.6;
+  const verticalHead = new THREE.Mesh(
+    new THREE.ConeGeometry(0.2, 0.45, 12),
+    new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.95 })
+  );
+  verticalHead.userData.baseOffset = 1.35;
+  verticalHead.position.y = 1.35;
+  verticalGroup.add(verticalShaft);
+  verticalGroup.add(verticalHead);
+
+  const turnRing = new THREE.Mesh(
+    new THREE.TorusGeometry(1.0, 0.04, 8, 24),
+    new THREE.MeshBasicMaterial({ color: 0xff7ad9, transparent: true, opacity: 0.35 })
+  );
+  turnRing.rotation.x = Math.PI / 2;
+  turnRing.position.y = 0.15;
+
+  const turnIndicator = new THREE.Mesh(
+    new THREE.ConeGeometry(0.18, 0.5, 12),
+    new THREE.MeshBasicMaterial({ color: 0xff7ad9, transparent: true, opacity: 0.95 })
+  );
+  turnIndicator.rotation.z = -Math.PI / 2;
+  turnIndicator.position.set(1.0, 0.15, 0);
+  turnIndicator.userData.baseOffset = 1.0;
+
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false }));
+  label.position.set(0, 1.7, 0);
+  label.scale.set(4.2, 0.95, 1);
+
+  motionGroup.userData = { linearGroup, verticalGroup, turnRing, turnIndicator, nameLabel: label, mode };
+  motionGroup.add(linearGroup);
+  motionGroup.add(verticalGroup);
+  motionGroup.add(turnRing);
+  motionGroup.add(turnIndicator);
+  motionGroup.add(label);
+  motionGroup.visible = false;
+  targetObject.add(motionGroup);
+  targetObject.userData.packetMotionDebug = motionGroup;
+  return motionGroup;
+}
+
+function updatePacketMotionDebug(targetObject, packetState, mode = 'received') {
+  if (!targetObject) return;
+  const gizmo = ensurePacketMotionDebug(targetObject, mode);
+  if (!gizmo) return;
+  targetObject.userData.hasPacketState = true;
+
+  const linearGroup = gizmo.userData.linearGroup;
+  const verticalGroup = gizmo.userData.verticalGroup;
+  const turnRing = gizmo.userData.turnRing;
+  const turnIndicator = gizmo.userData.turnIndicator;
+  const label = gizmo.userData.nameLabel;
+
+  const fs = Number.isFinite(packetState?.fs) ? packetState.fs : 0;
+  const rs = Number.isFinite(packetState?.rs) ? packetState.rs : 0;
+  const vx = Number.isFinite(packetState?.vx) ? packetState.vx : 0;
+  const vz = Number.isFinite(packetState?.vz) ? packetState.vz : 0;
+  const vv = Number.isFinite(packetState?.vv) ? packetState.vv : 0;
+  const r = Number.isFinite(packetState?.r) ? packetState.r : (targetObject.rotation?.y || 0);
+  const moveDirection = packetState?.d ?? packetState?.jumpDirection ?? r;
+  const tankSpeed = gameConfig?.TANK_SPEED || 12.5;
+
+  const airSpeed = Math.hypot(vx, vz);
+  const hasAirVector = airSpeed > 0.01;
+  let displayDirection = moveDirection;
+  let speedMagnitude = Math.abs(fs);
+  if (hasAirVector) {
+    displayDirection = Math.atan2(-vx, -vz);
+    speedMagnitude = airSpeed / tankSpeed;
+  } else if (fs < 0) {
+    displayDirection += Math.PI;
+  }
+  speedMagnitude = Math.max(0, Math.min(1.5, speedMagnitude));
+
+  if (linearGroup) {
+    const arrowScale = Math.max(0.18, speedMagnitude);
+    const shaft = linearGroup.children[0];
+    const head = linearGroup.children[1];
+    linearGroup.visible = speedMagnitude > 0.01;
+    linearGroup.rotation.y = displayDirection - r;
+    if (shaft) {
+      shaft.scale.set(1, 1, arrowScale);
+      shaft.position.z = -(shaft.userData.baseLength || 1.4) * arrowScale * 0.5;
+    }
+    if (head) {
+      head.position.z = -(head.userData.baseOffset || 1.55) * arrowScale;
+    }
+  }
+
+  if (verticalGroup) {
+    const jumpVelocity = gameConfig?.JUMP_VELOCITY || 22;
+    const verticalMagnitude = Math.min(1.5, Math.abs(vv) / jumpVelocity);
+    const activeVertical = verticalMagnitude > 0.01;
+    const verticalShaft = verticalGroup.children[0];
+    const verticalHead = verticalGroup.children[1];
+    verticalGroup.visible = activeVertical;
+    if (activeVertical) {
+      const arrowScale = Math.max(0.2, verticalMagnitude);
+      if (verticalShaft) {
+        verticalShaft.scale.set(1, arrowScale, 1);
+        verticalShaft.position.y = (verticalShaft.userData.baseLength || 1.2) * arrowScale * 0.5;
+      }
+      if (verticalHead) {
+        verticalHead.scale.set(1, arrowScale, 1);
+        verticalHead.position.y = (verticalHead.userData.baseOffset || 1.35) * arrowScale;
+        verticalHead.rotation.z = vv >= 0 ? 0 : Math.PI;
+      }
+    }
+  }
+
+  if (turnRing && turnIndicator) {
+    const turnMagnitude = Math.min(1.5, Math.abs(rs));
+    const activeTurn = turnMagnitude > 0.01;
+    turnRing.visible = activeTurn;
+    turnIndicator.visible = activeTurn;
+    if (activeTurn) {
+      const turnScale = Math.max(0.2, turnMagnitude);
+      const turnOffset = (turnIndicator.userData.baseOffset || 1.0) * turnScale;
+      turnIndicator.position.x = rs >= 0 ? -turnOffset : turnOffset;
+      turnIndicator.rotation.z = rs >= 0 ? Math.PI / 2 : -Math.PI / 2;
+      turnIndicator.scale.set(1, 1, turnScale);
+      turnRing.material.opacity = 0.2 + Math.min(0.5, turnMagnitude * 0.35);
+    }
+  }
+
+  if (label) {
+    renderManager.updateSpriteLabel(
+      label,
+      `f:${fs.toFixed(2)} r:${rs.toFixed(2)}`,
+      mode === 'sent' ? '#7cf29a' : '#7cd6ff'
+    );
+    label.visible = true;
+  }
+
+  gizmo.visible = showDebugGeometry;
+}
+
 function showSelectedFaceDebug(faceCenter, obstacleName = null, mode = 'slide') {
   if (!showDebugGeometry) return;
   const marker = ensureSelectedFaceDebugMarker();
@@ -585,7 +928,15 @@ function updateDebugGeometryVisibility() {
   }
   tanks.forEach((tank) => {
     if (tank.userData.ghostMesh) {
-      tank.userData.ghostMesh.visible = showDebugGeometry;
+      const isLocalTank = tank.userData && tank.userData.playerState && tank.userData.playerState.id === myPlayerId;
+      const shouldShowGhost = showDebugGeometry && (!isLocalTank || Boolean(tank.userData.ghostMesh.userData.hasPacketState));
+      tank.userData.ghostMesh.visible = shouldShowGhost;
+      if (tank.userData.ghostMesh.userData.packetMotionDebug) {
+        tank.userData.ghostMesh.userData.packetMotionDebug.visible = shouldShowGhost;
+      }
+    }
+    if (tank.userData.jumpPredictionDebug) {
+      tank.userData.jumpPredictionDebug.visible = showDebugGeometry;
     }
   });
 }
@@ -643,6 +994,7 @@ initHudControls({
     if (chatMessages.length > CHAT_MAX_MESSAGES * 3) {
       chatMessages.shift();
     }
+    chatWindowDirty = true;
   },
   updateChatWindow: () => updateChatWindow(),
   sendToServer: (payload) => sendToServer(payload),
@@ -1243,6 +1595,7 @@ function handleServerMessage(message) {
 
       myPlayerId = message.player.id;
       gameConfig = message.config;
+      refreshCollisionColliders();
       playerX = message.player.x;
       playerZ = message.player.z;
       playerRotation = message.player.rotation;
@@ -1285,9 +1638,11 @@ function handleServerMessage(message) {
       // Update obstacles from server
       if (message.obstacles) {
         OBSTACLES = message.obstacles;
+        refreshCollisionColliders();
         renderManager.setObstacles(OBSTACLES);
       } else {
         OBSTACLES = [];
+        refreshCollisionColliders();
         renderManager.setObstacles([]);
       }
 
@@ -1441,6 +1796,34 @@ function handleServerMessage(message) {
         if (tank.userData.ghostMesh) {
           tank.userData.ghostMesh.position.set(message.x, message.y, message.z);
           tank.userData.ghostMesh.rotation.y = message.r;
+          updatePacketMotionDebug(tank.userData.ghostMesh, {
+            fs: message.fs,
+            rs: message.rs,
+            vv: message.vv,
+            vx: message.vx,
+            vz: message.vz,
+            r: message.r,
+            d: message.d,
+            jumpDirection: tank.userData.jumpDirection
+          }, 'received', tank.userData.playerState?.name || '');
+        }
+
+        if (tank.userData.jumpDirection !== null && tank.userData.jumpDirection !== undefined) {
+          updateJumpPredictionDebug(tank, {
+            x: message.x,
+            y: message.y,
+            z: message.z,
+            r: message.r,
+            forwardSpeed: message.fs,
+            rotationSpeed: message.rs,
+            verticalVelocity: message.vv,
+            jumpDirection: tank.userData.jumpDirection,
+            slideDirection: message.d,
+            airVelocityX: Number.isFinite(message.vx) ? message.vx : tank.userData.airVelocityX || 0,
+            airVelocityZ: Number.isFinite(message.vz) ? message.vz : tank.userData.airVelocityZ || 0
+          }, 'received');
+        } else {
+          clearJumpPredictionDebug(tank);
         }
       }
       break;
@@ -1464,6 +1847,7 @@ function handleServerMessage(message) {
         myTank.userData.airVelocityZ = 0;
         myTank.userData.jumpDirection = null;
         myTank.userData.slideDirection = undefined;
+        clearJumpPredictionDebug(myTank);
       }
       break;
 
@@ -1522,6 +1906,7 @@ function handleServerMessage(message) {
       let prefix = `${fromName} -> ${toName} `;
       chatMessages.push(prefix + message.text);
       if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
+      chatWindowDirty = true;
       updateChatWindow();
       break;
     }
@@ -1565,15 +1950,20 @@ function addPlayer(player) {
     renderManager.getWorldGroup().add(tank);
     tanks.set(player.id, tank);
 
-    // Create ghost mesh for this tank (server-confirmed position indicator)
-    if (player.id !== myPlayerId) {
-      const ghostTank = renderManager.createGhostMesh(tank);
-      ghostTank.visible = showDebugGeometry; // Initially hidden unless debug geometry is enabled
-      renderManager.getWorldGroup().add(ghostTank);
-      tank.userData.ghostMesh = ghostTank;
+    // Create ghost mesh for this tank. Remote ghosts show last received server
+    // state; the local ghost shows the last sent movement packet.
+    const ghostTank = renderManager.createGhostMesh(tank);
+    ghostTank.visible = false;
+    renderManager.getWorldGroup().add(ghostTank);
+    tank.userData.ghostMesh = ghostTank;
+    ensurePacketMotionDebug(ghostTank, player.id === myPlayerId ? 'sent' : 'received');
 
-      // Store server position for ghost
+    if (player.id !== myPlayerId) {
       tank.userData.serverPosition = { x: player.x, y: player.y, z: player.z, r: player.rotation };
+      ghostTank.visible = showDebugGeometry;
+      ghostTank.userData.hasPacketState = true;
+    } else {
+      ghostTank.userData.hasPacketState = false;
     }
   }
   // Always update tank state
@@ -1601,12 +1991,44 @@ function addPlayer(player) {
     renderManager.updateSpriteLabel(tank.userData.ghostMesh.userData.nameLabel, player.name, player.color);
   }
 
+  if (player.id !== myPlayerId && tank.userData.ghostMesh) {
+    updatePacketMotionDebug(tank.userData.ghostMesh, {
+      fs: player.forwardSpeed || 0,
+      rs: player.rotationSpeed || 0,
+      vv: player.verticalVelocity || 0,
+      vx: player.airVelocityX || 0,
+      vz: player.airVelocityZ || 0,
+      r: player.rotation,
+      d: player.slideDirection,
+      jumpDirection: player.jumpDirection ?? null
+    }, 'received', player.name || '');
+  }
+
+  if (player.jumpDirection !== null && player.jumpDirection !== undefined) {
+    updateJumpPredictionDebug(tank, {
+      x: player.x,
+      y: player.y,
+      z: player.z,
+      r: player.rotation,
+      forwardSpeed: player.forwardSpeed || 0,
+      rotationSpeed: player.rotationSpeed || 0,
+      verticalVelocity: player.verticalVelocity || 0,
+      jumpDirection: player.jumpDirection,
+      slideDirection: player.slideDirection,
+      airVelocityX: player.airVelocityX || 0,
+      airVelocityZ: player.airVelocityZ || 0
+    }, player.id === myPlayerId ? 'sent' : 'received');
+  } else {
+    clearJumpPredictionDebug(tank);
+  }
+
   callUpdateScoreboard();
 }
 
 function removePlayer(playerId) {
   const tank = tanks.get(playerId);
   if (tank) {
+    clearJumpPredictionDebug(tank);
     // Remove ghost mesh if it exists
     if (tank.userData.ghostMesh) {
       renderManager.getWorldGroup().remove(tank.userData.ghostMesh);
@@ -1640,8 +2062,14 @@ function removeShield(playerId) {
 }
 
 function createProjectile(data) {
-  const projectile = renderManager.createProjectile(data);
+  const shotColor = getPlayerShotColor(data.playerId);
+  const projectile = renderManager.createProjectile({
+    ...data,
+    color: shotColor.getHex(),
+  });
   if (!projectile) return;
+  projectile.userData.playerId = data.playerId;
+  projectile.userData.radarColor = `#${shotColor.getHexString()}`;
   projectiles.set(data.id, projectile);
 }
 
@@ -1696,6 +2124,7 @@ function handlePlayerHit(message) {
 
   // Get victim tank and create explosion effect
   if (victimTank) {
+    clearJumpPredictionDebug(victimTank);
     // Immediately hide the tank from the scene
     victimTank.visible = false;
     // Create explosion with tank parts
@@ -1706,6 +2135,7 @@ function handlePlayerHit(message) {
 function handlePlayerRespawn(message) {
   const tank = tanks.get(message.player.id);
   if (tank) {
+    clearJumpPredictionDebug(tank);
     tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
     tank.userData.verticalVelocity = message.player.verticalVelocity;
@@ -1781,6 +2211,7 @@ function showMessage(text) {
   const prefix = 'local: ';
   chatMessages.push(prefix + text);
   if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
+  chatWindowDirty = true;
   updateChatWindow();
 }
 
@@ -1809,20 +2240,30 @@ function getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD) {
 }
 
 function getWorldBorderColliders() {
+  if (cachedWorldBorderColliders.length > 0) return cachedWorldBorderColliders;
   const mapSize = gameConfig?.MAP_SIZE || gameConfig?.mapSize || 100;
   const halfMap = mapSize / 2;
   const thickness = 4;
   const span = mapSize + thickness * 2;
-  return [
+  cachedWorldBorderColliders = [
     { type: 'box', name: 'boundary_north', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: -halfMap - thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
     { type: 'box', name: 'boundary_south', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: halfMap + thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
     { type: 'box', name: 'boundary_east', collisionKind: 'boundary', infiniteHeight: true, x: halfMap + thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 },
     { type: 'box', name: 'boundary_west', collisionKind: 'boundary', infiniteHeight: true, x: -halfMap - thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 }
   ];
+  return cachedWorldBorderColliders;
 }
 
 function getCollisionColliders() {
-  return [...OBSTACLES, ...getWorldBorderColliders()];
+  if (cachedCollisionColliders.length === 0) {
+    cachedCollisionColliders = [...OBSTACLES, ...getWorldBorderColliders()];
+  }
+  return cachedCollisionColliders;
+}
+
+function refreshCollisionColliders() {
+  cachedWorldBorderColliders = [];
+  cachedCollisionColliders = [];
 }
 
 // Returns: null, { type: 'collision', obstacle }, or { type: 'ontop', obstacle }
@@ -2310,6 +2751,13 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     showSelectedFaceDebug(surfaceContact.faceCenter, collisionObj.obstacle?.name || surfaceContact.faceCenter?.name || null, 'blocked');
   } else {
     hideSelectedFaceDebug();
+  }
+  if (Math.hypot(intendedDeltaX, intendedDeltaY, intendedDeltaZ) > 1e-4) {
+    sendMovementDebug(
+      `[MOVE_STUCK] pos=(${formatDebugNumber(x)},${formatDebugNumber(y)},${formatDebugNumber(z)}) ` +
+      `intent=(${formatDebugNumber(intendedDeltaX)},${formatDebugNumber(intendedDeltaY)},${formatDebugNumber(intendedDeltaZ)}) ` +
+      `obs=${collisionObj?.obstacle?.name || 'unknown'}`
+    );
   }
   resetCornerStickState();
   return { x, y, z, moved: false, altered: false, landedOn: null, landedType: null };
@@ -3030,6 +3478,7 @@ function handleMotion(deltaTime) {
     myTank.userData.slideDirection = undefined;
     myTank.userData.verticalVelocity = 0;
     setAirVelocity(myTank, 0, 0);
+    clearJumpPredictionDebug(myTank);
   }
 
   const oldX = playerX;
@@ -3304,6 +3753,46 @@ function handleMotion(deltaTime) {
       movePacket.d = Number(packetSlideDirection.toFixed(2));
     }
 
+    if (myTank && myTank.userData.ghostMesh) {
+      const ghostX = Number(playerX.toFixed(2));
+      const ghostY = Number(playerY.toFixed(2));
+      const ghostZ = Number(playerZ.toFixed(2));
+      const ghostR = Number(playerRotation.toFixed(2));
+
+      myTank.userData.ghostMesh.position.set(ghostX, ghostY, ghostZ);
+      myTank.userData.ghostMesh.rotation.y = ghostR;
+      myTank.userData.ghostMesh.userData.hasPacketState = true;
+      myTank.userData.ghostMesh.visible = showDebugGeometry;
+      updatePacketMotionDebug(myTank.userData.ghostMesh, {
+      fs: sentFS,
+      rs: sentRS,
+      vv: sentVV,
+      vx: movePacket.vx,
+      vz: movePacket.vz,
+      r: movePacket.r,
+      d: movePacket.d,
+      jumpDirection
+      }, 'sent', 'me');
+    }
+
+    if (jumpDirection !== null && jumpDirection !== undefined) {
+      updateJumpPredictionDebug(myTank, {
+        x: movePacket.x,
+        y: movePacket.y,
+        z: movePacket.z,
+        r: movePacket.r,
+        forwardSpeed: sentFS,
+        rotationSpeed: sentRS,
+        verticalVelocity: sentVV,
+        jumpDirection,
+        slideDirection: movePacket.d,
+        airVelocityX: movePacket.vx,
+        airVelocityZ: movePacket.vz
+      }, 'sent');
+    } else {
+      clearJumpPredictionDebug(myTank);
+    }
+
     sendToServer(movePacket);
     // Store the ROUNDED values we actually sent to prevent rounding-induced deltas
     lastSentForwardSpeed = sentFS;
@@ -3313,16 +3802,6 @@ function handleMotion(deltaTime) {
     lastSentAirVelocityZ = movePacket.vz;
     lastSentTime = now;
 
-    // Update local player ghost to show what server/other players see
-    if (myTank && myTank.userData.ghostMesh) {
-      const ghostX = Number(playerX.toFixed(2));
-      const ghostY = Number(playerY.toFixed(2));
-      const ghostZ = Number(playerZ.toFixed(2));
-      const ghostR = Number(playerRotation.toFixed(2));
-
-      myTank.userData.ghostMesh.position.set(ghostX, ghostY, ghostZ);
-      myTank.userData.ghostMesh.rotation.y = ghostR;
-    }
   }
   // Fire button: keyboard Space, mobile/XR/gamepad virtualInput.fire
   if ((!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire)) {
@@ -3551,13 +4030,14 @@ function updateRadar() {
     projectiles.forEach((proj) => {
       const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       if (pos.distance > SHOT_DISTANCE) return;
+      const shotRadarColor = proj.userData?.radarColor || '#FFD700';
 
       radarCtx.save();
       radarCtx.beginPath();
       radarCtx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
-      radarCtx.fillStyle = '#FFD700';
+      radarCtx.fillStyle = shotRadarColor;
       radarCtx.globalAlpha = 0.85;
-      radarCtx.shadowColor = '#FFD700';
+      radarCtx.shadowColor = shotRadarColor;
       radarCtx.shadowBlur = 6;
       radarCtx.fill();
       radarCtx.restore();
@@ -3710,6 +4190,7 @@ function updateRadar() {
 let lastTime = performance.now();
 
 function updateChatWindow() {
+  if (!chatWindowDirty) return;
   const chatMessagesDiv = document.getElementById('chatMessages');
   if (!chatMessagesDiv) return;
   // Remove all previous messages
@@ -3721,6 +4202,7 @@ function updateChatWindow() {
     div.textContent = msg;
     chatMessagesDiv.appendChild(div);
   }
+  chatWindowDirty = false;
 }
 
 /**

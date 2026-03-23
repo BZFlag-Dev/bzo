@@ -1865,16 +1865,18 @@ class RenderManager {
   createProjectile(data) {
     if (!this.scene) return null;
     const geometry = new THREE.SphereGeometry(0.3, 8, 8);
-    const material = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+    const projectileColor = typeof data.color === 'number' ? data.color : 0xffff00;
+    const material = new THREE.MeshBasicMaterial({ color: projectileColor });
     const projectile = new THREE.Mesh(geometry, material);
     projectile.position.set(data.x, data.y, data.z);
     projectile.userData = {
       dirX: data.dirX,
       dirZ: data.dirZ,
+      color: projectileColor,
     };
     // Only add a point light if dynamic lighting is enabled
     if (this.dynamicLightingEnabled) {
-      const shotLight = new THREE.PointLight(0xffee88, 1.5, 12, 2);
+      const shotLight = new THREE.PointLight(projectileColor, 1.5, 12, 2);
       shotLight.position.copy(projectile.position);
       this.worldGroup.add(shotLight);
       projectile.userData.shotLight = shotLight;

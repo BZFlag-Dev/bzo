@@ -5,6 +5,59 @@
 
 // hud.js - Handles HUD and debug display logic
 
+const degreeBarRenderState = {
+  canvas: null,
+  controlBox: null,
+  width: 0,
+  height: 0,
+  dpr: 0,
+  topPx: null,
+  centerDegKey: null,
+  colorKey: ''
+};
+
+const altimeterRenderState = {
+  canvas: null,
+  controlBox: null,
+  width: 0,
+  height: 0,
+  dpr: 0,
+  tankYKey: null,
+  colorKey: ''
+};
+
+function getHudCanvasContext(cache, canvasId, controlBoxId = 'controlBox') {
+  if (!cache.canvas) {
+    cache.canvas = document.getElementById(canvasId);
+  }
+  if (!cache.controlBox) {
+    cache.controlBox = document.getElementById(controlBoxId);
+  }
+  if (!cache.canvas) {
+    return null;
+  }
+  return {
+    canvas: cache.canvas,
+    controlBox: cache.controlBox,
+    ctx: cache.canvas.getContext('2d')
+  };
+}
+
+function resizeHudCanvasIfNeeded(cache, canvas, width, height, dpr) {
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+  const resized = cache.width !== width || cache.height !== height || cache.dpr !== dpr ||
+    canvas.width !== pixelWidth || canvas.height !== pixelHeight;
+  if (resized) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+    cache.width = width;
+    cache.height = height;
+    cache.dpr = dpr;
+  }
+  return resized;
+}
+
 // Converts a color int or string to a CSS color string
 export function colorToCSS(color) {
   if (typeof color === 'string') return color;
@@ -253,42 +306,52 @@ export function updateScoreboard({
 
 // Draws a degree bar above the control box
 export function updateDegreeBar({ myTank, playerRotation }) {
-  const degreeBar = document.getElementById('degreeBar');
-  const controlBox = document.getElementById('controlBox');
-  if (!degreeBar || !controlBox || !myTank) return;
-  // Responsive: let CSS control size, set canvas size for HiDPI
+  const hud = getHudCanvasContext(degreeBarRenderState, 'degreeBar');
+  if (!hud || !hud.controlBox || !myTank) return;
+  const { canvas: degreeBar, controlBox, ctx } = hud;
   const barRect = degreeBar.getBoundingClientRect();
+  const barWidth = Math.round(barRect.width);
+  const barHeight = Math.round(barRect.height);
+  if (!barWidth || !barHeight) return;
   const dpr = window.devicePixelRatio || 1;
-  degreeBar.width = Math.round(barRect.width * dpr);
-  degreeBar.height = Math.round(barRect.height * dpr);
+  const resized = resizeHudCanvasIfNeeded(degreeBarRenderState, degreeBar, barWidth, barHeight, dpr);
   // Align bottom of degreeBar to top of controlBox
-  degreeBar.style.top = (controlBox.getBoundingClientRect().top - barRect.height + 1) + 'px';
-  // Optionally, align left if needed: degreeBar.style.left = ...
-  const ctx = degreeBar.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
-  ctx.clearRect(0, 0, barRect.width, barRect.height);
+  const topPx = Math.round(controlBox.getBoundingClientRect().top - barHeight + 1);
+  if (degreeBarRenderState.topPx !== topPx) {
+    degreeBar.style.top = `${topPx}px`;
+    degreeBarRenderState.topPx = topPx;
+  }
 
   // Get controlBox border color for bar/labels
   let barColor = '#4CAF50';
   let labelColor = '#4CAF50';
-  if (controlBox) {
-    const style = window.getComputedStyle(controlBox);
-    const borderColor = style.borderColor;
-    barColor = borderColor;
-    labelColor = borderColor;
-    if (controlBox.classList.contains('keyboard-mode')) {
-      barColor = 'rgba(255, 152, 0, 0.6)';
-      labelColor = 'rgba(255, 152, 0, 0.9)';
-    }
+  const style = window.getComputedStyle(controlBox);
+  const borderColor = style.borderColor;
+  barColor = borderColor;
+  labelColor = borderColor;
+  if (controlBox.classList.contains('keyboard-mode')) {
+    barColor = 'rgba(255, 152, 0, 0.6)';
+    labelColor = 'rgba(255, 152, 0, 0.9)';
   }
 
   // Bar spans 45 degrees, centered on playerRotation (in radians)
   const degSpan = 45;
   const centerDeg = ((playerRotation || 0) * 180 / Math.PI) % 360;
+  const pxPerDeg = barWidth / degSpan;
+  const centerDegKey = Math.round(centerDeg * pxPerDeg * 2) / 2;
+  const colorKey = `${barColor}|${labelColor}|${controlBox.classList.contains('keyboard-mode')}`;
+  if (!resized && degreeBarRenderState.centerDegKey === centerDegKey && degreeBarRenderState.colorKey === colorKey) {
+    return;
+  }
+  degreeBarRenderState.centerDegKey = centerDegKey;
+  degreeBarRenderState.colorKey = colorKey;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
+  ctx.clearRect(0, 0, barWidth, barHeight);
+
   // Reverse direction: as player turns right, bar moves left
   const startDeg = centerDeg + degSpan / 2;
   const endDeg = centerDeg - degSpan / 2;
-  const pxPerDeg = barRect.width / degSpan;
 
   ctx.save();
   ctx.strokeStyle = barColor;
@@ -299,14 +362,14 @@ export function updateDegreeBar({ myTank, playerRotation }) {
 
   // Draw ticks and labels for every 5 degrees in the visible span
   // Ticks connect to controlBox top edge responsively
-  const barBottom = barRect.height - 4;
+  const barBottom = barHeight - 4;
   for (let deg = Math.ceil(startDeg / 5) * 5; deg >= endDeg; deg -= 5) {
     let normDeg = ((deg % 360) + 360) % 360;
     const px = (startDeg - deg) * pxPerDeg;
     const isMajor = normDeg % 10 === 0;
     // Shorter ticks, like altimeter
     const y1 = barBottom;
-    const y2 = isMajor ? barBottom - barRect.height * 0.45 : barBottom - barRect.height * 0.35;
+    const y2 = isMajor ? barBottom - barHeight * 0.45 : barBottom - barHeight * 0.35;
     ctx.beginPath();
     ctx.moveTo(px, y1);
     ctx.lineTo(px, y2);
@@ -324,26 +387,22 @@ export function updateDegreeBar({ myTank, playerRotation }) {
 
 // Draws on the right side of the control box
 export function updateAltimeter({ myTank, tickSpacing = 5 }) {
-  const altimeter = document.getElementById('altimeter');
-  if (!altimeter || !myTank) return;
-  const ctx = altimeter.getContext('2d');
-  // Responsive: let CSS control size, set canvas size for HiDPI
-  const controlBox = document.getElementById('controlBox');
-  const boxRect = controlBox ? controlBox.getBoundingClientRect() : null;
+  const hud = getHudCanvasContext(altimeterRenderState, 'altimeter');
+  if (!hud || !myTank) return;
+  const { canvas: altimeter, controlBox, ctx } = hud;
   const altRect = altimeter.getBoundingClientRect();
+  const altWidth = Math.round(altRect.width);
+  const altHeight = Math.round(altRect.height);
+  if (!altWidth || !altHeight) return;
+  const boxRect = controlBox ? controlBox.getBoundingClientRect() : null;
   const dpr = window.devicePixelRatio || 1;
-  altimeter.width = Math.round(altRect.width * dpr);
-  altimeter.height = Math.round(altRect.height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
-  // Clear the canvas to transparent (no background fill)
-  ctx.clearRect(0, 0, altRect.width, altRect.height);
-  // Do not fill any background; keep fully transparent
+  const resized = resizeHudCanvasIfNeeded(altimeterRenderState, altimeter, altWidth, altHeight, dpr);
 
   // Show 30 units from top to bottom
   const unitsVisible = 30;
-  const pixelsPerUnit = altRect.height / unitsVisible;
+  const pixelsPerUnit = altHeight / unitsVisible;
   const tankY = myTank.position.y;
-  const centerY = altRect.height / 2;
+  const centerY = altHeight / 2;
 
   // Get controlBox border color for altimeter lines/numbers
   let tickColor = '#4CAF50'; // fallback to green
@@ -358,6 +417,16 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
       numberColor = 'rgba(255, 152, 0, 0.9)';
     }
   }
+  const tankYKey = Math.round(tankY * pixelsPerUnit * 2) / 2;
+  const colorKey = `${tickColor}|${numberColor}|${controlBox?.classList.contains('keyboard-mode') ?? false}`;
+  if (!resized && altimeterRenderState.tankYKey === tankYKey && altimeterRenderState.colorKey === colorKey) {
+    return;
+  }
+  altimeterRenderState.tankYKey = tankYKey;
+  altimeterRenderState.colorKey = colorKey;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
+  ctx.clearRect(0, 0, altWidth, altHeight);
 
   // Draw ticks and numbers relative to tankY at center, with smooth scrolling
   ctx.save();
@@ -369,7 +438,7 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
 
   // Ticks start at the left edge of the altimeter, which should abut the controlBox
   let tickStart = 0;
-  let tickEnd = Math.max(8, altRect.width * 0.28); // short, responsive
+  let tickEnd = Math.max(8, altWidth * 0.28); // short, responsive
   let numberOffset = tickEnd + 4;
   // If controlBox is present, align tickStart to the edge closest to controlBox
   if (boxRect && altRect) {
@@ -378,8 +447,8 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
       tickStart = 0;
     } else if (altRect.right < boxRect.left + 5) {
       // If altimeter is to the left, align right edge
-      tickStart = altRect.width;
-      tickEnd = altRect.width - Math.max(8, altRect.width * 0.28);
+      tickStart = altWidth;
+      tickEnd = altWidth - Math.max(8, altWidth * 0.28);
       numberOffset = tickEnd - 4;
     }
   }
@@ -409,7 +478,7 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
   ctx.lineWidth = 3;
   // Make the yellow line even shorter than the tick lines
   const centerLineStart = 0;
-  const centerLineEnd = altRect.width * 0.22; // shorter than tickEnd
+  const centerLineEnd = altWidth * 0.22; // shorter than tickEnd
   ctx.beginPath();
   ctx.moveTo(centerLineStart, centerY);
   ctx.lineTo(centerLineEnd, centerY);
