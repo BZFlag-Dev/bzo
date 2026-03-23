@@ -1142,7 +1142,7 @@ function gameLoop() {
                 player: player.getState(),
               });
             }
-          }, 2000);
+          }, 5000);
         }
       }
     });
@@ -1513,7 +1513,7 @@ wss.on('connection', (ws, req) => {
                 player: player.getState(),
               });
             }
-          }, 2000);
+          }, 5000);
           break;
         }
 

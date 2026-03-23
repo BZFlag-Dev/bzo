@@ -144,6 +144,7 @@ class RenderManager {
     this.anaglyphEffect = null;
     this.anaglyphEnabled = false;
     this.activeExplosions = [];
+    this.activeLandingEffects = [];
 
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
@@ -155,6 +156,8 @@ class RenderManager {
     this._tankTemplateByPath = new Map();
     this._tankModelLoadsInFlight = new Set();
     this._tankModelPath = '/obj/default.obj';
+    this.deathFollowTarget = null;
+    this.deathFollowAnchor = null;
     this._preloadTankModel('/obj/default.obj');
     this._preloadTankModel('/obj/simple.obj');
     this._preloadTankModel('/obj/bzflag-tank.obj');
@@ -1862,6 +1865,33 @@ class RenderManager {
     sound.source.onended = () => { this.worldGroup.remove(sound); };
   }
 
+  createLandingEffect(position, intensity = 1) {
+    if (!this.scene || !position) return;
+    const clampedIntensity = Math.max(0.4, Math.min(1.6, intensity || 1));
+    this.playLandSound(position);
+
+    const ringGeometry = new THREE.TorusGeometry(0.7, 0.05, 8, 32);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0xbfe8ff,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false
+    });
+    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(position.x, position.y + 0.06, position.z);
+    ring.scale.setScalar(0.7 + clampedIntensity * 0.18);
+    this.worldGroup.add(ring);
+    this.activeLandingEffects.push({
+      ring,
+      geometry: ringGeometry,
+      material: ringMaterial,
+      intensity: clampedIntensity,
+      lifetime: 0,
+      maxLifetime: 0.28 + clampedIntensity * 0.1
+    });
+  }
+
   createProjectile(data) {
     if (!this.scene) return null;
     const geometry = new THREE.SphereGeometry(0.3, 8, 8);
@@ -1938,7 +1968,20 @@ class RenderManager {
     explosion.position.copy(position);
     this.worldGroup.add(explosion);
 
+    const shockwaveGeometry = new THREE.TorusGeometry(1.6, 0.12, 8, 48);
+    const shockwaveMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd27a,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false
+    });
+    const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
+    shockwave.rotation.x = Math.PI / 2;
+    shockwave.position.set(position.x, Math.max(0.08, position.y + 0.08), position.z);
+    this.worldGroup.add(shockwave);
+
     const debrisPieces = [];
+    let followTarget = null;
     if (tank && tank.userData) {
       const tankWorldPos = tank.position.clone();
       const explodableParts = Array.isArray(tank.userData.explodableParts)
@@ -1984,11 +2027,17 @@ class RenderManager {
         part.scale.copy(localScale);
 
         let speedMultiplier = 0.9;
-        if (sourcePart === tank.userData.body) speedMultiplier = 1.0;
+        if (sourcePart === tank.userData.body) speedMultiplier = 0.95;
         else if (sourcePart === tank.userData.turret) speedMultiplier = 0.8;
         else if (sourcePart === tank.userData.barrel) speedMultiplier = 0.6;
 
-        this._launchTankPart(part, tankWorldPos, debrisPieces, speedMultiplier);
+        const debrisPiece = this._launchTankPart(part, tankWorldPos, debrisPieces, speedMultiplier, {
+          isFollowTarget: sourcePart === tank.userData.body,
+          maxLifetime: sourcePart === tank.userData.body ? 5.0 : 3.2
+        });
+        if (sourcePart === tank.userData.body && debrisPiece) {
+          followTarget = debrisPiece.mesh;
+        }
       });
     }
 
@@ -2022,7 +2071,7 @@ class RenderManager {
       );
       debris.userData.isTankPart = false;
       this.worldGroup.add(debris);
-      debrisPieces.push({ mesh: debris, lifetime: 0, maxLifetime: 1.5 });
+      debrisPieces.push({ mesh: debris, lifetime: 0, maxLifetime: 2.5 });
     }
 
     this.activeExplosions.push({
@@ -2031,20 +2080,40 @@ class RenderManager {
       sphere: explosion,
       sphereGeometry: geometry,
       sphereMaterial: material,
+      shockwave,
+      shockwaveGeometry,
+      shockwaveMaterial,
       debrisPieces,
     });
+    return { followTarget };
   }
 
   updateExplosions(deltaTime) {
-    if (!this.activeExplosions.length) return;
     const dt = Math.max(0.001, Math.min(0.05, deltaTime || 0.016));
+
+    for (let index = this.activeLandingEffects.length - 1; index >= 0; index -= 1) {
+      const effect = this.activeLandingEffects[index];
+      effect.lifetime += dt;
+      const progress = Math.min(1, effect.lifetime / effect.maxLifetime);
+      effect.ring.scale.x += (3.6 + effect.intensity * 1.6) * dt;
+      effect.ring.scale.y += (3.6 + effect.intensity * 1.6) * dt;
+      effect.material.opacity = Math.max(0, 0.55 * (1 - progress));
+      if (progress >= 1) {
+        this.worldGroup.remove(effect.ring);
+        effect.geometry.dispose();
+        effect.material.dispose();
+        this.activeLandingEffects.splice(index, 1);
+      }
+    }
+
+    if (!this.activeExplosions.length) return;
 
     for (let index = this.activeExplosions.length - 1; index >= 0; index -= 1) {
       const explosion = this.activeExplosions[index];
 
       if (explosion.sphere && explosion.sphereMaterial) {
-        explosion.sphereMaterial.opacity -= 3.125 * dt;
-        explosion.sphere.scale.addScalar(6.25 * dt);
+        explosion.sphereMaterial.opacity -= 1.5 * dt;
+        explosion.sphere.scale.addScalar(3.8 * dt);
         if (explosion.sphereMaterial.opacity <= 0) {
           this.worldGroup.remove(explosion.sphere);
           explosion.sphereGeometry.dispose();
@@ -2055,8 +2124,22 @@ class RenderManager {
         }
       }
 
+      if (explosion.shockwave && explosion.shockwaveMaterial) {
+        explosion.shockwaveMaterial.opacity -= 0.65 * dt;
+        explosion.shockwave.scale.x += 5.5 * dt;
+        explosion.shockwave.scale.y += 5.5 * dt;
+        if (explosion.shockwaveMaterial.opacity <= 0) {
+          this.worldGroup.remove(explosion.shockwave);
+          explosion.shockwaveGeometry.dispose();
+          explosion.shockwaveMaterial.dispose();
+          explosion.shockwave = null;
+          explosion.shockwaveGeometry = null;
+          explosion.shockwaveMaterial = null;
+        }
+      }
+
       if (explosion.light) {
-        const fade = Math.pow(0.85, dt / 0.016);
+        const fade = Math.pow(0.92, dt / 0.016);
         explosion.lightIntensity *= fade;
         explosion.light.intensity = explosion.lightIntensity;
         if (explosion.lightIntensity <= 0.05) {
@@ -2070,7 +2153,9 @@ class RenderManager {
         const piece = explosion.debrisPieces[pieceIndex];
         if (piece.lifetime < piece.maxLifetime) {
           piece.lifetime += dt;
-          piece.mesh.velocity.y -= 20 * dt;
+          const isPrimaryHull = Boolean(piece.mesh.userData?.isPrimaryHull);
+          const gravity = isPrimaryHull ? 9 : 12;
+          piece.mesh.velocity.y -= gravity * dt;
           piece.mesh.position.x += piece.mesh.velocity.x * dt;
           piece.mesh.position.y += piece.mesh.velocity.y * dt;
           piece.mesh.position.z += piece.mesh.velocity.z * dt;
@@ -2088,7 +2173,33 @@ class RenderManager {
           }
 
           if (piece.mesh.position.y < 0) {
-            piece.lifetime = piece.maxLifetime;
+            if (isPrimaryHull) {
+              piece.mesh.position.y = 0;
+              const bounceCount = piece.mesh.userData.groundBounces || 0;
+              const verticalImpact = Math.abs(piece.mesh.velocity.y);
+              if (bounceCount < 2 && verticalImpact > 1.2) {
+                piece.mesh.userData.groundBounces = bounceCount + 1;
+                piece.mesh.userData.grounded = false;
+                piece.mesh.velocity.y = verticalImpact * (bounceCount === 0 ? 0.38 : 0.24);
+                piece.mesh.velocity.x *= 0.82;
+                piece.mesh.velocity.z *= 0.82;
+                piece.mesh.rotationVelocity.multiplyScalar(0.72);
+              } else {
+                piece.mesh.userData.grounded = true;
+                piece.mesh.velocity.y = 0;
+                const skidDamping = Math.pow(0.22, dt / 0.016);
+                piece.mesh.velocity.x *= skidDamping;
+                piece.mesh.velocity.z *= skidDamping;
+                piece.mesh.rotationVelocity.multiplyScalar(Math.pow(0.18, dt / 0.016));
+                if ((piece.mesh.velocity.x * piece.mesh.velocity.x) + (piece.mesh.velocity.z * piece.mesh.velocity.z) < 0.04) {
+                  piece.mesh.velocity.x = 0;
+                  piece.mesh.velocity.z = 0;
+                  piece.mesh.rotationVelocity.set(0, 0, 0);
+                }
+              }
+            } else {
+              piece.lifetime = piece.maxLifetime;
+            }
           }
 
           continue;
@@ -2098,7 +2209,7 @@ class RenderManager {
         explosion.debrisPieces.splice(pieceIndex, 1);
       }
 
-      const done = !explosion.sphere && !explosion.light && explosion.debrisPieces.length === 0;
+      const done = !explosion.sphere && !explosion.light && !explosion.shockwave && explosion.debrisPieces.length === 0;
       if (done) {
         this.activeExplosions.splice(index, 1);
       }
@@ -2120,26 +2231,38 @@ class RenderManager {
     }
   }
 
-  _launchTankPart(part, centerPos, debrisPieces, speedMultiplier = 1.0) {
+  _launchTankPart(part, centerPos, debrisPieces, speedMultiplier = 1.0, options = {}) {
     this.worldGroup.add(part);
     part.userData.isTankPart = true;
+    part.userData.isPrimaryHull = Boolean(options.isFollowTarget);
+    part.userData.groundBounces = 0;
+    part.userData.grounded = false;
     const angle = Math.random() * Math.PI * 2;
-    const elevation = (Math.random() - 0.3) * Math.PI / 3;
-    const speed = (Math.random() * 10 + 8) * speedMultiplier;
+    const elevation = (Math.random() - 0.15) * Math.PI / 4;
+    const speed = (Math.random() * 6 + 6) * speedMultiplier;
     part.velocity = new THREE.Vector3(
       Math.cos(angle) * Math.cos(elevation) * speed,
-      Math.sin(elevation) * speed + 8,
+      Math.sin(elevation) * speed + (options.isFollowTarget ? 7 : 5.5),
       Math.sin(angle) * Math.cos(elevation) * speed,
     );
     part.rotationVelocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 8,
-      (Math.random() - 0.5) * 8,
-      (Math.random() - 0.5) * 8,
+      (Math.random() - 0.5) * (options.isFollowTarget ? 2.5 : 4.5),
+      (Math.random() - 0.5) * (options.isFollowTarget ? 2.5 : 4.5),
+      (Math.random() - 0.5) * (options.isFollowTarget ? 2.5 : 4.5),
     );
-    debrisPieces.push({ mesh: part, lifetime: 0, maxLifetime: 2.0 });
+    const debrisPiece = {
+      mesh: part,
+      lifetime: 0,
+      maxLifetime: options.maxLifetime || (options.isFollowTarget ? 3.5 : 2.0)
+    };
+    debrisPieces.push(debrisPiece);
+    return debrisPiece;
   }
 
   _cleanupDebrisPiece(mesh) {
+    if (mesh === this.deathFollowTarget) {
+      this.deathFollowTarget = null;
+    }
     this.worldGroup.remove(mesh);
     if (mesh.userData && !mesh.userData.isTankPart) {
       if (mesh.geometry) mesh.geometry.dispose();
@@ -2231,15 +2354,57 @@ class RenderManager {
     });
   }
 
-  updateCamera({ cameraMode, myTank, playerRotation }) {
+  updateCamera({ cameraMode, myTank, playerRotation, deathFollowTarget }) {
     if (!this.camera) return;
-    if (cameraMode === 'overview' || !myTank) {
+    if (cameraMode === 'overview') {
+      const target = deathFollowTarget || this.deathFollowTarget;
+      const focusPoint = target && target.parent
+        ? target.position
+        : this.deathFollowAnchor;
+      if (target && target.parent) {
+        this.deathFollowAnchor = target.position.clone();
+      }
+      if (focusPoint) {
+        const velocity = target && target.parent ? (target.velocity || new THREE.Vector3()) : new THREE.Vector3();
+        if (xrState.enabled) {
+          const followOffset = velocity.lengthSq() > 0.1
+            ? velocity.clone().normalize().multiplyScalar(-18).add(new THREE.Vector3(0, 9.5, 0))
+            : new THREE.Vector3(0, 9.5, 20);
+          const desiredPosition = focusPoint.clone().add(followOffset);
+          const lookDirection = focusPoint.clone().sub(desiredPosition);
+          const desiredYaw = Math.atan2(-lookDirection.x, -lookDirection.z);
+          const desiredQuaternion = new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            -desiredYaw
+          );
+          const rotatedDesiredPosition = desiredPosition.clone().applyQuaternion(desiredQuaternion);
+          const desiredWorldOffset = rotatedDesiredPosition.multiplyScalar(-1);
+          this.worldGroup.quaternion.slerp(desiredQuaternion, 0.035);
+          this.worldGroup.position.lerp(desiredWorldOffset, 0.035);
+        } else {
+          this.worldGroup.position.set(0, 0, 0);
+          this.worldGroup.quaternion.identity();
+          const followOffset = velocity.lengthSq() > 0.1
+            ? velocity.clone().normalize().multiplyScalar(-20).add(new THREE.Vector3(0, 10, 0))
+            : new THREE.Vector3(0, 10, 22);
+          const desiredPosition = focusPoint.clone().add(followOffset);
+          this.camera.position.lerp(desiredPosition, 0.045);
+          this.camera.up.set(0, 1, 0);
+          this.camera.lookAt(focusPoint);
+        }
+        return;
+      }
+      this.deathFollowTarget = null;
+      this.deathFollowAnchor = null;
+      this.worldGroup.position.set(0, 0, 0);
+      this.worldGroup.quaternion.identity();
       this.camera.position.set(0, 15, 20);
       this.camera.up.set(0, 1, 0);
       this.camera.lookAt(0, 0, 0);
       return;
     }
 
+    if (!myTank) return;
     if (cameraMode === 'first-person') {
       if (xrState.enabled) {
         // In XR mode, keep tank visible and position camera above it

@@ -144,6 +144,14 @@ let entryDialogReturnCameraMode = 'first-person';
 let isPaused = false;
 let pauseCountdownStart = 0;
 let playerShields = new Map(); // Map of playerId to shield mesh
+let deathFollowTarget = null;
+
+function updateDeathCameraHudVisibility() {
+  const controlBox = document.getElementById('controlBox');
+  if (!controlBox) return;
+  const inDeathCamera = cameraMode === 'overview' && !!deathFollowTarget;
+  controlBox.style.display = inDeathCamera ? 'none' : '';
+}
 
 // Mouse control
 let mouseControlEnabled = false;
@@ -1874,7 +1882,9 @@ function handleServerMessage(message) {
         // Don't check oldVerticalVel < 0 because extrapolation doesn't update tank.userData.verticalVelocity
         if (oldJumpDirection !== null && message.vv === 0) {
           tank.userData.jumpDirection = null;
-          renderManager.playLandSound(tank.position);
+          if (Math.abs(oldVerticalVel) >= MIN_LANDING_FEEDBACK_SPEED) {
+            triggerLandingFeedback(tank, Math.abs(oldVerticalVel));
+          }
         }
 
         // Update ghost mesh position to server-confirmed position
@@ -1933,6 +1943,10 @@ function handleServerMessage(message) {
         myTank.userData.jumpDirection = null;
         myTank.userData.slideDirection = undefined;
         clearJumpPredictionDebug(myTank);
+        deathFollowTarget = null;
+        renderManager.deathFollowTarget = null;
+        renderManager.deathFollowAnchor = null;
+        updateDeathCameraHudVisibility();
       }
       break;
 
@@ -2213,7 +2227,15 @@ function handlePlayerHit(message) {
     // Immediately hide the tank from the scene
     victimTank.visible = false;
     // Create explosion with tank parts
-    renderManager.createExplosion(victimTank.position, victimTank);
+    const explosionResult = renderManager.createExplosion(victimTank.position, victimTank);
+    if (message.victimId === myPlayerId) {
+      deathFollowTarget = explosionResult?.followTarget || null;
+      renderManager.deathFollowTarget = deathFollowTarget;
+      renderManager.deathFollowAnchor = deathFollowTarget
+        ? deathFollowTarget.position.clone()
+        : victimTank.position.clone();
+      updateDeathCameraHudVisibility();
+    }
   }
 }
 
@@ -2221,6 +2243,12 @@ function handlePlayerRespawn(message) {
   const tank = tanks.get(message.player.id);
   if (tank) {
     clearJumpPredictionDebug(tank);
+    if (message.player.id === myPlayerId) {
+      deathFollowTarget = null;
+      renderManager.deathFollowTarget = null;
+      renderManager.deathFollowAnchor = null;
+      updateDeathCameraHudVisibility();
+    }
     tank.position.set(message.player.x, message.player.y, message.player.z);
     tank.rotation.y = message.player.rotation;
     tank.userData.verticalVelocity = message.player.verticalVelocity;
@@ -3426,6 +3454,7 @@ let onGround = false;
 let onObstacle = false;
 let jumpDirection = null; // Stores the direction at jump start
 let currentSupportObstacle = null;
+const MIN_LANDING_FEEDBACK_SPEED = 0.35;
 
 function setAirVelocity(tank, vx, vz) {
   if (!tank || !tank.userData) return;
@@ -3458,6 +3487,13 @@ function sendMovementDebug(message) {
 
 function formatDebugNumber(value) {
   return Number.isFinite(value) ? value.toFixed(2) : 'NaN';
+}
+
+function triggerLandingFeedback(tank, impactSpeed = 0) {
+  if (!tank?.position) return;
+  const clampedImpact = Math.max(0, impactSpeed || 0);
+  const intensity = Math.max(0.5, Math.min(1.5, 0.55 + clampedImpact / 8));
+  renderManager.createLandingEffect(tank.position, intensity);
 }
 
 function handleInputEvents() {
@@ -3559,6 +3595,7 @@ function handleMotion(deltaTime) {
   // This must happen before any position/velocity modifications
   // Only clear jumpDirection if we're actually ON something (ground or obstacle), not just isInAir=false
   if (jumpDirection !== null && (onGround || onObstacle)) {
+    const landingImpactSpeed = Math.abs(myTank.userData.verticalVelocity || 0);
     // We were in air, now we're on ground/obstacle - send landing packet
     forceMoveSend = true;
     jumpDirection = null;
@@ -3569,6 +3606,9 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity = 0;
     setAirVelocity(myTank, 0, 0);
     clearJumpPredictionDebug(myTank);
+    if (landingImpactSpeed >= MIN_LANDING_FEEDBACK_SPEED) {
+      triggerLandingFeedback(myTank, landingImpactSpeed);
+    }
   }
 
   const oldX = playerX;
@@ -4470,7 +4510,12 @@ function animate() {
   if (gameConfig) {
     renderManager.updateClouds(deltaTime, gameConfig.MAP_SIZE || 100);
   }
-  renderManager.updateCamera({ cameraMode, myTank, playerRotation });
+  if (deathFollowTarget && !deathFollowTarget.parent) {
+    deathFollowTarget = null;
+    renderManager.deathFollowTarget = null;
+  }
+  updateDeathCameraHudVisibility();
+  renderManager.updateCamera({ cameraMode, myTank, playerRotation, deathFollowTarget });
   updateRadar();
 
   renderManager.renderFrame();
