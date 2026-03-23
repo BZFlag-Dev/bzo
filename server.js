@@ -1377,6 +1377,32 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
+        case 'selfDestruct': {
+          if (player.health <= 0) break;
+          player.health = 0;
+          player.deaths++;
+          log(`Player "${player.name}" self-destructed.`);
+
+          broadcastAll({
+            type: 'playerHit',
+            victimId: player.id,
+            shooterId: player.id,
+            projectileId: null,
+            suicide: true,
+          });
+
+          setTimeout(() => {
+            if (players.has(player.id)) {
+              player.respawn();
+              broadcastAll({
+                type: 'playerRespawned',
+                player: player.getState(),
+              });
+            }
+          }, 2000);
+          break;
+        }
+
         case 'joinGame': {
           let joinName = nameCheck(message.name, player.id);
           const requestedTankModel = typeof message.tankModel === 'string'

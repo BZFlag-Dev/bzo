@@ -427,6 +427,12 @@ const BOX_SLIDE_AXIS_EPSILON = 1e-5;
 const BOX_SLIDE_TIE_EPSILON = 1e-4;
 const BOX_SLIDE_MAX_CHAIN_DEPTH = 1;
 const BOX_SLIDE_MIN_RATIO = 0.15;
+const CLIMBABLE_SURFACE_NORMAL_Y = 0.7;
+const MAX_BUMP_HEIGHT = 0.165;
+const ONTOP_TOLERANCE = 0.1;
+const SUPPORT_SNAP_DOWN = 0.2;
+const SUPPORT_ACQUIRE_MARGIN = 0.05;
+const SUPPORT_RETAIN_MARGIN = 2;
 const CORNER_STICK_MIN_INTENT = 0.2;
 const CORNER_STICK_MAX_PROGRESS = 0.08;
 const CORNER_STICK_FRAMES = 3;
@@ -438,7 +444,13 @@ let myJumpDirection = null; // null when on ground, rotation when in air
 let cornerStickState = { obstacleName: null, frames: 0 };
 let selectedFaceDebugMarker = null;
 let selectedFaceDebugTouchedThisFrame = false;
-let showGhosts = localStorage.getItem('showGhosts') === 'true'; // Toggle for ghost rendering
+let supportSurfaceDebugMarker = null;
+let supportSurfaceDebugTouchedThisFrame = false;
+let showDebugGeometry = (() => {
+  const saved = localStorage.getItem('showDebugGeometry');
+  if (saved !== null) return saved === 'true';
+  return localStorage.getItem('showGhosts') === 'true';
+})(); // Toggle for ghost meshes and debug geometry
 
 // Debug tracking
 let debugEnabled = false;
@@ -453,6 +465,7 @@ const packetsSent = new Map();
 const packetsReceived = new Map();
 
 function ensureSelectedFaceDebugMarker() {
+  if (!showDebugGeometry) return null;
   if (selectedFaceDebugMarker || !scene) return selectedFaceDebugMarker;
   const markerGroup = new THREE.Group();
   const pole = new THREE.Mesh(
@@ -461,28 +474,120 @@ function ensureSelectedFaceDebugMarker() {
   );
   pole.position.y = 3;
   const cap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.4, 12, 12),
+    new THREE.ConeGeometry(0.35, 0.9, 12),
     new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 })
   );
-  cap.position.y = 6.2;
+  cap.position.y = 6.25;
+  cap.userData.baseDirection = new THREE.Vector3(0, 1, 0);
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false }));
+  label.position.set(0, 7.35, 0);
+  label.scale.set(3.4, 0.85, 1);
+  markerGroup.userData.nameLabel = label;
   markerGroup.add(pole);
   markerGroup.add(cap);
+  markerGroup.add(label);
   markerGroup.visible = false;
   renderManager.getWorldGroup().add(markerGroup);
   selectedFaceDebugMarker = markerGroup;
   return selectedFaceDebugMarker;
 }
 
-function showSelectedFaceDebug(faceCenter) {
+function ensureSupportSurfaceDebugMarker() {
+  if (!showDebugGeometry) return null;
+  if (supportSurfaceDebugMarker || !scene) return supportSurfaceDebugMarker;
+  const markerGroup = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.1, 0.1, 4.5, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff4d9d, transparent: true, opacity: 0.85 })
+  );
+  pole.position.y = 2.25;
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.55, 0.55, 0.18, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.95 })
+  );
+  cap.position.y = 4.6;
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false }));
+  label.position.set(0, 5.7, 0);
+  label.scale.set(3.4, 0.85, 1);
+  markerGroup.userData.nameLabel = label;
+  markerGroup.add(pole);
+  markerGroup.add(cap);
+  markerGroup.add(label);
+  markerGroup.visible = false;
+  renderManager.getWorldGroup().add(markerGroup);
+  supportSurfaceDebugMarker = markerGroup;
+  return supportSurfaceDebugMarker;
+}
+
+function showSelectedFaceDebug(faceCenter, obstacleName = null, mode = 'slide') {
+  if (!showDebugGeometry) return;
   const marker = ensureSelectedFaceDebugMarker();
   if (!marker || !faceCenter) return;
   marker.position.set(faceCenter.x, faceCenter.y || 0, faceCenter.z);
+  const pole = marker.children[0];
+  const cap = marker.children[1];
+  const isBlocked = mode === 'blocked';
+  if (pole && pole.material) {
+    pole.material.color.setHex(isBlocked ? 0xff5a5a : 0x00ffff);
+  }
+  if (cap) {
+    if (cap.material) {
+      cap.material.color.setHex(isBlocked ? 0xffd166 : 0xffff00);
+    }
+    const baseDirection = cap.userData.baseDirection || new THREE.Vector3(0, 1, 0);
+    const normalX = faceCenter.normal?.x || 0;
+    const normalZ = faceCenter.normal?.z || 0;
+    const normalLength = Math.hypot(normalX, normalZ);
+    if (normalLength > 1e-6) {
+      const targetDirection = new THREE.Vector3(normalX / normalLength, 0, normalZ / normalLength);
+      cap.quaternion.setFromUnitVectors(baseDirection, targetDirection);
+    } else {
+      cap.quaternion.identity();
+    }
+  }
+  if (marker.userData.nameLabel) {
+    renderManager.updateSpriteLabel(
+      marker.userData.nameLabel,
+      obstacleName || faceCenter.name || 'face',
+      isBlocked ? '#ff8c69' : '#00ffff'
+    );
+    marker.userData.nameLabel.visible = true;
+  }
   marker.visible = true;
   selectedFaceDebugTouchedThisFrame = true;
 }
 
 function hideSelectedFaceDebug() {
   if (selectedFaceDebugMarker) selectedFaceDebugMarker.visible = false;
+}
+
+function showSupportSurfaceDebug(obstacle, surfaceY) {
+  if (!showDebugGeometry || !obstacle || typeof surfaceY !== 'number') return;
+  const marker = ensureSupportSurfaceDebugMarker();
+  if (!marker) return;
+  marker.position.set(obstacle.x, surfaceY, obstacle.z);
+  if (marker.userData.nameLabel) {
+    renderManager.updateSpriteLabel(marker.userData.nameLabel, obstacle.name || 'support', '#ffb347');
+    marker.userData.nameLabel.visible = true;
+  }
+  marker.visible = true;
+  supportSurfaceDebugTouchedThisFrame = true;
+}
+
+function hideSupportSurfaceDebug() {
+  if (supportSurfaceDebugMarker) supportSurfaceDebugMarker.visible = false;
+}
+
+function updateDebugGeometryVisibility() {
+  if (!showDebugGeometry) {
+    hideSelectedFaceDebug();
+    hideSupportSurfaceDebug();
+  }
+  tanks.forEach((tank) => {
+    if (tank.userData.ghostMesh) {
+      tank.userData.ghostMesh.visible = showDebugGeometry;
+    }
+  });
 }
 
 function getDebugState() {
@@ -595,24 +700,20 @@ window.addEventListener('DOMContentLoaded', () => {
         anaglyphBtn.title = renderManager.getAnaglyphEnabled() ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
       }
 
-      // Ghost toggle button
-      const ghostBtn = document.getElementById('ghostBtn');
-      if (ghostBtn) {
-        ghostBtn.addEventListener('click', () => {
-          showGhosts = !showGhosts;
-          localStorage.setItem('showGhosts', showGhosts);
-          ghostBtn.classList.toggle('active', showGhosts);
-          ghostBtn.title = showGhosts ? 'Hide Ghost Players' : 'Show Ghost Players';
-          // Update visibility of all ghost meshes (including local player)
-          tanks.forEach((tank) => {
-            if (tank.userData.ghostMesh) {
-              tank.userData.ghostMesh.visible = showGhosts;
-            }
-          });
+      // Debug geometry toggle button
+      const debugGeometryBtn = document.getElementById('debugGeometryBtn');
+      if (debugGeometryBtn) {
+        const updateBtn = () => {
+          debugGeometryBtn.classList.toggle('active', showDebugGeometry);
+          debugGeometryBtn.title = showDebugGeometry ? 'Hide Debug Geometry' : 'Show Debug Geometry';
+        };
+        debugGeometryBtn.addEventListener('click', () => {
+          showDebugGeometry = !showDebugGeometry;
+          localStorage.setItem('showDebugGeometry', showDebugGeometry.toString());
+          updateDebugGeometryVisibility();
+          updateBtn();
         });
-        // Set initial state from localStorage
-        ghostBtn.classList.toggle('active', showGhosts);
-        ghostBtn.title = showGhosts ? 'Hide Ghost Players' : 'Show Ghost Players';
+        updateBtn();
       }
     // Add handler for Upload Map button
     const uploadBtn = document.getElementById('uploadBtn');
@@ -857,6 +958,12 @@ function init() {
     }
     if (chatActive || document.activeElement === chatInput) {
       // Disable all movement/game keys while chat is active
+      e.preventDefault();
+      return;
+    }
+
+    if (!isentryDialogOpen && e.code === 'KeyQ' && ws && ws.readyState === WebSocket.OPEN) {
+      sendToServer({ type: 'selfDestruct' });
       e.preventDefault();
       return;
     }
@@ -1242,7 +1349,7 @@ function handleServerMessage(message) {
             ghostTank.rotation.set(0, 0, 0);
             ghostTank.position.set(playerX, playerY, playerZ);
             ghostTank.rotation.y = playerRotation;
-            ghostTank.visible = showGhosts;
+            ghostTank.visible = showDebugGeometry;
             renderManager.getWorldGroup().add(ghostTank);
             myTank.userData.ghostMesh = ghostTank;
           }
@@ -1461,7 +1568,7 @@ function addPlayer(player) {
     // Create ghost mesh for this tank (server-confirmed position indicator)
     if (player.id !== myPlayerId) {
       const ghostTank = renderManager.createGhostMesh(tank);
-      ghostTank.visible = showGhosts; // Initially hidden unless ghosts are enabled
+      ghostTank.visible = showDebugGeometry; // Initially hidden unless debug geometry is enabled
       renderManager.getWorldGroup().add(ghostTank);
       tank.userData.ghostMesh = ghostTank;
 
@@ -1551,10 +1658,11 @@ function handlePlayerHit(message) {
   const victimTank = tanks.get(message.victimId);
   const shooterName = shooterTank && shooterTank.userData && shooterTank.userData.playerState && shooterTank.userData.playerState.name ? shooterTank.userData.playerState.name : 'Someone';
   const victimName = victimTank && victimTank.userData && victimTank.userData.playerState && victimTank.userData.playerState.name ? victimTank.userData.playerState.name : 'Someone';
+  const isSelfDestruct = Boolean(message.suicide) || (message.victimId === message.shooterId);
 
   if (message.victimId === myPlayerId) {
     // Local player was killed
-    showMessage(`${shooterName} killed you!`, 'death');
+    showMessage(isSelfDestruct ? 'You self-destructed!' : `${shooterName} killed you!`, 'death');
     // Switch to overview mode and hide crosshair
     lastCameraMode = cameraMode;
     cameraMode = 'overview';
@@ -1566,10 +1674,12 @@ function handlePlayerHit(message) {
     if (crosshair) crosshair.style.display = 'none';
   } else if (message.shooterId === myPlayerId) {
     // Local player got a kill
-    showMessage(`You killed ${victimName}!`, 'kill');
+    if (!isSelfDestruct) {
+      showMessage(`You killed ${victimName}!`, 'kill');
+    }
   } else {
     // Show to all other players
-    showMessage(`${shooterName} killed ${victimName}!`, 'info');
+    showMessage(isSelfDestruct ? `${victimName} self-destructed!` : `${shooterName} killed ${victimName}!`, 'info');
   }
   // Update other players' stats
 
@@ -1613,7 +1723,7 @@ function handlePlayerRespawn(message) {
     if (tank.userData.ghostMesh) {
       tank.userData.ghostMesh.position.set(message.player.x, message.player.y, message.player.z);
       tank.userData.ghostMesh.rotation.y = message.player.rotation;
-      tank.userData.ghostMesh.visible = showGhosts;
+      tank.userData.ghostMesh.visible = showDebugGeometry;
     }
 
     // Update server position for extrapolation
@@ -1729,9 +1839,15 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
     const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
     const { distSquared } = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
 
-    // Check if we're "on top" of this obstacle (at its top height)
-    if (!obs.infiniteHeight && Math.abs(y - obstacleTop) < 0.5) {
-      if (distSquared < tankRadius * tankRadius) {
+    const pyramidSurface = obs.type === 'pyramid' ? getPyramidSurfaceContact(obs, x, y, z) : null;
+
+    // Check if we're "on top" of this obstacle (at its top height or a climbable slope)
+    if (!obs.infiniteHeight) {
+      if (obs.type === 'pyramid') {
+        if (pyramidSurface && pyramidSurface.supportable && Math.abs(y - pyramidSurface.supportSurfaceY) < ONTOP_TOLERANCE) {
+          return { type: 'ontop', obstacle: obs, obstacleTop: pyramidSurface.supportSurfaceY, surfaceNormal: pyramidSurface.normal };
+        }
+      } else if (Math.abs(y - obstacleTop) < ONTOP_TOLERANCE && distSquared < tankRadius * tankRadius) {
         return { type: 'ontop', obstacle: obs, obstacleTop };
       }
     }
@@ -1748,58 +1864,19 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
         return { type: 'collision', obstacle: obs };
       }
     } else if (obs.type === 'pyramid') {
-      // Pyramid collision: check if tank top is under the sloped surface
-      // Sample points around the tank's top circle (8 directions + center)
-      const sampleCount = 8;
-      const localY_top = tankTop - obstacleBase;
-      for (let i = 0; i < sampleCount; i++) {
-        const angle = (Math.PI * 2 * i) / sampleCount;
-        const offsetX = Math.cos(angle) * tankRadius;
-        const offsetZ = Math.sin(angle) * tankRadius;
-        const sx = localX + offsetX;
-        const sz = localZ + offsetZ;
-        if (Math.abs(sx) <= halfW && Math.abs(sz) <= halfD) {
-          const nx = Math.abs(sx) / halfW;
-          const nz = Math.abs(sz) / halfD;
-          const n = Math.max(nx, nz);
-          const maxPyramidY = obs.h * (1 - n);
-          if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
-            if (typeof sendToServer === 'function') {
-              try {
-                // Build debug message with safe checks
-                const debugParts = [];
-                debugParts.push('[COLLISION]');
-                debugParts.push(x !== undefined && x !== null ? x.toFixed(2) : `x=UNDEF`);
-                debugParts.push(y !== undefined && y !== null ? y.toFixed(2) : `y=UNDEF`);
-                debugParts.push(z !== undefined && z !== null ? z.toFixed(2) : `z=UNDEF`);
-                debugParts.push(`${obs.name || 'UNNAMED'}:${obs.type || 'NOTYPE'}`);
-                debugParts.push(obs.x !== undefined ? obs.x.toFixed(2) : `obsx=UNDEF`);
-                debugParts.push(obstacleBase !== undefined ? obstacleBase.toFixed(2) : `base=UNDEF`);
-                debugParts.push(obs.z !== undefined ? obs.z.toFixed(2) : `obsz=UNDEF`);
-                debugParts.push(`rot:${obs.rotation !== undefined ? obs.rotation.toFixed(2) : 'UNDEF'}`);
-                debugParts.push(`h:${obstacleHeight !== undefined ? obstacleHeight.toFixed(2) : 'UNDEF'}`);
-                debugParts.push(`top:${obstacleTop !== undefined ? obstacleTop.toFixed(2) : 'UNDEF'}`);
-                //sendToServer({ type: 'chat', to: -1, text: debugParts.join(' ') });
-              } catch (e) {
-                console.error('Error sending collision chat message:', e);
-              }
-            }
-            return { type: 'collision', obstacle: obs };
-          }
-        }
+      if (!pyramidSurface) continue;
+      const tankTop = y + tankHeight;
+      const localYBase = y - obstacleBase;
+      const localYTop = tankTop - obstacleBase;
+      if (!obs.inverted) {
+        if (tankTop < obstacleBase + epsilon) continue;
+        if (y >= pyramidSurface.surfaceY - epsilon) continue;
+      } else {
+        if (tankTop <= pyramidSurface.surfaceY + epsilon) continue;
+        if (y >= obstacleTop - epsilon) continue;
       }
-      // Also check the center point for completeness
-      if (Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
-        const nx = Math.abs(localX) / halfW;
-        const nz = Math.abs(localZ) / halfD;
-        const n = Math.max(nx, nz);
-        const maxPyramidY = obs.h * (1 - n);
-        if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
-          if (typeof sendToServer === 'function') {
-            sendToServer({ type: 'chat', to: -1, text: `[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}` });
-          }
-          return obs;
-        }
+      if (hasPyramidSurfacePenetration(obs, localX, localZ, tankRadius, localYBase, localYTop, epsilon)) {
+        return { type: 'collision', obstacle: obs };
       }
     }
   }
@@ -1818,6 +1895,84 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   let startedFalling = false;
   let fallingFromObstacle = null; // Obstacle we're falling from (to skip collision)
   let altered = false;
+  const resolveY = (collisionInfo, fallbackY) => {
+    if (collisionInfo && collisionInfo.type === 'ontop' && typeof collisionInfo.obstacleTop === 'number') {
+      return collisionInfo.obstacleTop;
+    }
+    return fallbackY;
+  };
+  const tryStepUp = (collisionInfo) => {
+    if (!collisionInfo || collisionInfo.type !== 'collision' || !collisionInfo.obstacle || collisionInfo.obstacle.infiniteHeight) {
+      return null;
+    }
+    const obs = collisionInfo.obstacle;
+    let surfaceY = null;
+    if (obs.type === 'pyramid') {
+      const pyramidSurface = getPyramidSurfaceContact(obs, newX, y, newZ);
+      if (!pyramidSurface || !pyramidSurface.climbable) return null;
+      surfaceY = pyramidSurface.surfaceY;
+    } else {
+      surfaceY = (obs.baseY || 0) + (obs.h || 4);
+    }
+    const rise = surfaceY - y;
+    if (rise <= 0 || rise > MAX_BUMP_HEIGHT) return null;
+    const steppedCollision = checkCollision(newX, surfaceY, newZ, tankRadius);
+    if (!steppedCollision) {
+      return { x: newX, y: surfaceY, z: newZ, collision: null };
+    }
+    if (steppedCollision.type === 'ontop') {
+      return { x: newX, y: steppedCollision.obstacleTop ?? surfaceY, z: newZ, collision: steppedCollision };
+    }
+    return null;
+  };
+  const tryTopSurfaceTransition = (collisionInfo) => {
+    if (!collisionInfo || collisionInfo.type !== 'collision' || !collisionInfo.obstacle || collisionInfo.obstacle.infiniteHeight) {
+      return null;
+    }
+    const obs = collisionInfo.obstacle;
+    let topY = null;
+    let canSupport = true;
+    if (obs.type === 'pyramid') {
+      const contact = getPyramidSurfaceContact(obs, newX, y, newZ);
+      if (!contact || !contact.supportable) return null;
+      topY = contact.supportSurfaceY;
+      canSupport = contact.supportable;
+    } else if (obs.type === 'box' || !obs.type) {
+      topY = (obs.baseY || 0) + (obs.h || 4);
+    } else {
+      return null;
+    }
+
+    if (!canSupport || topY === null) return null;
+    const nearTopBand = y >= topY - MAX_BUMP_HEIGHT && y <= topY + 1;
+    if (!nearTopBand || intendedDeltaY > 0) return null;
+
+    if (isWithinSupportFootprint(obs, newX, topY, newZ, SUPPORT_ACQUIRE_MARGIN)) {
+      return {
+        x: newX,
+        y: topY,
+        z: newZ,
+        landedOn: obs,
+        landedType: 'obstacle',
+        startedFalling: false,
+        fallingFromObstacle: null
+      };
+    }
+
+    const collisionWithoutBox = checkCollision(newX, candidateY, newZ, tankRadius, new Set([obs]));
+    if (!collisionWithoutBox) {
+      return {
+        x: newX,
+        y: candidateY,
+        z: newZ,
+        landedOn: null,
+        landedType: null,
+        startedFalling: true,
+        fallingFromObstacle: obs
+      };
+    }
+    return null;
+  };
   const resetCornerStickState = () => {
     cornerStickState.obstacleName = null;
     cornerStickState.frames = 0;
@@ -1884,7 +2039,130 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   };
 
   // Try full movement first
-  const collisionObj = checkCollision(newX, candidateY, newZ, tankRadius);
+  const currentSupport = y > 0 ? findSupportSurface(x, y, z) : null;
+  let collisionObj = checkCollision(newX, candidateY, newZ, tankRadius);
+
+  if (
+    currentSupport &&
+    collisionObj &&
+    collisionObj.type === 'collision' &&
+    collisionObj.obstacle === currentSupport.obstacle &&
+    intendedDeltaY <= 0
+  ) {
+    const collisionWithoutSupport = checkCollision(
+      newX,
+      candidateY,
+      newZ,
+      tankRadius,
+      new Set([currentSupport.obstacle])
+    );
+
+    if (!collisionWithoutSupport || collisionWithoutSupport.type === 'ontop') {
+      if (!isWithinSupportFootprint(currentSupport.obstacle, newX, y, newZ)) {
+        hideSelectedFaceDebug();
+        resetCornerStickState();
+        return {
+          x: newX,
+          y: y - 0.1,
+          z: newZ,
+          moved: true,
+          altered: true,
+          landedOn: null,
+          landedType: null,
+          startedFalling: true,
+          fallingFromObstacle: currentSupport.obstacle
+        };
+      }
+
+      collisionObj = collisionWithoutSupport;
+    }
+  }
+
+  // When driving off the edge of a supported surface, don't reinterpret the
+  // same obstacle as a side wall once the tank center leaves its top footprint.
+  if (
+    currentSupport &&
+    collisionObj &&
+    collisionObj.type === 'collision' &&
+    collisionObj.obstacle === currentSupport.obstacle &&
+    intendedDeltaY <= 0 &&
+    !isWithinSupportFootprint(currentSupport.obstacle, newX, y, newZ)
+  ) {
+    hideSelectedFaceDebug();
+    resetCornerStickState();
+    return {
+      x: newX,
+      y: y - 0.1,
+      z: newZ,
+      moved: true,
+      altered: true,
+      landedOn: null,
+      landedType: null,
+      startedFalling: true,
+      fallingFromObstacle: currentSupport.obstacle
+    };
+  }
+
+  if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY <= 0) {
+    const topSurfaceResult = tryTopSurfaceTransition(collisionObj);
+    if (topSurfaceResult) {
+      hideSelectedFaceDebug();
+      resetCornerStickState();
+      if (topSurfaceResult.startedFalling) {
+        return {
+          x: topSurfaceResult.x,
+          y: topSurfaceResult.y,
+          z: topSurfaceResult.z,
+          moved: true,
+          altered: true,
+          landedOn: null,
+          landedType: null,
+          startedFalling: true,
+          fallingFromObstacle: topSurfaceResult.fallingFromObstacle
+        };
+      }
+      return {
+        x: topSurfaceResult.x,
+        y: topSurfaceResult.y,
+        z: topSurfaceResult.z,
+        moved: true,
+        altered: true,
+        landedOn: topSurfaceResult.landedOn,
+        landedType: topSurfaceResult.landedType,
+        startedFalling: false,
+        fallingFromObstacle: null
+      };
+    }
+
+    const stepUpResult = tryStepUp(collisionObj);
+    if (stepUpResult) {
+      hideSelectedFaceDebug();
+      resetCornerStickState();
+      if (stepUpResult.collision && stepUpResult.collision.type === 'ontop') {
+        landedOn = stepUpResult.collision.obstacle;
+        landedType = 'obstacle';
+      } else {
+        landedOn = collisionObj.obstacle;
+        landedType = 'obstacle';
+      }
+      logSlideTrace('step-up', {
+        result: { x: stepUpResult.x, y: stepUpResult.y, z: stepUpResult.z },
+        note: `obs=${collisionObj.obstacle?.name || 'unknown'}`
+      });
+      return {
+        x: stepUpResult.x,
+        y: stepUpResult.y,
+        z: stepUpResult.z,
+        moved: true,
+        altered: true,
+        landedOn,
+        landedType,
+        startedFalling: false,
+        fallingFromObstacle: null
+      };
+    }
+  }
+
   // If we hit a collision while moving upward (jumping into obstacle bottom), start falling
   if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY > 0) {
     const horizontalOnlyCollision = checkCollision(newX, y, newZ, tankRadius);
@@ -1942,258 +2220,99 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const actualDX = newX - x;
     const actualDZ = newZ - z;
     altered = Math.abs(actualDX - intendedDeltaX) > 1e-6 || Math.abs(actualDZ - intendedDeltaZ) > 1e-6;
-    return { x: newX, y: candidateY, z: newZ, moved: true, altered, landedOn, landedType, startedFalling, fallingFromObstacle };
+    return { x: newX, y: resolveY(collisionObj, candidateY), z: newZ, moved: true, altered, landedOn, landedType, startedFalling, fallingFromObstacle };
   }
 
-  if (collisionObj.obstacle && collisionObj.obstacle.type === 'box' && (Math.abs(intendedDeltaX) > 1e-6 || Math.abs(intendedDeltaZ) > 1e-6)) {
-    const boxSlideResult = resolveBoxSlide(
-      collisionObj.obstacle,
-      x,
-      z,
-      intendedDeltaX,
-      intendedDeltaZ,
-      candidateY,
-      tankRadius
-    );
-    if (boxSlideResult) {
-      showSelectedFaceDebug(boxSlideResult.faceCenter);
-      const actualMoveDistance = Math.hypot(boxSlideResult.x - x, boxSlideResult.z - z);
-      const intendedMoveDistance = Math.hypot(intendedDeltaX, intendedDeltaZ);
-      const obstacleName = collisionObj.obstacle?.name || null;
-      // After a few near-stationary slide frames on the same box, try a tiny
-      // corner escape nudge before declaring the player effectively stuck.
-      if (
-        obstacleName &&
-        intendedMoveDistance > CORNER_STICK_MIN_INTENT &&
-        actualMoveDistance < CORNER_STICK_MAX_PROGRESS &&
-        cornerStickState.obstacleName === obstacleName
-      ) {
+  const surfaceContact = getSurfaceContact(collisionObj.obstacle, newX, newY, newZ, tankRadius);
+  const surfaceSlideResult = resolveSurfaceSlide(
+    collisionObj.obstacle,
+    surfaceContact,
+    x,
+    y,
+    z,
+    intendedDeltaX,
+    intendedDeltaY,
+    intendedDeltaZ,
+    candidateY,
+    tankRadius
+  );
+  if (surfaceSlideResult) {
+    if (surfaceSlideResult.faceCenter) {
+      const debugMode = surfaceSlideResult.traceStage === 'box-vertical-only' ? 'blocked' : 'slide';
+      showSelectedFaceDebug(
+        surfaceSlideResult.faceCenter,
+        collisionObj.obstacle?.name || surfaceSlideResult.faceCenter?.name || null,
+        debugMode
+      );
+    } else {
+      hideSelectedFaceDebug();
+    }
+    const actualMoveDistance = Math.hypot(surfaceSlideResult.x - x, surfaceSlideResult.z - z);
+    const intendedMoveDistance = Math.hypot(intendedDeltaX, intendedDeltaZ);
+    const obstacleName = collisionObj.obstacle?.name || null;
+    if (
+      collisionObj.obstacle &&
+      collisionObj.obstacle.type === 'box' &&
+      obstacleName &&
+      intendedMoveDistance > CORNER_STICK_MIN_INTENT &&
+      actualMoveDistance < CORNER_STICK_MAX_PROGRESS
+    ) {
+      if (cornerStickState.obstacleName === obstacleName) {
         cornerStickState.frames += 1;
-      } else if (obstacleName && intendedMoveDistance > CORNER_STICK_MIN_INTENT && actualMoveDistance < CORNER_STICK_MAX_PROGRESS) {
+      } else {
         cornerStickState.obstacleName = obstacleName;
         cornerStickState.frames = 1;
-      } else {
-        resetCornerStickState();
       }
       if (cornerStickState.frames >= CORNER_STICK_FRAMES) {
-        const escapeResult = tryCornerEscape(collisionObj.obstacle, boxSlideResult.x, boxSlideResult.z);
+        const escapeResult = tryCornerEscape(collisionObj.obstacle, surfaceSlideResult.x, surfaceSlideResult.z);
         if (escapeResult) {
-          boxSlideResult.x = escapeResult.x;
-          boxSlideResult.z = escapeResult.z;
+          surfaceSlideResult.x = escapeResult.x;
+          surfaceSlideResult.z = escapeResult.z;
           cornerStickState.frames = 0;
           logSlideTrace('box-corner-escape', {
-            result: { x: boxSlideResult.x, y: candidateY, z: boxSlideResult.z },
+            result: { x: surfaceSlideResult.x, y: surfaceSlideResult.y, z: surfaceSlideResult.z },
             note: `obs=${obstacleName || 'unknown'}`
           });
         }
       }
-      if (boxSlideResult.collisionOnTop) {
-        landedOn = collisionObj.obstacle;
-        landedType = 'obstacle';
-      } else if (newY < 0) {
-        landedType = 'ground';
-      }
-      logSlideTrace('box-slide', {
-        normal: boxSlideResult.normal,
-        slide: { x: boxSlideResult.slideX, z: boxSlideResult.slideZ },
-        result: { x: boxSlideResult.x, y: candidateY, z: boxSlideResult.z }
-      });
-      return {
-        x: boxSlideResult.x,
-        y: candidateY,
-        z: boxSlideResult.z,
-        moved: true,
-        altered: true,
-        landedOn,
-        landedType,
-        startedFalling: false,
-        fallingFromObstacle: null
-      };
+    } else {
+      resetCornerStickState();
     }
-    hideSelectedFaceDebug();
-    resetCornerStickState();
-    const verticalOnlyCollisionObj = checkCollision(x, candidateY, z, tankRadius);
-    if (!verticalOnlyCollisionObj || verticalOnlyCollisionObj.type === 'ontop') {
-      if (verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop') {
-        landedOn = verticalOnlyCollisionObj.obstacle;
-        landedType = 'obstacle';
-      } else if (newY < 0) {
-        landedType = 'ground';
-      }
-      logSlideTrace('box-vertical-only', {
-        result: { x, y: candidateY, z },
-        note: 'box slide blocked'
-      });
-      return {
-        x,
-        y: candidateY,
-        z,
-        moved: true,
-        altered: true,
-        landedOn,
-        landedType,
-        startedFalling: false,
-        fallingFromObstacle: null
-      };
-    }
-    logSlideTrace('box-blocked', { note: 'box slide blocked and vertical blocked' });
-    return { x, y, z, moved: false, altered: false, landedOn: null, landedType: null };
-  }
-
-  // Find the collision normal
-  const normal = getCollisionNormal(collisionObj.obstacle, x, y, z, newX, newY, newZ, tankRadius);
-
-  if (normal) {
-    // Project movement vector onto the surface (perpendicular to normal)
-    const dot = intendedDeltaX * normal.x + intendedDeltaZ * normal.z;
-    const slideX = intendedDeltaX - normal.x * dot;
-    const slideZ = intendedDeltaZ - normal.z * dot;
-    logSlideTrace('normal', {
-      normal,
-      slide: { x: slideX, z: slideZ },
-      note: `obs=${collisionObj.obstacle?.name || 'unknown'}`
-    });
-
-    // Try sliding along the surface
-    const slideNewX = x + slideX;
-    const slideNewZ = z + slideZ;
-
-    const slideCollisionObj = checkCollision(slideNewX, candidateY, slideNewZ, tankRadius);
-    //console.log('Slide collision check:', newX,newY,newZ,slideNewX,slideNewZ,slideCollisionObj);
-    if (!slideCollisionObj || slideCollisionObj.type === 'ontop') {
-      hideSelectedFaceDebug();
-      // If we're on top of an obstacle, that's the landing
-      if (slideCollisionObj && slideCollisionObj.type === 'ontop') {
-        landedOn = slideCollisionObj.obstacle;
-        landedType = 'obstacle';
-      } else if (newY < 0) {
-        landedType = 'ground';
-      }
-      const altered = Math.abs(slideX - intendedDeltaX) > 1e-6 || Math.abs(slideZ - intendedDeltaZ) > 1e-6;
-      logSlideTrace('slide-ok', {
-        normal,
-        slide: { x: slideX, z: slideZ },
-        result: { x: slideNewX, y: candidateY, z: slideNewZ }
-      });
-      return { x: slideNewX, y: candidateY, z: slideNewZ, moved: true, altered, landedOn, landedType };
-    }
-
-    // If the pure tangential step still collides, nudge slightly away from the
-    // obstacle face and try again. This keeps diagonal airborne wall contacts
-    // sliding instead of degrading into a vertical-only fall.
-    const separation = 0.05;
-    const depenetratedSlideX = x + normal.x * separation + slideX;
-    const depenetratedSlideZ = z + normal.z * separation + slideZ;
-    const depenetratedSlideCollisionObj = checkCollision(depenetratedSlideX, candidateY, depenetratedSlideZ, tankRadius);
-    if (!depenetratedSlideCollisionObj || depenetratedSlideCollisionObj.type === 'ontop') {
-      hideSelectedFaceDebug();
-      if (depenetratedSlideCollisionObj && depenetratedSlideCollisionObj.type === 'ontop') {
-        landedOn = depenetratedSlideCollisionObj.obstacle;
-        landedType = 'obstacle';
-      } else if (newY < 0) {
-        landedType = 'ground';
-      }
-      logSlideTrace('depenetrated-slide-ok', {
-        normal,
-        slide: { x: slideX, z: slideZ },
-        result: { x: depenetratedSlideX, y: candidateY, z: depenetratedSlideZ }
-      });
-      return {
-        x: depenetratedSlideX,
-        y: candidateY,
-        z: depenetratedSlideZ,
-        moved: true,
-        altered: true,
-        landedOn,
-        landedType,
-        startedFalling: false,
-        fallingFromObstacle: null,
-      };
-    }
-  }
-
-  // Fallback: try axis-aligned sliding using full collision logic
-  // Try sliding along X axis only
-  const xSlideCollisionObj = checkCollision(newX, candidateY, z, tankRadius);
-  if (!xSlideCollisionObj || xSlideCollisionObj.type === 'ontop') {
-    hideSelectedFaceDebug();
-    resetCornerStickState();
-    logSlideTrace('x-only', {
-      normal,
-      result: { x: newX, y: candidateY, z }
-    });
-    return {
-      x: newX,
-      y: candidateY,
-      z: z,
-      moved: true,
-      altered: true,
-      landedOn: xSlideCollisionObj && xSlideCollisionObj.type === 'ontop' ? xSlideCollisionObj.obstacle : null,
-      landedType: xSlideCollisionObj && xSlideCollisionObj.type === 'ontop' ? 'obstacle' : (newY < 0 ? 'ground' : null),
-      startedFalling: false,
-      fallingFromObstacle: null
-    };
-  }
-
-  // Try sliding along Z axis only
-  const zSlideCollisionObj = checkCollision(x, candidateY, newZ, tankRadius);
-  if (!zSlideCollisionObj || zSlideCollisionObj.type === 'ontop') {
-    hideSelectedFaceDebug();
-    resetCornerStickState();
-    logSlideTrace('z-only', {
-      normal,
-      result: { x, y: candidateY, z: newZ }
-    });
-    return {
-      x: x,
-      y: candidateY,
-      z: newZ,
-      moved: true,
-      altered: true,
-      landedOn: zSlideCollisionObj && zSlideCollisionObj.type === 'ontop' ? zSlideCollisionObj.obstacle : null,
-      landedType: zSlideCollisionObj && zSlideCollisionObj.type === 'ontop' ? 'obstacle' : (newY < 0 ? 'ground' : null),
-      startedFalling: false,
-      fallingFromObstacle: null
-    };
-  }
-
-  // If horizontal movement is blocked, still allow pure vertical movement when possible.
-  const verticalOnlyCollisionObj = checkCollision(x, candidateY, z, tankRadius);
-  if (!verticalOnlyCollisionObj || verticalOnlyCollisionObj.type === 'ontop') {
-    hideSelectedFaceDebug();
-    resetCornerStickState();
-    if (verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop') {
-      landedOn = verticalOnlyCollisionObj.obstacle;
+    if (surfaceSlideResult.collisionOnTop) {
+      landedOn = collisionObj.obstacle;
       landedType = 'obstacle';
     } else if (newY < 0) {
       landedType = 'ground';
     }
-    logSlideTrace('vertical-only', {
-      normal,
-      result: { x, y: candidateY, z },
-      note: 'horizontal blocked'
+    logSlideTrace(surfaceSlideResult.traceStage || 'surface-slide', {
+      normal: surfaceSlideResult.normal,
+      slide: { x: surfaceSlideResult.slideX, z: surfaceSlideResult.slideZ },
+      result: { x: surfaceSlideResult.x, y: surfaceSlideResult.y, z: surfaceSlideResult.z }
     });
     return {
-      x,
-      y: candidateY,
-      z,
+      x: surfaceSlideResult.x,
+      y: surfaceSlideResult.y,
+      z: surfaceSlideResult.z,
       moved: true,
       altered: true,
       landedOn,
       landedType,
       startedFalling: false,
-      fallingFromObstacle: null,
+      fallingFromObstacle: null
     };
   }
 
-  // No movement possible
-  logSlideTrace('blocked', {
-    normal,
-    note: 'no resolution path'
+  logSlideTrace('surface-blocked', {
+    normal: surfaceContact ? { x: surfaceContact.normal.x, z: surfaceContact.normal.z } : null,
+    note: 'no surface resolution path'
   });
-  hideSelectedFaceDebug();
+  if (surfaceContact && surfaceContact.faceCenter) {
+    showSelectedFaceDebug(surfaceContact.faceCenter, collisionObj.obstacle?.name || surfaceContact.faceCenter?.name || null, 'blocked');
+  } else {
+    hideSelectedFaceDebug();
+  }
   resetCornerStickState();
-  return { x: x, y: y, z: z, moved: false, altered: false, landedOn: null, landedType: null };
+  return { x, y, z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
 function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, visitedObstacles = new Set(), depth = 0) {
@@ -2202,6 +2321,8 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
   const sin = Math.sin(rotation);
   const halfW = obs.w / 2 + tankRadius;
   const halfD = obs.d / 2 + tankRadius;
+  const visualHalfW = obs.w / 2;
+  const visualHalfD = obs.d / 2;
   const nextVisited = new Set(visitedObstacles);
   nextVisited.add(obs);
   const intendedMagnitude = Math.hypot(deltaX, deltaZ);
@@ -2321,8 +2442,8 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
 
     const hitWorld = localToWorldPoint(hitPoint.x, hitPoint.z);
     const faceCenterLocal = axis === 'x'
-      ? { x: hitPoint.x, z: 0 }
-      : { x: 0, z: hitPoint.z };
+      ? { x: normalLocal.x > 0 ? visualHalfW : -visualHalfW, z: 0 }
+      : { x: 0, z: normalLocal.z > 0 ? visualHalfD : -visualHalfD };
     const faceCenterWorld = localToWorldPoint(faceCenterLocal.x, faceCenterLocal.z);
     const finalLocal = {
       x: hitPoint.x + slideLocal.x,
@@ -2380,7 +2501,7 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
         slideMagnitude: 0,
         cornerEscapeSquared: getCornerEscapeSquared(hitPoint),
         outwardScore: 0,
-        faceCenter: { x: faceCenterWorld.x, y: candidateY, z: faceCenterWorld.z }
+        faceCenter: { x: faceCenterWorld.x, y: candidateY, z: faceCenterWorld.z, normal: normalWorld, name: obs.name }
       };
     }
 
@@ -2405,7 +2526,7 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
       slideMagnitude: slideWorld.x * slideWorld.x + slideWorld.z * slideWorld.z,
       cornerEscapeSquared: getCornerEscapeSquared(finalLocal),
       outwardScore,
-      faceCenter: { x: faceCenterWorld.x, y: candidateY, z: faceCenterWorld.z }
+      faceCenter: { x: faceCenterWorld.x, y: candidateY, z: faceCenterWorld.z, normal: normalWorld, name: obs.name }
     };
   };
 
@@ -2432,47 +2553,332 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
   return bestResult;
 }
 
-function getCollisionNormal(obs, fromX, fromY, fromZ, toX, toY, toZ, tankRadius = 2) {
-  // Use provided obstacle
-  if (!obs) return null;
+function resolveSurfaceSlide(obs, contact, x, y, z, deltaX, deltaY, deltaZ, candidateY, tankRadius = 2) {
+  if (obs && (obs.type === 'box' || !obs.type)) {
+    const boxSlideResult = resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius);
+    if (boxSlideResult) {
+      return {
+        x: boxSlideResult.x,
+        y: candidateY,
+        z: boxSlideResult.z,
+        collisionOnTop: boxSlideResult.collisionOnTop,
+        normal: boxSlideResult.normal,
+        slideX: boxSlideResult.slideX,
+        slideZ: boxSlideResult.slideZ,
+        faceCenter: boxSlideResult.faceCenter,
+        traceStage: 'box-slide'
+      };
+    }
+
+    const verticalOnlyCollisionObj = checkCollision(x, candidateY, z, tankRadius);
+    const boxContact = getBoxSurfaceContact(obs, x + deltaX, z + deltaZ, tankRadius);
+    if (!verticalOnlyCollisionObj || verticalOnlyCollisionObj.type === 'ontop') {
+      return {
+        x,
+        y: verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop'
+          ? verticalOnlyCollisionObj.obstacleTop
+          : candidateY,
+        z,
+        collisionOnTop: Boolean(verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop'),
+        normal: null,
+        slideX: 0,
+        slideZ: 0,
+        faceCenter: boxContact ? boxContact.faceCenter : null,
+        traceStage: 'box-vertical-only'
+      };
+    }
+    return null;
+  }
+
+  if (!contact || !contact.normal) return null;
+
+  if (obs && obs.type === 'pyramid' && contact.climbable) {
+    const targetX = x + deltaX;
+    const targetZ = z + deltaZ;
+    const targetContact = getPyramidSurfaceContact(obs, targetX, y, targetZ);
+    if (targetContact && targetContact.climbable) {
+      const targetY = Math.max(0, targetContact.surfaceY);
+      const collisionWithoutPyramid = checkCollision(targetX, targetY, targetZ, tankRadius, new Set([obs]));
+      if (!collisionWithoutPyramid || collisionWithoutPyramid.type === 'ontop') {
+        return {
+          x: targetX,
+          y: collisionWithoutPyramid && collisionWithoutPyramid.type === 'ontop'
+            ? collisionWithoutPyramid.obstacleTop
+            : targetY,
+          z: targetZ,
+          collisionOnTop: true,
+          normal: { x: targetContact.normal.x, z: targetContact.normal.z },
+          slideX: deltaX,
+          slideZ: deltaZ,
+          faceCenter: targetContact.faceCenter || contact.faceCenter || null,
+          traceStage: 'surface-slide'
+        };
+      }
+    }
+  }
+
+  const normal = contact.normal;
+  const dot = deltaX * normal.x + deltaY * normal.y + deltaZ * normal.z;
+  const inwardDot = Math.min(dot, 0);
+  const slide = {
+    x: deltaX - normal.x * inwardDot,
+    y: deltaY - normal.y * inwardDot,
+    z: deltaZ - normal.z * inwardDot
+  };
+  const normalYAbs = Math.max(0.2, Math.abs(normal.y));
+  const penetrationOffset = contact.penetrationDepth
+    ? Math.min(4, (contact.penetrationDepth / normalYAbs) + 0.12)
+    : 0;
+
+  const tryMove = (offset = 0) => {
+    const targetX = x + slide.x + normal.x * offset;
+    const targetY = Math.max(0, y + slide.y + normal.y * offset);
+    const targetZ = z + slide.z + normal.z * offset;
+    const slideCollision = checkCollision(targetX, targetY, targetZ, tankRadius);
+    if (slideCollision && slideCollision.type !== 'ontop') {
+      return null;
+    }
+    return {
+      x: targetX,
+      y: slideCollision && slideCollision.type === 'ontop' ? slideCollision.obstacleTop : targetY,
+      z: targetZ,
+      collisionOnTop: slideCollision && slideCollision.type === 'ontop',
+      normal: { x: normal.x, z: normal.z },
+      slideX: slide.x,
+      slideZ: slide.z,
+      faceCenter: contact.faceCenter || null,
+      traceStage: 'surface-slide'
+    };
+  };
+
+  return tryMove(penetrationOffset) || tryMove(Math.max(0.08, penetrationOffset * 0.5)) || tryMove(0.08);
+}
+
+function toWorldNormal(obs, localNormal) {
+  const cosRot = Math.cos(obs.rotation || 0);
+  const sinRot = Math.sin(obs.rotation || 0);
+  const worldX = localNormal.x * cosRot + localNormal.z * sinRot;
+  const worldY = localNormal.y;
+  const worldZ = -localNormal.x * sinRot + localNormal.z * cosRot;
+  const length = Math.hypot(worldX, worldY, worldZ) || 1;
+  return {
+    x: worldX / length,
+    y: worldY / length,
+    z: worldZ / length
+  };
+}
+
+function getBoxSurfaceContact(obs, worldX, worldZ, tankRadius = 2) {
   const halfW = obs.w / 2;
   const halfD = obs.d / 2;
-  const { x: localX, z: localZ } = getColliderLocalPoint(toX, toZ, obs);
+  const visualHalfW = obs.w / 2;
+  const visualHalfD = obs.d / 2;
+  const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
   const { closestX, closestZ, distSquared } = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
-  if (distSquared < tankRadius * tankRadius) {
-    let normalLocalX = 0;
-    let normalLocalZ = 0;
-    if (distSquared > 0.0001) {
-      const dist = Math.sqrt(distSquared);
-      normalLocalX = (localX - closestX) / dist;
-      normalLocalZ = (localZ - closestZ) / dist;
-    } else {
-      const distToLeft = localX + halfW;
-      const distToRight = halfW - localX;
-      const distToFront = localZ + halfD;
-      const distToBack = halfD - localZ;
-      const minDist = Math.min(distToLeft, distToRight, distToFront, distToBack);
-      if (minDist === distToLeft) normalLocalX = -1;
-      else if (minDist === distToRight) normalLocalX = 1;
-      else if (minDist === distToFront) normalLocalZ = -1;
-      else normalLocalZ = 1;
-    }
-    const cosRot = Math.cos(obs.rotation || 0);
-    const sinRot = Math.sin(obs.rotation || 0);
-    const normalX = normalLocalX * cosRot - normalLocalZ * sinRot;
-    const normalZ = normalLocalX * sinRot + normalLocalZ * cosRot;
-    const length = Math.sqrt(normalX * normalX + normalZ * normalZ);
-    const worldNormal = { x: normalX / length, z: normalZ / length };
-    //if (typeof sendToServer === 'function') {
-    //  sendToServer({
-    //    type: 'chat',
-    //    to: -1,
-    //    text: `[NORMAL-DEBUG] obs:${obs.name} rot:${rotation.toFixed(2)} local:(${localX.toFixed(2)},${localZ.toFixed(2)}) closest:(${closestX.toFixed(2)},${closestZ.toFixed(2)}) normalLocal:(${normalLocalX.toFixed(2)},${normalLocalZ.toFixed(2)}) worldNormal:(${worldNormal.x.toFixed(2)},${worldNormal.z.toFixed(2)}) pos:(${toX.toFixed(2)},${toZ.toFixed(2)})`
-    //  });
-    //}
-    return worldNormal;
+  if (distSquared >= tankRadius * tankRadius) return null;
+
+  let normalLocalX = 0;
+  let normalLocalZ = 0;
+  if (distSquared > 0.0001) {
+    const dist = Math.sqrt(distSquared);
+    normalLocalX = (localX - closestX) / dist;
+    normalLocalZ = (localZ - closestZ) / dist;
+  } else {
+    const distToLeft = localX + halfW;
+    const distToRight = halfW - localX;
+    const distToFront = localZ + halfD;
+    const distToBack = halfD - localZ;
+    const minDist = Math.min(distToLeft, distToRight, distToFront, distToBack);
+    if (minDist === distToLeft) normalLocalX = -1;
+    else if (minDist === distToRight) normalLocalX = 1;
+    else if (minDist === distToFront) normalLocalZ = -1;
+    else normalLocalZ = 1;
   }
-  return null;
+
+  const cosRot = Math.cos(obs.rotation || 0);
+  const sinRot = Math.sin(obs.rotation || 0);
+  const faceCenterLocal = Math.abs(normalLocalX) > Math.abs(normalLocalZ)
+    ? { x: normalLocalX > 0 ? visualHalfW : -visualHalfW, z: 0 }
+    : { x: 0, z: normalLocalZ > 0 ? visualHalfD : -visualHalfD };
+  const worldNormal = toWorldNormal(obs, { x: normalLocalX, y: 0, z: normalLocalZ });
+  const faceCenterWorld = {
+    x: obs.x + faceCenterLocal.x * cosRot + faceCenterLocal.z * sinRot,
+    y: (obs.baseY || 0) + ((obs.h || 4) * 0.5),
+    z: obs.z - faceCenterLocal.x * sinRot + faceCenterLocal.z * cosRot
+  };
+
+  return {
+    obstacle: obs,
+    normal: worldNormal,
+    climbable: false,
+    faceCenter: {
+      x: faceCenterWorld.x,
+      y: faceCenterWorld.y,
+      z: faceCenterWorld.z,
+      normal: { x: worldNormal.x, z: worldNormal.z },
+      name: obs.name
+    }
+  };
+}
+
+function getPyramidHeight(obs) {
+  return Math.abs(obs.h || 0);
+}
+
+function getPyramidSurfaceLocalHeight(obs, localX, localZ) {
+  const halfW = obs.w / 2;
+  const halfD = obs.d / 2;
+  if (Math.abs(localX) > halfW || Math.abs(localZ) > halfD) return null;
+  const nx = Math.abs(localX) / halfW;
+  const nz = Math.abs(localZ) / halfD;
+  const height = getPyramidHeight(obs);
+  const edgeFactor = Math.max(nx, nz);
+  return obs.inverted ? height * edgeFactor : height * (1 - edgeFactor);
+}
+
+function hasPyramidSurfacePenetration(obs, localX, localZ, tankRadius, localYBase, localYTop, epsilon) {
+  const sampleCount = 8;
+  const height = getPyramidHeight(obs);
+  for (let i = 0; i < sampleCount; i++) {
+    const angle = (Math.PI * 2 * i) / sampleCount;
+    const sx = localX + Math.cos(angle) * tankRadius;
+    const sz = localZ + Math.sin(angle) * tankRadius;
+    const surfaceLocalY = getPyramidSurfaceLocalHeight(obs, sx, sz);
+    if (surfaceLocalY === null) continue;
+    if (
+      (!obs.inverted && localYTop > epsilon && localYBase < surfaceLocalY - epsilon) ||
+      (obs.inverted && localYTop > surfaceLocalY + epsilon && localYBase < height - epsilon)
+    ) {
+      return true;
+    }
+  }
+  const centerSurfaceLocalY = getPyramidSurfaceLocalHeight(obs, localX, localZ);
+  if (
+    centerSurfaceLocalY !== null &&
+    (
+      (!obs.inverted && localYTop > epsilon && localYBase < centerSurfaceLocalY - epsilon) ||
+      (obs.inverted && localYTop > centerSurfaceLocalY + epsilon && localYBase < height - epsilon)
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function getPyramidSurfaceContact(obs, worldX, worldY, worldZ) {
+  const halfW = obs.w / 2;
+  const halfD = obs.d / 2;
+  const obstacleBase = obs.baseY || 0;
+  const height = getPyramidHeight(obs);
+  const tankHeight = 2;
+  const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
+  if (Math.abs(localX) > halfW || Math.abs(localZ) > halfD) return null;
+
+  const nx = Math.abs(localX) / halfW;
+  const nz = Math.abs(localZ) / halfD;
+  const dominantAxis = nx >= nz ? 'x' : 'z';
+  const surfaceLocalHeight = getPyramidSurfaceLocalHeight(obs, localX, localZ);
+  if (surfaceLocalHeight === null) return null;
+  const collisionSurfaceY = obstacleBase + surfaceLocalHeight;
+  const supportSurfaceY = obs.inverted ? obstacleBase + height : collisionSurfaceY;
+
+  let localNormal;
+  let faceCenterLocal;
+  if (dominantAxis === 'x') {
+    const signX = localX >= 0 ? 1 : -1;
+    localNormal = { x: (height / halfW) * signX, y: obs.inverted ? -1 : 1, z: 0 };
+    faceCenterLocal = { x: signX * halfW * 0.5, z: 0 };
+  } else {
+    const signZ = localZ >= 0 ? 1 : -1;
+    localNormal = { x: 0, y: obs.inverted ? -1 : 1, z: (height / halfD) * signZ };
+    faceCenterLocal = { x: 0, z: signZ * halfD * 0.5 };
+  }
+
+  const worldNormal = toWorldNormal(obs, localNormal);
+  const cosRot = Math.cos(obs.rotation || 0);
+  const sinRot = Math.sin(obs.rotation || 0);
+  const faceCenterWorld = {
+    x: obs.x + faceCenterLocal.x * cosRot + faceCenterLocal.z * sinRot,
+    y: obstacleBase + height * 0.5,
+    z: obs.z - faceCenterLocal.x * sinRot + faceCenterLocal.z * cosRot
+  };
+  const climbable = !obs.inverted && worldNormal.y >= CLIMBABLE_SURFACE_NORMAL_Y;
+  const supportable = climbable || obs.inverted;
+  const penetrationDepth = obs.inverted
+    ? Math.max(0, worldY + tankHeight - collisionSurfaceY)
+    : Math.max(0, collisionSurfaceY - worldY);
+  return {
+    obstacle: obs,
+    normal: worldNormal,
+    climbable,
+    supportable,
+    surfaceY: collisionSurfaceY,
+    supportSurfaceY,
+    penetrationDepth,
+    faceCenter: {
+      x: faceCenterWorld.x,
+      y: faceCenterWorld.y,
+      z: faceCenterWorld.z,
+      normal: { x: worldNormal.x, z: worldNormal.z },
+      name: obs.name
+    }
+  };
+}
+
+function getSurfaceContact(obs, worldX, worldY, worldZ, tankRadius = 2) {
+  if (!obs) return null;
+  if (obs.type === 'pyramid') {
+    return getPyramidSurfaceContact(obs, worldX, worldY, worldZ);
+  }
+  return getBoxSurfaceContact(obs, worldX, worldZ, tankRadius);
+}
+
+function getSupportMargin(obs, preferredObstacle) {
+  return obs === preferredObstacle ? SUPPORT_RETAIN_MARGIN : SUPPORT_ACQUIRE_MARGIN;
+}
+
+function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
+  let bestSupport = null;
+  for (const obs of getCollisionColliders()) {
+    if (obs.infiniteHeight) continue;
+    if (obs.type === 'pyramid') {
+      const contact = getPyramidSurfaceContact(obs, worldX, worldY, worldZ);
+      if (!contact || !contact.supportable) continue;
+      const deltaY = contact.supportSurfaceY - worldY;
+      if (deltaY > MAX_BUMP_HEIGHT || deltaY < -SUPPORT_SNAP_DOWN) continue;
+      if (!bestSupport || contact.supportSurfaceY > bestSupport.surfaceY) {
+        bestSupport = { obstacle: obs, surfaceY: contact.supportSurfaceY, normal: contact.normal };
+      }
+      continue;
+    }
+
+    const margin = getSupportMargin(obs, preferredObstacle);
+    const halfW = obs.w / 2 + margin;
+    const halfD = obs.d / 2 + margin;
+    const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
+    if (Math.abs(localX) > halfW || Math.abs(localZ) > halfD) continue;
+    const surfaceY = (obs.baseY || 0) + (obs.h || 4);
+    const deltaY = surfaceY - worldY;
+    if (deltaY > MAX_BUMP_HEIGHT || deltaY < -SUPPORT_SNAP_DOWN) continue;
+    if (!bestSupport || surfaceY > bestSupport.surfaceY) {
+      bestSupport = { obstacle: obs, surfaceY };
+    }
+  }
+  return bestSupport;
+}
+
+function isWithinSupportFootprint(obs, worldX, worldY, worldZ, margin = SUPPORT_RETAIN_MARGIN) {
+  if (!obs || obs.infiniteHeight) return false;
+
+  if (obs.type === 'pyramid') {
+    const contact = getPyramidSurfaceContact(obs, worldX, worldY, worldZ);
+    return Boolean(contact && contact.supportable);
+  }
+
+  const halfW = obs.w / 2 + margin;
+  const halfD = obs.d / 2 + margin;
+  const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
+  return Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD;
 }
 
 // Intended input state
@@ -2484,6 +2890,7 @@ let isInAir = false;
 let onGround = false;
 let onObstacle = false;
 let jumpDirection = null; // Stores the direction at jump start
+let currentSupportObstacle = null;
 
 function setAirVelocity(tank, vx, vz) {
   if (!tank || !tank.userData) return;
@@ -2527,18 +2934,31 @@ function handleInputEvents() {
 
   if (!myTank || !gameConfig) return;
 
-  // Check if tank is in the air (not on ground or obstacle)
-  onGround = myTank.position.y < 0.1;
+  // Keep the tank snapped to a valid support surface under its center. This
+  // stabilizes step/pyramid support without loosening side-contact ontop tests.
+  const supportSurface = findSupportSurface(
+    myTank.position.x,
+    myTank.position.y,
+    myTank.position.z,
+    currentSupportObstacle
+  );
+  onGround = false;
   onObstacle = false;
-  if (onGround) {
+  if (supportSurface) {
+    onObstacle = true;
+    currentSupportObstacle = supportSurface.obstacle;
+    playerY = supportSurface.surfaceY;
+    myTank.position.y = supportSurface.surfaceY;
+    showSupportSurfaceDebug(supportSurface.obstacle, supportSurface.surfaceY);
+  } else if (myTank.position.y < 0.1) {
+    onGround = true;
+    currentSupportObstacle = null;
     playerY = 0;
+    myTank.position.y = 0;
+    hideSupportSurfaceDebug();
   } else {
-    // Use checkCollision to detect if we're on top of an obstacle
-    const collisionObj = checkCollision(myTank.position.x, myTank.position.y, myTank.position.z, 2);
-    if (collisionObj && collisionObj.type === 'ontop') {
-      onObstacle = true;
-      playerY = collisionObj.obstacleTop;
-    }
+    currentSupportObstacle = null;
+    hideSupportSurfaceDebug();
   }
   isInAir = !onGround && !onObstacle;
 
@@ -3394,6 +3814,7 @@ function extrapolatePosition(player, dt) {
 
 function animate() {
   selectedFaceDebugTouchedThisFrame = false;
+  supportSurfaceDebugTouchedThisFrame = false;
   const now = performance.now();
   const deltaTime = (now - lastTime) / 1000;
   lastTime = now;
@@ -3427,6 +3848,9 @@ function animate() {
   handleMotion(deltaTime);
   if (!selectedFaceDebugTouchedThisFrame) {
     hideSelectedFaceDebug();
+  }
+  if (!supportSurfaceDebugTouchedThisFrame) {
+    hideSupportSurfaceDebug();
   }
 
   // Extrapolate other players' positions
