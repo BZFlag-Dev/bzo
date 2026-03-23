@@ -457,6 +457,9 @@ class Player {
     this.forwardSpeed = 0;
     this.rotationSpeed = 0;
     this.jumpDirection = null;
+    this.slideDirection = undefined;
+    this.airVelocityX = 0;
+    this.airVelocityZ = 0;
 
     // Keep-alive tracking
     this.lastPongTime = Date.now();
@@ -499,6 +502,12 @@ class Player {
     this.verticalVelocity = 0;
     this.isJumping = false;
     this.onObstacle = false;
+    this.jumpDirection = null;
+    this.slideDirection = undefined;
+    this.forwardSpeed = 0;
+    this.rotationSpeed = 0;
+    this.airVelocityX = 0;
+    this.airVelocityZ = 0;
   }
 
   getState() {
@@ -513,7 +522,13 @@ class Player {
       kills: this.kills,
       deaths: this.deaths,
       paused: this.paused,
+      forwardSpeed: this.forwardSpeed,
+      rotationSpeed: this.rotationSpeed,
       verticalVelocity: this.verticalVelocity,
+      jumpDirection: this.jumpDirection,
+      slideDirection: this.slideDirection,
+      airVelocityX: this.airVelocityX,
+      airVelocityZ: this.airVelocityZ,
       connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
       color: this.color,
       tankModel: this.tankModel,
@@ -537,11 +552,11 @@ class Player {
     const isInAir = this.jumpDirection !== null && this.jumpDirection !== undefined;
 
     if (isInAir) {
-      // In air: ALWAYS straight-line motion in frozen jumpDirection
-      // Rotation continues to change (newR), but linear motion is frozen
+      const hasAirVelocity = Number.isFinite(this.airVelocityX) && Number.isFinite(this.airVelocityZ);
       const speed = GAME_CONFIG.TANK_SPEED || 15;
-      const dx = -Math.sin(this.jumpDirection) * this.forwardSpeed * speed * dt;
-      const dz = -Math.cos(this.jumpDirection) * this.forwardSpeed * speed * dt;
+      const moveDirection = this.slideDirection !== undefined ? this.slideDirection : this.jumpDirection;
+      const dx = hasAirVelocity ? this.airVelocityX * dt : -Math.sin(moveDirection) * this.forwardSpeed * speed * dt;
+      const dz = hasAirVelocity ? this.airVelocityZ * dt : -Math.cos(moveDirection) * this.forwardSpeed * speed * dt;
 
       // Apply gravity to vertical velocity
       const gravity = GAME_CONFIG.GRAVITY || 9.8;
@@ -664,16 +679,44 @@ function normalizeAngle(angle) {
   return angle;
 }
 
-function checkCollision(x, y, z, tankRadius = 2) {
+function getColliderLocalPoint(x, z, obs) {
+  const rotation = obs.rotation || 0;
+  const dx = x - obs.x;
+  const dz = z - obs.z;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return {
+    x: dx * cos - dz * sin,
+    z: dx * sin + dz * cos
+  };
+}
+
+function getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD) {
+  const closestX = Math.max(-halfW, Math.min(localX, halfW));
+  const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
+  const distX = localX - closestX;
+  const distZ = localZ - closestZ;
+  return distX * distX + distZ * distZ;
+}
+
+function getWorldBorderColliders() {
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+  const thickness = 4;
+  const span = GAME_CONFIG.MAP_SIZE + thickness * 2;
+  return [
+    { type: 'box', name: 'boundary_north', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: -halfMap - thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_south', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: halfMap + thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_east', collisionKind: 'boundary', infiniteHeight: true, x: halfMap + thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_west', collisionKind: 'boundary', infiniteHeight: true, x: -halfMap - thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 }
+  ];
+}
 
-  // Check map boundaries (always apply regardless of height)
-  if (x - tankRadius < -halfMap || x + tankRadius > halfMap ||
-      z - tankRadius < -halfMap || z + tankRadius > halfMap) {
-    return { type: 'boundary' };
-  }
+function getCollisionColliders() {
+  return [...OBSTACLES, ...getWorldBorderColliders()];
+}
 
-  for (const obs of OBSTACLES) {
+function checkCollision(x, y, z, tankRadius = 2) {
+  for (const obs of getCollisionColliders()) {
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
@@ -682,28 +725,19 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const tankHeight = tankRadius; // For tanks (radius=2), height=2; for projectiles (radius=0.1), height=0.1
     // Only check if tank top is below obstacle top and tank base is above obstacle base
     const tankTop = y + tankHeight;
-    if (tankTop <= obstacleBase + epsilon) continue;
-    if (y >= obstacleTop - epsilon) continue;
+    if (!obs.infiniteHeight) {
+      if (tankTop <= obstacleBase + epsilon) continue;
+      if (y >= obstacleTop - epsilon) continue;
+    }
 
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
-    const rotation = obs.rotation || 0;
-    const dx = x - obs.x;
-    const dz = z - obs.z;
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const localX = dx * cos - dz * sin;
-    const localZ = dx * sin + dz * cos;
+    const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
 
     if (obs.type === 'box' || !obs.type) {
-      // Box collision: check closest point on box to tank center
-      const closestX = Math.max(-halfW, Math.min(localX, halfW));
-      const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
-      const distX = localX - closestX;
-      const distZ = localZ - closestZ;
-      const distSquared = distX * distX + distZ * distZ;
+      const distSquared = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
       if (distSquared < tankRadius * tankRadius) {
-        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${rotation.toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         return obs;
       }
     } else if (obs.type === 'pyramid') {
@@ -740,7 +774,7 @@ function checkCollision(x, y, z, tankRadius = 2) {
         }
       }
       if (collided) {
-        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${rotation.toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         return obs;
       }
     }
@@ -833,27 +867,34 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
     }
   }
 
-  // Check map boundaries
-  const halfMap = GAME_CONFIG.MAP_SIZE / 2;
-  if (Math.abs(newX) > halfMap || Math.abs(newZ) > halfMap) {
-    log(`Player "${player.name}" out of bounds`);
-    return false;
-  }
-
-  // Check collision with obstacles (pass Y position)
+  // Check collision against the unified collider set (map objects + border colliders).
   let collision = checkCollision(newX, newY, newZ, 2);
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback
-      log(`Player "${player.name}" collided with unknown object x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
-    } else if (collision.type === 'boundary') {
-      log(`Player "${player.name}" collided boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+      if (ANTICHEAT_CONFIG.mode === 'warning') {
+        log(`[ANTICHEAT:WARNING] Player "${player.name}" collided with unknown object but movement accepted in warning mode x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+      } else {
+        log(`Player "${player.name}" collided with unknown object x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+        return false;
+      }
+    } else if (collision.collisionKind === 'boundary') {
+      if (ANTICHEAT_CONFIG.mode === 'warning') {
+        log(`[ANTICHEAT:WARNING] Player "${player.name}" collided boundary but movement accepted in warning mode x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+      } else {
+        log(`Player "${player.name}" collided boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+        return false;
+      }
     } else {
       // Log obstacle details
       const { x, z, w, d, h, baseY, rotation } = collision;
-      log(`Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
+      if (ANTICHEAT_CONFIG.mode === 'warning') {
+        log(`[ANTICHEAT:WARNING] Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} but movement accepted in warning mode (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
+      } else {
+        log(`Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
+        return false;
+      }
     }
-    return false;
   }
 
   return true;
@@ -932,7 +973,7 @@ function gameLoop() {
     const projectileRadius = 0.1;
     const obstacleHit = checkCollision(proj.x, proj.y, proj.z, projectileRadius);
     if (obstacleHit) {
-      if (obstacleHit.type === 'boundary') {
+      if (obstacleHit.collisionKind === 'boundary') {
         log(`Projectile ${id} hit boundary at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
       } else {
         log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
@@ -1192,6 +1233,9 @@ wss.on('connection', (ws, req) => {
           const rs = Number(message.rs);
           const vv = Number(message.vv);
           const d = message.d !== undefined ? Number(message.d) : undefined; // Optional slide direction
+          const vx = message.vx !== undefined ? Number(message.vx) : undefined;
+          const vz = message.vz !== undefined ? Number(message.vz) : undefined;
+          const hasAirVelocity = Number.isFinite(vx) && Number.isFinite(vz);
 
           // Track jump direction for extrapolation
           const oldVV = player.verticalVelocity || 0;
@@ -1246,6 +1290,18 @@ wss.on('connection', (ws, req) => {
             player.rotationSpeed = rs;
             player.verticalVelocity = vv;
             player.slideDirection = d; // Store slide direction (undefined if not sliding)
+            if (hasAirVelocity) {
+              player.airVelocityX = vx;
+              player.airVelocityZ = vz;
+            } else if (player.jumpDirection !== null) {
+              const speed = GAME_CONFIG.TANK_SPEED || 15;
+              const moveDirection = d !== undefined ? d : player.jumpDirection;
+              player.airVelocityX = -Math.sin(moveDirection) * fs * speed;
+              player.airVelocityZ = -Math.cos(moveDirection) * fs * speed;
+            } else {
+              player.airVelocityX = 0;
+              player.airVelocityZ = 0;
+            }
             player.lastUpdate = now; // Update timestamp AFTER accepting the move
 
             const pmPacket = {
@@ -1258,6 +1314,8 @@ wss.on('connection', (ws, req) => {
               fs,
               rs,
               vv,
+              vx: player.airVelocityX,
+              vz: player.airVelocityZ,
             };
 
             // Include optional slide direction if present
@@ -1273,6 +1331,8 @@ wss.on('connection', (ws, req) => {
             player.forwardSpeed = 0;
             player.rotationSpeed = 0;
             player.verticalVelocity = 0;
+            player.airVelocityX = 0;
+            player.airVelocityZ = 0;
             player.lastUpdate = now;
             ws.send(JSON.stringify({
               type: 'positionCorrection',
@@ -1327,7 +1387,6 @@ wss.on('connection', (ws, req) => {
             ? requestedTankModel
             : 'default';
           player.health = 100;
-          // spawn at valid position
           const spawnPos = findValidSpawnPosition();
           player.x = spawnPos.x;
           player.y = spawnPos.y
