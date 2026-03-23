@@ -56,14 +56,49 @@ size     25.0 10.0 5.0
 end
 
 box
-name "r45
+name "dodec0"
 position 45.0 -45.0 0.0
-rotation 45.0
-size     25.0 10.0 10.0
+rotation 0.0
+size     30.0 8.038475773 10.0
 end
 
 box
-name "r30
+name "dodec30"
+position 45.0 -45.0 0.0
+rotation 30.0
+size     30.0 8.038475773 10.0
+end
+
+box
+name "dodec60"
+position 45.0 -45.0 0.0
+rotation 60.0
+size     30.0 8.038475773 10.0
+end
+
+box
+name "dodec90"
+position 45.0 -45.0 0.0
+rotation 90.0
+size     30.0 8.038475773 10.0
+end
+
+box
+name "dodec120"
+position 45.0 -45.0 0.0
+rotation 120.0
+size     30.0 8.038475773 10.0
+end
+
+box
+name "dodec150"
+position 45.0 -45.0 0.0
+rotation 150.0
+size     30.0 8.038475773 10.0
+end
+
+box
+name "r30"
 position -45.0 45.0 0.0
 rotation 30.0
 size     25.0 10.0 10.0
