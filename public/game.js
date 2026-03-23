@@ -464,6 +464,8 @@ let selectedFaceDebugMarker = null;
 let selectedFaceDebugTouchedThisFrame = false;
 let supportSurfaceDebugMarker = null;
 let supportSurfaceDebugTouchedThisFrame = false;
+let supportFootprintDebugMarker = null;
+let supportFootprintDebugTouchedThisFrame = false;
 let showDebugGeometry = (() => {
   const saved = localStorage.getItem('showDebugGeometry');
   if (saved !== null) return saved === 'true';
@@ -535,6 +537,22 @@ function ensureSupportSurfaceDebugMarker() {
   renderManager.getWorldGroup().add(markerGroup);
   supportSurfaceDebugMarker = markerGroup;
   return supportSurfaceDebugMarker;
+}
+
+function ensureSupportFootprintDebugMarker() {
+  if (!showDebugGeometry) return null;
+  if (supportFootprintDebugMarker || !scene) return supportFootprintDebugMarker;
+  const geometry = new THREE.BufferGeometry();
+  const material = new THREE.LineBasicMaterial({
+    color: 0xffb347,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false
+  });
+  supportFootprintDebugMarker = new THREE.LineLoop(geometry, material);
+  supportFootprintDebugMarker.visible = false;
+  renderManager.getWorldGroup().add(supportFootprintDebugMarker);
+  return supportFootprintDebugMarker;
 }
 
 function clearJumpPredictionDebug(tank) {
@@ -921,10 +939,77 @@ function hideSupportSurfaceDebug() {
   if (supportSurfaceDebugMarker) supportSurfaceDebugMarker.visible = false;
 }
 
+function hideSupportFootprintDebug() {
+  if (supportFootprintDebugMarker) supportFootprintDebugMarker.visible = false;
+}
+
+function getSupportOutlinePoints(obstacle, supportSurface) {
+  if (!obstacle || !supportSurface) return null;
+  const epsilon = 0.06;
+  const rotation = obstacle.rotation || 0;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const toWorldPoint = (lx, ly, lz) => new THREE.Vector3(
+    obstacle.x + lx * cos + lz * sin,
+    ly,
+    obstacle.z - lx * sin + lz * cos
+  );
+
+  if (obstacle.type === 'pyramid' && supportSurface.contact?.climbable && !obstacle.inverted) {
+    const halfW = obstacle.w / 2;
+    const halfD = obstacle.d / 2;
+    const height = getPyramidHeight(obstacle);
+    const axis = supportSurface.contact.faceAxis;
+    const sign = supportSurface.contact.faceSign || 1;
+    const normal = supportSurface.contact.normal || { x: 0, y: 1, z: 0 };
+    const normalOffset = new THREE.Vector3(normal.x, normal.y, normal.z).multiplyScalar(epsilon);
+    let localPoints;
+    if (axis === 'x') {
+      localPoints = [
+        { x: 0, y: obstacle.baseY + height, z: 0 },
+        { x: sign * halfW, y: obstacle.baseY, z: -halfD },
+        { x: sign * halfW, y: obstacle.baseY, z: halfD }
+      ];
+    } else {
+      localPoints = [
+        { x: 0, y: obstacle.baseY + height, z: 0 },
+        { x: -halfW, y: obstacle.baseY, z: sign * halfD },
+        { x: halfW, y: obstacle.baseY, z: sign * halfD }
+      ];
+    }
+    return localPoints.map((point) =>
+      toWorldPoint(point.x, point.y, point.z).add(normalOffset)
+    );
+  }
+
+  const halfW = obstacle.w / 2;
+  const halfD = obstacle.d / 2;
+  const y = supportSurface.surfaceY + epsilon;
+  return [
+    toWorldPoint(-halfW, y, -halfD),
+    toWorldPoint(-halfW, y, halfD),
+    toWorldPoint(halfW, y, halfD),
+    toWorldPoint(halfW, y, -halfD)
+  ];
+}
+
+function showSupportFootprintDebug(obstacle, supportSurface) {
+  if (!showDebugGeometry || !obstacle || !supportSurface) return;
+  const marker = ensureSupportFootprintDebugMarker();
+  if (!marker) return;
+  const points = getSupportOutlinePoints(obstacle, supportSurface);
+  if (!points || points.length < 3) return;
+  if (marker.geometry) marker.geometry.dispose();
+  marker.geometry = new THREE.BufferGeometry().setFromPoints(points);
+  marker.visible = true;
+  supportFootprintDebugTouchedThisFrame = true;
+}
+
 function updateDebugGeometryVisibility() {
   if (!showDebugGeometry) {
     hideSelectedFaceDebug();
     hideSupportSurfaceDebug();
+    hideSupportFootprintDebug();
   }
   tanks.forEach((tank) => {
     if (tank.userData.ghostMesh) {
@@ -3260,6 +3345,8 @@ function getPyramidSurfaceContact(obs, worldX, worldY, worldZ) {
     normal: worldNormal,
     climbable,
     supportable,
+    faceAxis: dominantAxis,
+    faceSign: dominantAxis === 'x' ? (localX >= 0 ? 1 : -1) : (localZ >= 0 ? 1 : -1),
     surfaceY: collisionSurfaceY,
     supportSurfaceY,
     penetrationDepth,
@@ -3295,7 +3382,7 @@ function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
       const deltaY = contact.supportSurfaceY - worldY;
       if (deltaY > MAX_BUMP_HEIGHT || deltaY < -SUPPORT_SNAP_DOWN) continue;
       if (!bestSupport || contact.supportSurfaceY > bestSupport.surfaceY) {
-        bestSupport = { obstacle: obs, surfaceY: contact.supportSurfaceY, normal: contact.normal };
+        bestSupport = { obstacle: obs, surfaceY: contact.supportSurfaceY, normal: contact.normal, contact };
       }
       continue;
     }
@@ -3309,7 +3396,7 @@ function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
     const deltaY = surfaceY - worldY;
     if (deltaY > MAX_BUMP_HEIGHT || deltaY < -SUPPORT_SNAP_DOWN) continue;
     if (!bestSupport || surfaceY > bestSupport.surfaceY) {
-      bestSupport = { obstacle: obs, surfaceY };
+      bestSupport = { obstacle: obs, surfaceY, contact: null };
     }
   }
   return bestSupport;
@@ -3398,15 +3485,18 @@ function handleInputEvents() {
     playerY = supportSurface.surfaceY;
     myTank.position.y = supportSurface.surfaceY;
     showSupportSurfaceDebug(supportSurface.obstacle, supportSurface.surfaceY);
+    showSupportFootprintDebug(supportSurface.obstacle, supportSurface);
   } else if (myTank.position.y < 0.1) {
     onGround = true;
     currentSupportObstacle = null;
     playerY = 0;
     myTank.position.y = 0;
     hideSupportSurfaceDebug();
+    hideSupportFootprintDebug();
   } else {
     currentSupportObstacle = null;
     hideSupportSurfaceDebug();
+    hideSupportFootprintDebug();
   }
   isInAir = !onGround && !onObstacle;
 
@@ -4297,6 +4387,7 @@ function extrapolatePosition(player, dt) {
 function animate() {
   selectedFaceDebugTouchedThisFrame = false;
   supportSurfaceDebugTouchedThisFrame = false;
+  supportFootprintDebugTouchedThisFrame = false;
   const now = performance.now();
   const deltaTime = (now - lastTime) / 1000;
   lastTime = now;
@@ -4333,6 +4424,9 @@ function animate() {
   }
   if (!supportSurfaceDebugTouchedThisFrame) {
     hideSupportSurfaceDebug();
+  }
+  if (!supportFootprintDebugTouchedThisFrame) {
+    hideSupportFootprintDebug();
   }
 
   // Extrapolate other players' positions
