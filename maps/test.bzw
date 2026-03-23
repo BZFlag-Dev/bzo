@@ -55,6 +55,105 @@ rotation 0.0
 size     25.0 10.0 5.0
 end
 
+# Step-height test boxes.
+# These heights are in BZFlag map units so the same map is useful in both
+# bzfs/bzflag and bzo. In bzo's 0.5x-scaled world they become:
+# 0.25 -> 0.125, 0.33 -> 0.165, 0.40 -> 0.20
+box
+name "step_low"
+position -42.0 -42.0 0.0
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "step_medium"
+position -34.0 -42.0 0.25
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "step_high"
+position -26.0 -42.0 0.5
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+# Repeated same-size stack for bump-height testing.
+# Each layer adds 0.25 BZFlag world units of height, which becomes 0.125 in bzo.
+# This lets us test whether many small stacked rises remain climbable even when
+# the outside looks like one continuous tall wall.
+box
+name "stack1"
+position -42.0 -30.0 0.0
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack2"
+position -42.0 -30.0 0.25
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack3"
+position -42.0 -30.0 0.50
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack4"
+position -42.0 -30.0 0.75
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack5"
+position -42.0 -30.0 1.00
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack6"
+position -42.0 -30.0 1.25
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack7"
+position -42.0 -30.0 1.50
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack8"
+position -42.0 -30.0 1.75
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack9"
+position -42.0 -30.0 2.00
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
+box
+name "stack10"
+position -42.0 -30.0 2.25
+rotation 0.0
+size     8.0 8.0 0.25
+end
+
 box
 name "dodec0"
 position 45.0 -45.0 0.0
