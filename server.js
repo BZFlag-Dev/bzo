@@ -107,9 +107,9 @@ const GAME_CONFIG = {
   FORWARD_DECEL: 2.5, // Forward/reverse input deceleration to zero
   TURN_ACCEL: 3.0, // Turn input acceleration (normalized units per second)
   TURN_DECEL: 4.0, // Turn input deceleration to zero
-  SHOT_SPEED: 50, // BZ-like default at this world scale (units per second)
+  SHOT_SPEED: 100, // BZFlag _shotSpeed default (units per second)
   SHOT_COOLDOWN: 1000, // ms
-  SHOT_DISTANCE: 175, // Derived from default shot duration (3.5s) at SHOT_SPEED
+  SHOT_DISTANCE: 350, // Derived from default shot duration (3.5s) at SHOT_SPEED
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
   SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
   PAUSE_COUNTDOWN: 2000, // ms
@@ -259,7 +259,7 @@ function parseBZWMap(filename) {
         if (wline.startsWith('size')) {
           const [, size] = wline.split(/\s+/);
           if (size) {
-            GAME_CONFIG.MAP_SIZE = parseFloat(size);
+            GAME_CONFIG.MAP_SIZE = parseFloat(size) * 2;
           }
           break;
         }
@@ -279,20 +279,20 @@ function parseBZWMap(filename) {
       const name = nameParts.join(' ').replace(/"/g, '').trim();
       if (name) current.name = name;
     } else if (current && line.startsWith('position')) {
-      // position x y z (scale x and y by 0.5)
+      // position x y z (BZFlag +Y north maps to our -Z north)
       const [, x, y, z] = line.split(/\s+/);
-      current.x = parseFloat(x) * 0.5;
-      current.z = -parseFloat(y) * 0.5; // BZFlag +Y (north) -> our -Z (north)
-      current.baseY = (parseFloat(z) || 0) * 0.5;
+      current.x = parseFloat(x);
+      current.z = -parseFloat(y); // BZFlag +Y (north) -> our -Z (north)
+      current.baseY = parseFloat(z) || 0;
     } else if (current && line.startsWith('size')) {
-      // size w d h (BZFlag counts center to edge so this effectively scales by 0.5)
+      // size w d h (BZFlag x/y are center-to-edge half extents, z is full height)
       const [, w, d, h] = line.split(/\s+/);
       const rawW = parseFloat(w);
       const rawD = parseFloat(d);
       const rawH = parseFloat(h);
-      current.w = Math.abs(rawW);
-      current.d = Math.abs(rawD);
-      current.h = Math.abs(rawH) * 0.5;
+      current.w = Math.abs(rawW) * 2;
+      current.d = Math.abs(rawD) * 2;
+      current.h = Math.abs(rawH);
       if (current.type === 'pyramid') {
         current.inverted = rawH < 0;
       }
@@ -351,7 +351,7 @@ function generateObstacles() {
         h = 3 + Math.random() * 2;
         baseY = 3 + Math.random() * 3;
       }
-      obstacle = { x: x * 0.5, z: z * 0.5, w: w * 0.5, d: d * 0.5, h: h * 0.5, baseY, rotation, name: `O${i}` , type: 'box'};
+      obstacle = { x, z, w, d, h, baseY, rotation, name: `O${i}` , type: 'box'};
       const distFromCenter = Math.sqrt(x * x + z * z);
       if (distFromCenter < minDistance) {
         attempts++;
@@ -388,7 +388,7 @@ function generateObstacles() {
         baseY = 3 + Math.random() * 3;
       }
       const inverted = Math.random() < 0.2; // 20% chance for random inverted pyramid
-      pyramid = { x: x * 0.5, z: z * 0.5, w: w * 0.5, d: d * 0.5, h: h * 0.5, baseY, rotation, name: `P${i}` , type: 'pyramid', inverted };
+      pyramid = { x, z, w, d, h, baseY, rotation, name: `P${i}` , type: 'pyramid', inverted };
       const distFromCenter = Math.sqrt(x * x + z * z);
       if (distFromCenter < minDistance) {
         attempts++;
