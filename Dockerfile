@@ -3,11 +3,18 @@
 # Source: https://github.com/BZFlag-Dev/bzo
 # See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
 
-FROM node:20-slim
+FROM ubuntu:24.04
 
 ENV NODE_ENV=production \
     PORT=3000 \
-    SERVER_CONFIG_PATH=/data/server-config.json
+    SERVER_CONFIG_PATH=/data/server-config.json \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nodejs npm \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --create-home --shell /bin/bash node
 
 WORKDIR /app
 
