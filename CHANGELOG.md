@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-03-26
+
+### Fixed
+- Restrict Docker image build to `linux/amd64` to avoid QEMU emulation failures that caused `npm ci` to exit with code 127 when building `linux/arm64` on GitHub Actions runners.
+
 ## [1.0.2] - 2026-03-26
 
 ### Fixed
