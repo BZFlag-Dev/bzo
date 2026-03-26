@@ -1,6 +1,8 @@
 /*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
 html, body {
@@ -252,7 +254,7 @@ canvas {
   #controlsOverlay { display: none; }
 }
 
-#hudButtons button {
+.hudButtons button {
   background: var(--color-btn-bg);
   color: var(--color-accent);
   border: 2px solid var(--color-accent);
@@ -263,16 +265,16 @@ canvas {
   outline: none;
   cursor: pointer;
 }
-#hudButtons button.active {
+.hudButtons button.active {
   background: var(--color-btn-bg-active);
   color: var(--color-fg);
   border-color: var(--color-accent-light);
   box-shadow: 0 0 6px var(--color-btn-bg-shadow);
 }
-#hudButtons button:focus {
+.hudButtons button:focus {
   border-color: var(--color-btn-bg-focus);
 }
-#hudButtons button:hover {
+.hudButtons button:hover {
   background: var(--color-btn-bg-hover);
   color: var(--color-fg);
 }
@@ -330,7 +332,7 @@ body {
   font-size: 1.5em;
 }
 
-#hudButtons {
+.hudButtons {
   display: flex !important;
   gap: 6px;
   margin-left: 8px;

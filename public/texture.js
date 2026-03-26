@@ -1,7 +1,11 @@
 /*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
+
+import * as THREE from 'three';
 
 // Blue marble texture for BZFlag-style pyramid sides
 export function createPyramidTexture() {
@@ -53,12 +57,6 @@ export function createPyramidTexture() {
   texture.needsUpdate = true;
   return texture;
 }
-/*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
- */
-
-import * as THREE from 'three';
 
 export function createCobblestoneTexture() {
   const canvas = document.createElement('canvas');

@@ -1,6 +1,8 @@
 /*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
 // WebXR Manager for VR/AR support (Quest 2, Viture Luma Ultra, etc.)
@@ -23,11 +25,6 @@ export function debugLog(message) {
   if (typeof window !== 'undefined' && typeof window.gameDebugLog === 'function') {
     window.gameDebugLog(message, 'WebXR');
   }
-}
-
-// Register callback for frame updates (will be called from renderer.setAnimationLoop)
-export function setXRFrameCallback() {
-  // Reserved hook for future external XR frame handlers.
 }
 
 // Check if WebXR is available
@@ -201,10 +198,10 @@ export function updateXRControllerInput() {
         gamepad: null,
         thumbstick: { x: 0, y: 0 },
         trigger: 0,
-          grip: 0,
+        grip: 0,
         buttonA: false,
         buttonB: false,
-          buttonGrip: false,
+        buttonGrip: false,
       });
     }
 
@@ -242,8 +239,8 @@ export function updateXRControllerInput() {
 
           // Side grip/squeeze button (index 1) for jumping
           if (buttons[1]) {
-            controller.grip = buttons[1].value; // 0-1
-            controller.buttonGrip = buttons[1].pressed || false;
+          controller.grip = buttons[1].value; // 0-1
+          controller.buttonGrip = buttons[1].pressed || false;
           }
 
         // A button (index 4) for firing
@@ -256,7 +253,7 @@ export function updateXRControllerInput() {
           controller.buttonB = buttons[5].pressed || false;
         }
         if (frameCounter % 60 === 0) {
-          //debugLog(`Right: axes[2]=${axes[2]?.toFixed(2)}, axes[3]=${axes[3]?.toFixed(2)}, A=${controller.buttonA}, B=${controller.buttonB}, btnCount=${buttons.length}`);
+          debugLog(`Right: axes[2]=${axes[2]?.toFixed(2)}, axes[3]=${axes[3]?.toFixed(2)}, A=${controller.buttonA}, B=${controller.buttonB}, btnCount=${buttons.length}`);
         }
       }
     }
@@ -272,10 +269,10 @@ export function getXRControllerInput() {
     leftThumbstick: { x: 0, y: 0 },
     rightThumbstick: { x: 0, y: 0 },
     rightTrigger: 0,
-      rightGrip: 0,
+    rightGrip: 0,
     buttonA: false,
     buttonB: false,
-      buttonGrip: false,
+    buttonGrip: false,
   };
 
   if (xrState.controllers.get('left')) {
@@ -286,10 +283,10 @@ export function getXRControllerInput() {
     const rightController = xrState.controllers.get('right');
     input.rightThumbstick = { ...rightController.thumbstick };
     input.rightTrigger = rightController.trigger || 0;
-      input.rightGrip = rightController.grip || 0;
+    input.rightGrip = rightController.grip || 0;
     input.buttonA = rightController.buttonA || false;
     input.buttonB = rightController.buttonB || false;
-      input.buttonGrip = rightController.buttonGrip || false;
+    input.buttonGrip = rightController.buttonGrip || false;
   }
 
   return input;
@@ -311,10 +308,6 @@ export async function toggleXRSession(renderer, animationCallback) {
     debugLog('Starting XR session...');
     return await requestXRSession(renderer, animationCallback);
   }
-}
-
-export function isXRSupported() {
-  return xrSupported;
 }
 
 export function isXREnabled() {

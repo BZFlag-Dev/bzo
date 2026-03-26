@@ -29,7 +29,7 @@
   <div id="mainhud">
     <div id="stats">
       <span id="playerName" title="Click to change name">Player</span>
-      <div id="hudButtons">
+      <div class="hudButtons">
         <button id="settingsBtn" title="Settings"><span class="settingsIcon">&#9881;</span></button>
       </div>
     </div>
@@ -44,7 +44,7 @@
 
   <div id="settingsHud">
     <div class="settingsHudContent">
-      <div id="hudButtons">
+      <div class="hudButtons">
         <button id="virtualControlsBtn" class="settingsHudBtn">Virtual Controls</button>
         <button id="mouseBtn" class="settingsHudBtn">Mouse Mode</button>
         <button id="fullscreenBtn" class="settingsHudBtn">Fullscreen</button>
@@ -157,6 +157,13 @@
         <li><strong>Anaglyph 3D</strong> — Red/Cyan glasses for 3D effect</li>
         <li><strong>VR Mode</strong> — WebVR compatible headsets</li>
       </ul>
+
+      <h2>Source Code</h2>
+      <p>This game is free software licensed under the
+        <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU Affero General Public License v3.0</a>.
+        Source code is available at
+        <a href="/source" target="_blank" rel="noopener">github.com/BZFlag-Dev/bzo</a>.
+      </p>
     </div>
   </div>
 
@@ -177,8 +184,6 @@
     }
   </script>
   <script type="module" src="game.js"></script>
-  </script>
-</body>
 <!-- Mobile Controls Overlay (only visible on mobile) -->
 <div id="controlsOverlay">
   <div class="mobile-joystick" id="joystick">
@@ -187,4 +192,5 @@
   <button class="mobile-btn" id="jumpBtn">⤒</button>
   <button class="mobile-btn" id="fireBtn">●</button>
 </div>
+</body>
 </html>

@@ -1,3 +1,9 @@
+/*
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
+ */
 // Utility for creating CSS2D text labels for Three.js objects
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 

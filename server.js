@@ -1,21 +1,8 @@
-// Helper to send the map list and current map to a given websocket
-function sendMapList(ws) {
-  fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
-    let maps = [];
-    if (!err && files) {
-      maps = files.filter(f => f.endsWith('.bzw'));
-      maps = ['random', ...maps];
-    }
-    ws.send(JSON.stringify({
-      type: 'mapList',
-      maps,
-      currentMap: MAP_SOURCE
-    }));
-  });
-}
 /*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
 const express = require('express');
@@ -49,9 +36,8 @@ function logError(...args) {
 }
 
 const app = express();
-const bodyParser = require('body-parser');
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
 
 // Serve static files
@@ -91,6 +77,11 @@ function isAllowedTankModel(modelId) {
 
 app.get('/api/tank-models', (req, res) => {
   res.json({ models: getAvailableTankModels() });
+});
+
+// AGPL §13: provide source code access to network users
+app.get('/source', (req, res) => {
+  res.redirect(302, 'https://github.com/BZFlag-Dev/bzo');
 });
 // --- Admin API Endpoints ---
 
@@ -372,10 +363,6 @@ if (MAP_SOURCE === 'random') {
   OBSTACLES = parseBZWMap(mapFilePath);
   log(`Loaded ${OBSTACLES.length} obstacles from maps/${MAP_SOURCE}`);
 }
-//const OBSTACLES = [
-//  {"x":0,"z":0,"w":5,"d":5,"h":4,"baseY":5,"rotation":0,"name":"O0"},
-//  {"x":0,"z":-10,"w":5,"d":5,"h":4,"baseY":0,"rotation":0,"name":"O1"}
-//];
 log(OBSTACLES);
 
 // Generate random clouds with fractal patter.
@@ -1219,6 +1206,22 @@ function requestServerRestart(reason) {
       process.exit(0);
     }
   }, 1000);
+}
+
+// Helper to send the map list and current map to a given websocket
+function sendMapList(ws) {
+  fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
+    let maps = [];
+    if (!err && files) {
+      maps = files.filter(f => f.endsWith('.bzw'));
+      maps = ['random', ...maps];
+    }
+    ws.send(JSON.stringify({
+      type: 'mapList',
+      maps,
+      currentMap: MAP_SOURCE
+    }));
+  });
 }
 
 // WebSocket connection handler

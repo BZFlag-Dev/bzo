@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+/*
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
+ */
 
 import * as THREE from 'three';
 import { fileURLToPath } from 'url';

@@ -1,6 +1,8 @@
 /*
- * This file is part of a project licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * See the LICENSE file in the project root or visit https://www.gnu.org/licenses/agpl-3.0.html
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/BZFlag-Dev/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
 // hud.js - Handles HUD and debug display logic
@@ -141,6 +143,17 @@ export function toggleHelpPanel({ helpPanel, showMessage, updateHelpBtn }) {
   updateHelpBtn();
 }
 
+// Formats world time (0-23999 ticks) as HH:MM. Minecraft: 0 = 6:00, 6000 = noon.
+function formatWorldTime(worldTime) {
+  if (typeof worldTime !== 'number') return '';
+  const ticks = worldTime % 24000;
+  const totalMinutes = Math.floor((ticks / 1000) * 60); // 1000 ticks = 1 hour
+  let hours = Math.floor(totalMinutes / 60) + 6; // 0 ticks = 6:00
+  if (hours >= 24) hours -= 24;
+  const minutes = totalMinutes % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+}
+
 // Updates the debug HUD with current stats
 export function updateDebugDisplay({
   fps,
@@ -219,18 +232,6 @@ export function updateDebugDisplay({
     });
   }
   debugContent.innerHTML = html;
-
-  // Helper to format world time as HH:MM
-  function formatWorldTime(worldTime) {
-    if (typeof worldTime !== 'number') return '';
-    // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
-    let ticks = worldTime % 24000;
-    let totalMinutes = Math.floor((ticks / 1000) * 60); // 1000 ticks = 1 hour
-    let hours = Math.floor(totalMinutes / 60) + 6; // 0 ticks = 6:00
-    if (hours >= 24) hours -= 24;
-    let minutes = totalMinutes % 60;
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-  }
 }
 
 // Updates the scoreboard with current player stats
