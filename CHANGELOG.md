@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-03-26
+
+### Added
+- Local Git hooks now lint staged JavaScript before commit and run full checks before push.
+
+### Changed
+- Release workflow now initializes QEMU before Buildx to support multi-architecture Docker image publishing.
+
+### Fixed
+- Fixed release automation gap that could fail container publishing during tagged releases.
+
 ## [1.0.0] - 2026-03-26
 
 ### Added

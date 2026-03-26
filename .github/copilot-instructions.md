@@ -15,6 +15,10 @@
 - `server.log` is the primary runtime output surface during development. Prefer reading it from the editor/workspace instead of asking for terminal output.
 - **Persistent preference**: Assume `server.log` is already open in the editor and read it directly with `read_file` whenever runtime diagnostics are needed. Do not ask the user to re-open it.
 
+## Environment Preference
+
+- For git push/tag operations in this environment, always run with `SSH_AUTH_SOCK=/home/timr/.ssh/ssh_auth_sock` (or export this first) so SSH authentication succeeds.
+
 ## Repo Snapshot
 - Real-time BZFlag-inspired arena: Node/Express/WS server in `server.js`, browser-side Three.js client under `public/`.
 - All front-end modules are plain ES modules loaded directly by the browser; no bundler. Update the `<script type="importmap">` block in `public/index.html` when adding new external modules.
