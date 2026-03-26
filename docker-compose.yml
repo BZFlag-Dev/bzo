@@ -1,0 +1,11 @@
+services:
+  bzo:
+    image: ghcr.io/bzflag-dev/bzo:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      SERVER_CONFIG_PATH: /data/server-config.json
+    volumes:
+      - ./data:/data

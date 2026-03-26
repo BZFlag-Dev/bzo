@@ -9,7 +9,11 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "check:server": "node --check server.js",
-    "check": "npm run check:server && npm run lint"
+    "check": "npm run check:server && npm run lint",
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "release:check": "node scripts/check-release.mjs",
+    "changelog:extract": "node scripts/extract-changelog.mjs",
+    "prepare": "husky"
   },
   "keywords": [
     "game",
@@ -27,6 +31,13 @@
   "devDependencies": {
     "@eslint/js": "^9.22.0",
     "eslint": "^9.22.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.10",
     "nodemon": "^3.0.1"
+  },
+  "lint-staged": {
+    "*.{js,cjs,mjs}": [
+      "eslint --max-warnings=0"
+    ]
   }
 }

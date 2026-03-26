@@ -1,0 +1,9 @@
+.git
+.github
+node_modules
+server.log
+server-config.json
+npm-debug.log*
+.DS_Store
+*.patch
+.vscode

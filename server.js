@@ -39,6 +39,10 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
+const CONFIG_PATH = process.env.SERVER_CONFIG_PATH
+  ? path.resolve(process.env.SERVER_CONFIG_PATH)
+  : path.join(__dirname, 'server-config.json');
+const EXAMPLE_CONFIG_PATH = path.join(__dirname, 'example-server-config.json');
 
 // Serve static files
 app.use(express.static('public'));
@@ -113,8 +117,23 @@ const WS_PING_INTERVAL = 30000; // Send ping every 30 seconds
 const WS_PONG_TIMEOUT = 60000; // Close connection if no pong after 60 seconds
 
 // --- Map selection: load from config and maps/ directory ---
-const configPath = path.join(__dirname, 'server-config.json');
+function ensureServerConfig(configPath) {
+  if (fs.existsSync(configPath)) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.copyFileSync(EXAMPLE_CONFIG_PATH, configPath);
+    log(`Created default server config at ${configPath}`);
+  } catch (error) {
+    logError(`Could not create default server config at ${configPath}:`, error);
+  }
+}
+
+const configPath = CONFIG_PATH;
 let serverConfig = {};
+ensureServerConfig(configPath);
 try {
   serverConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 } catch (e) {
