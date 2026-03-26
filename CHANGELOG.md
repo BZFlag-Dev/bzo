@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-03-26
+
+### Fixed
+- Add `no-cache: true` to Docker build step to prevent stale BuildKit layer cache from masking base image changes.
+- Remove unused QEMU setup step; only `linux/amd64` is targeted so QEMU is not needed.
+
 ## [1.0.4] - 2026-03-26
 
 ### Changed
