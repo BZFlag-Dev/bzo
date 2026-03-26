@@ -1,6 +1,6 @@
 {
   "name": "bzo",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Web based 3D multiplayer tank game, Battlezone Online",
   "main": "server.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:check": "node scripts/check-release.mjs",
     "changelog:extract": "node scripts/extract-changelog.mjs",
-    "prepare": "husky"
+    "prepare": "node -e \"const { existsSync } = require('node:fs'); process.exit(existsSync('node_modules/.bin/husky') ? 0 : 1)\" && husky || true"
   },
   "keywords": [
     "game",

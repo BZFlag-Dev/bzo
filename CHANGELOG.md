@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-03-26
+
+### Fixed
+- Make the `prepare` script skip Husky installation when dev dependencies are omitted so container builds using `npm ci --omit=dev` no longer fail with `sh: 1: husky: not found`.
+
 ## [1.0.6] - 2026-03-26
 
 ### Fixed
