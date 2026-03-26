@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-03-26
+
+### Fixed
+- Replace `docker/build-push-action` (Buildx) with plain `docker build` + `docker push` commands to eliminate unexplained BuildKit exit code 127 failures and get clear build output in CI logs.
+
 ## [1.0.5] - 2026-03-26
 
 ### Fixed
