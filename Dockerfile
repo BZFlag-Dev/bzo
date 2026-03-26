@@ -3,7 +3,7 @@
 # Source: https://github.com/BZFlag-Dev/bzo
 # See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
 
-FROM node:20-alpine
+FROM node:20-slim
 
 ENV NODE_ENV=production \
     PORT=3000 \
