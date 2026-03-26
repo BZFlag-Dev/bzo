@@ -13,6 +13,7 @@
 - **Client-side logging to server**: Send debug messages from the client to the server using `ws.send(JSON.stringify({ type: 'debug', message: 'your debug info' }))` and they will appear in `server.log`. This is especially useful for headsets like Quest 2 where browser console access is limited.
 - Never use `tail`, `grep`, or terminal commands on `server.log` - it's always open in the editor. Use `read_file` instead.
 - `server.log` is the primary runtime output surface during development. Prefer reading it from the editor/workspace instead of asking for terminal output.
+- **Persistent preference**: Assume `server.log` is already open in the editor and read it directly with `read_file` whenever runtime diagnostics are needed. Do not ask the user to re-open it.
 
 ## Repo Snapshot
 - Real-time BZFlag-inspired arena: Node/Express/WS server in `server.js`, browser-side Three.js client under `public/`.

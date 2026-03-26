@@ -41,7 +41,7 @@ import {
 import { renderManager } from './render.js';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { initXR, toggleXRSession, updateXRControllerInput, setNormalAnimationLoop, isXREnabled, setSendToServer, debugLog } from './webxr.js';
+import { initXR, toggleXRSession, updateXRControllerInput, setNormalAnimationLoop, isXREnabled } from './webxr.js';
 
 // FPS
 let fps = 0;
@@ -81,6 +81,94 @@ let projectiles = new Map();
 let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
+const pendingDebugPackets = [];
+
+function isDebugHudVisible() {
+  const debugHud = document.getElementById('debugHud');
+  if (!debugHud) return false;
+  if (debugHud.style.display === 'none') return false;
+  const computed = window.getComputedStyle(debugHud);
+  return computed.display !== 'none' && computed.visibility !== 'hidden';
+}
+
+function queueDebugPacket(payload) {
+  pendingDebugPackets.push(payload);
+  if (pendingDebugPackets.length > 120) {
+    pendingDebugPackets.shift();
+  }
+}
+
+function getDebugSenderName() {
+  if (typeof myPlayerName === 'string' && myPlayerName.trim().length > 0) {
+    return myPlayerName.trim();
+  }
+  const savedName = localStorage.getItem('playerName');
+  if (typeof savedName === 'string' && savedName.trim().length > 0) {
+    return savedName.trim();
+  }
+  return '';
+}
+
+function debugLog(message, source = '') {
+  if (!isDebugHudVisible()) {
+    return;
+  }
+  const text = source ? `[${source}] ${String(message)}` : String(message);
+  const chatText = `[DBG] ${text}`;
+  chatMessages.push(chatText);
+  if (chatMessages.length > CHAT_MAX_MESSAGES * 3) {
+    chatMessages.shift();
+  }
+  chatWindowDirty = true;
+  updateChatWindow();
+  console.log(text);
+  const payload = {
+    type: 'debug',
+    message: text,
+    name: getDebugSenderName() || undefined,
+  };
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendToServer(payload);
+    return;
+  }
+  queueDebugPacket(payload);
+}
+
+function flushDebugPacketQueue() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || pendingDebugPackets.length === 0) {
+    return;
+  }
+  while (pendingDebugPackets.length > 0) {
+    const payload = pendingDebugPackets.shift();
+    sendToServer(payload);
+  }
+}
+
+function collectClientCapabilities() {
+  const probeCanvas = document.createElement('canvas');
+  const gl2 = !!probeCanvas.getContext('webgl2');
+  const gl = !!probeCanvas.getContext('webgl');
+  const experimental = !!probeCanvas.getContext('experimental-webgl');
+  debugLog(
+    `capabilities ua="${navigator.userAgent}" webgl2=${gl2} webgl=${gl} experimentalWebgl=${experimental} secure=${window.isSecureContext}`,
+  );
+}
+
+window.addEventListener('error', (event) => {
+  const message = event && event.message ? event.message : 'Unknown error event';
+  const source = event && event.filename ? event.filename : 'unknown-source';
+  const line = event && event.lineno ? event.lineno : 0;
+  const col = event && event.colno ? event.colno : 0;
+  debugLog(`window.error message="${message}" at ${source}:${line}:${col}`);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event && event.reason ? event.reason : 'Unknown rejection reason';
+  const serialized = typeof reason === 'string' ? reason : (reason && reason.message ? reason.message : JSON.stringify(reason));
+  debugLog(`window.unhandledrejection reason="${serialized}"`);
+});
+
+window.gameDebugLog = debugLog;
 
 function lightenHexColor(colorValue, mix = 0.45) {
   const color = new THREE.Color(typeof colorValue === 'number' ? colorValue : (colorValue || 0x4caf50));
@@ -1273,6 +1361,7 @@ function init() {
   }, { passive: false });
 
   setupInputHandlers();
+  collectClientCapabilities();
 
   // Chat UI
   const chatWindow = document.getElementById('chatWindow');
@@ -1365,12 +1454,38 @@ function init() {
     });
   }
 
-  const renderContext = renderManager.init({});
-  scene = renderContext.scene;
-  camera = renderContext.camera;
+  let renderContext;
+  try {
+    renderContext = renderManager.init({});
+    scene = renderContext.scene;
+    camera = renderContext.camera;
+    const renderer = renderManager.getRenderer();
+    if (renderer) {
+      const rendererSize = renderer.getSize(new THREE.Vector2());
+      const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
+      debugLog(
+        `renderer.init.ok viewport=${window.innerWidth}x${window.innerHeight} canvas=${renderer.domElement.width}x${renderer.domElement.height} css=${rendererSize.x}x${rendererSize.y} drawbuf=${drawingBufferSize.x}x${drawingBufferSize.y}`,
+      );
+    }
+  } catch (error) {
+    console.error('Failed to initialize 3D renderer:', error);
+    const reason = error && error.message ? error.message : 'Unknown renderer initialization error';
+    showMessage(`3D renderer unavailable: ${reason}`);
+    debugLog(`renderer.init.failed reason="${reason}"`);
+    scene = renderManager.getScene();
+    camera = renderManager.getCamera();
+    const debugContent = document.getElementById('debugContent');
+    if (debugContent) {
+      debugContent.innerHTML = `<p>3D renderer failed to initialize.</p><p>${reason}</p><p>Open the game in an external browser window for full WebGL support.</p>`;
+      const debugHud = document.getElementById('debugHud');
+      if (debugHud) debugHud.style.display = 'block';
+    }
+  }
 
-  initTankSelector();
-  renderManager.setTankModel(getTankModelPathById(selectedTankModelId));
+  if (renderManager.getRenderer()) {
+    initTankSelector();
+    renderManager.setTankModel(getTankModelPathById(selectedTankModelId));
+  }
 
   // Radar map
   radarCanvas = document.getElementById('radar');
@@ -1609,8 +1724,8 @@ function connectToServer() {
 
   ws.onopen = () => {
     showMessage('Connected to server!');
-    // Now enable debug logging to server
-    setSendToServer(sendToServer);
+    debugLog(`ws.open host=${window.location.host} protocol=${window.location.protocol}`);
+    flushDebugPacketQueue();
   };
 
   ws.onmessage = (event) => {
@@ -1646,6 +1761,8 @@ function connectToServer() {
 
   ws.onerror = (error) => {
     console.error('WebSocket error:', error);
+    const details = error && error.message ? error.message : 'WebSocket error event';
+    debugLog(`ws.error ${details}`);
   };
 }
 

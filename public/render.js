@@ -23,6 +23,40 @@ import {
 } from './texture.js';
 
 class RenderManager {
+  _getViewportSize() {
+    const body = document.body;
+    const doc = document.documentElement;
+    const visualViewport = window.visualViewport;
+    const containerBounds = this.container && typeof this.container.getBoundingClientRect === 'function'
+      ? this.container.getBoundingClientRect()
+      : null;
+    const width = Math.max(
+      0,
+      Number(window.innerWidth) || 0,
+      Number(visualViewport && visualViewport.width) || 0,
+      Number(doc && doc.clientWidth) || 0,
+      Number(body && body.clientWidth) || 0,
+      Number(this.container && this.container.clientWidth) || 0,
+      Number(containerBounds && containerBounds.width) || 0,
+    );
+    const height = Math.max(
+      0,
+      Number(window.innerHeight) || 0,
+      Number(visualViewport && visualViewport.height) || 0,
+      Number(doc && doc.clientHeight) || 0,
+      Number(body && body.clientHeight) || 0,
+      Number(this.container && this.container.clientHeight) || 0,
+      Number(containerBounds && containerBounds.height) || 0,
+    );
+
+    const fallbackWidth = Math.max(320, Number(window.screen && window.screen.availWidth) || 1280);
+    const fallbackHeight = Math.max(200, Number(window.screen && window.screen.availHeight) || 720);
+    return {
+      width: Math.max(1, width >= 32 ? Math.floor(width) : fallbackWidth),
+      height: Math.max(1, height >= 32 ? Math.floor(height) : fallbackHeight),
+    };
+  }
+
     // Set world time (0-23999, like Minecraft)
     setWorldTime(worldTime) {
       this._worldTime = worldTime;
@@ -183,24 +217,37 @@ class RenderManager {
     this.worldGroup = new THREE.Group();
     this.scene.add(this.worldGroup);
 
-    this.camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000,
-    );
+    const viewport = this._getViewportSize();
+
+    this.camera = new THREE.PerspectiveCamera(75, viewport.width / viewport.height, 0.1, 1000);
     this.camera.position.set(0, 15, 20);
     this.camera.lookAt(0, 0, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, xrCompatible: true });
+    try {
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, xrCompatible: true });
+    } catch (error) {
+      const probeCanvas = document.createElement('canvas');
+      const hasWebGL = !!(
+        probeCanvas.getContext('webgl2') ||
+        probeCanvas.getContext('webgl') ||
+        probeCanvas.getContext('experimental-webgl')
+      );
+      const message = hasWebGL
+        ? 'WebGL renderer initialization failed in this browser context'
+        : 'WebGL is unavailable in this browser context';
+      const wrappedError = new Error(message);
+      wrappedError.cause = error;
+      throw wrappedError;
+    }
+
     this.renderer.xr.enabled = true;
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(viewport.width, viewport.height);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.labelRenderer = new CSS2DRenderer();
-    this.labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    this.labelRenderer.setSize(viewport.width, viewport.height);
     this.labelRenderer.domElement.style.position = 'absolute';
     this.labelRenderer.domElement.style.top = '0';
     this.labelRenderer.domElement.style.pointerEvents = 'none';
@@ -208,7 +255,11 @@ class RenderManager {
 
     // Anaglyph effect setup (not enabled by default)
     this.anaglyphEffect = new AnaglyphEffect(this.renderer);
-    this.anaglyphEffect.setSize(window.innerWidth, window.innerHeight);
+    this.anaglyphEffect.setSize(viewport.width, viewport.height);
+
+    this.handleResize();
+    window.setTimeout(() => this.handleResize(), 50);
+    window.setTimeout(() => this.handleResize(), 250);
 
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
@@ -282,12 +333,13 @@ class RenderManager {
 
   handleResize() {
     if (!this.camera || !this.renderer || !this.labelRenderer) return;
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const viewport = this._getViewportSize();
+    this.camera.aspect = viewport.width / viewport.height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(viewport.width, viewport.height);
+    this.labelRenderer.setSize(viewport.width, viewport.height);
     if (this.anaglyphEffect) {
-      this.anaglyphEffect.setSize(window.innerWidth, window.innerHeight);
+      this.anaglyphEffect.setSize(viewport.width, viewport.height);
     }
   }
 

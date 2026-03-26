@@ -10,7 +10,6 @@ let xrSupported = false;
 let xrEnabled = false;
 let xrMode = null; // 'immersive-vr' or 'immersive-ar'
 let xrInputSources = new Map(); // Map of controller input source ID -> controller state
-let sendToServerCallback = null; // For logging debug messages
 
 export const xrState = {
   enabled: false,
@@ -19,20 +18,10 @@ export const xrState = {
   controllers: new Map(), // input source ID -> { pose, grip, select }
 };
 
-// Set callback for sending debug messages to server
-export function setSendToServer(callback) {
-  sendToServerCallback = callback;
-}
-
-// Send debug message to server and console
+// Send debug message through app-wide logger in game.js
 export function debugLog(message) {
-  console.log('[WebXR] ' + message);
-  if (sendToServerCallback) {
-    try {
-      sendToServerCallback({ type: 'debug', message: '[WebXR] ' + message });
-    } catch (e) {
-      console.error('[WebXR] Failed to send to server:', e);
-    }
+  if (typeof window !== 'undefined' && typeof window.gameDebugLog === 'function') {
+    window.gameDebugLog(message, 'WebXR');
   }
 }
 
@@ -153,6 +142,10 @@ function endXRSession() {
 let normalAnimationCallback = null;
 
 export function setNormalAnimationLoop(renderer, callback) {
+  if (!renderer || typeof callback !== 'function') {
+    normalAnimationCallback = null;
+    return;
+  }
   normalAnimationCallback = { renderer, callback };
 }
 
@@ -160,6 +153,9 @@ export function setNormalAnimationLoop(renderer, callback) {
 export function restoreNormalAnimationLoop() {
   if (normalAnimationCallback) {
     const { renderer, callback } = normalAnimationCallback;
+    if (!renderer || !renderer.xr) {
+      return;
+    }
     renderer.xr.setAnimationLoop(null); // Clear XR loop
     // Resume normal RAF
     requestAnimationFrame(callback);

@@ -1329,7 +1329,9 @@ wss.on('connection', (ws, req) => {
         }
         case 'debug': {
           // Log debug messages from clients
-          log(`[DEBUG from ${player.name}] ${message.message || ''}`);
+          const payloadName = typeof message.name === 'string' ? message.name.trim() : '';
+          const debugFrom = payloadName || player.name || `Player ${player.playerNumber}`;
+          log(`[DEBUG from ${debugFrom}] ${message.message || ''}`);
           break;
         }
         case 'm': {
