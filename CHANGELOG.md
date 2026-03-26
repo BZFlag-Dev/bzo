@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-03-26
+
+### Fixed
+- Switch Docker base image from `node:20-alpine` to `node:20-slim` so that `npm` is available during the container build step and the release workflow succeeds.
+
 ## [1.0.1] - 2026-03-26
 
 ### Added
