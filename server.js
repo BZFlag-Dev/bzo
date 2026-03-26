@@ -99,8 +99,14 @@ const wss = new WebSocketServer({ server });
 // Game constants
 const GAME_CONFIG = {
   MAP_SIZE: 400,
-  TANK_SPEED: 12.5, // BZ-like default at this world scale (units per second)
-  TANK_ROTATION_SPEED: 1.57, // BZ-like default at this world scale (radians per second)
+  TANK_SPEED: 25.0, // BZFlag-like default (units per second)
+  TANK_ROTATION_SPEED: 0.785398, // BZFlag _tankAngVel default (radians per second)
+  REVERSE_SPEED_RATIO: 0.5, // Max reverse speed as fraction of forward speed
+  FORWARD_ACCEL: 1.8, // Forward input acceleration (normalized units per second)
+  REVERSE_ACCEL: 1.2, // Reverse input acceleration (normalized units per second)
+  FORWARD_DECEL: 2.5, // Forward/reverse input deceleration to zero
+  TURN_ACCEL: 3.0, // Turn input acceleration (normalized units per second)
+  TURN_DECEL: 4.0, // Turn input deceleration to zero
   SHOT_SPEED: 50, // BZ-like default at this world scale (units per second)
   SHOT_COOLDOWN: 1000, // ms
   SHOT_DISTANCE: 175, // Derived from default shot duration (3.5s) at SHOT_SPEED
@@ -162,6 +168,36 @@ if (Number.isFinite(configTankRotationSpeed) && configTankRotationSpeed > 0) {
   GAME_CONFIG.TANK_ROTATION_SPEED = configTankRotationSpeed;
 }
 
+const configReverseSpeedRatio = Number(serverConfig.reverseSpeedRatio);
+if (Number.isFinite(configReverseSpeedRatio) && configReverseSpeedRatio >= 0 && configReverseSpeedRatio <= 1) {
+  GAME_CONFIG.REVERSE_SPEED_RATIO = configReverseSpeedRatio;
+}
+
+const configForwardAccel = Number(serverConfig.forwardAccel);
+if (Number.isFinite(configForwardAccel) && configForwardAccel > 0) {
+  GAME_CONFIG.FORWARD_ACCEL = configForwardAccel;
+}
+
+const configReverseAccel = Number(serverConfig.reverseAccel);
+if (Number.isFinite(configReverseAccel) && configReverseAccel > 0) {
+  GAME_CONFIG.REVERSE_ACCEL = configReverseAccel;
+}
+
+const configForwardDecel = Number(serverConfig.forwardDecel);
+if (Number.isFinite(configForwardDecel) && configForwardDecel > 0) {
+  GAME_CONFIG.FORWARD_DECEL = configForwardDecel;
+}
+
+const configTurnAccel = Number(serverConfig.turnAccel);
+if (Number.isFinite(configTurnAccel) && configTurnAccel > 0) {
+  GAME_CONFIG.TURN_ACCEL = configTurnAccel;
+}
+
+const configTurnDecel = Number(serverConfig.turnDecel);
+if (Number.isFinite(configTurnDecel) && configTurnDecel > 0) {
+  GAME_CONFIG.TURN_DECEL = configTurnDecel;
+}
+
 const configJumpVelocity = Number(serverConfig.jumpVelocity);
 if (Number.isFinite(configJumpVelocity) && configJumpVelocity >= 0) {
   GAME_CONFIG.JUMP_VELOCITY = configJumpVelocity;
@@ -184,7 +220,7 @@ if (Number.isFinite(configShotDistance) && configShotDistance > 0) {
 
 log(`Anti-cheat mode: ${ANTICHEAT_CONFIG.mode}`);
 log(
-  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
+  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, reverseSpeedRatio=${GAME_CONFIG.REVERSE_SPEED_RATIO}, forwardAccel=${GAME_CONFIG.FORWARD_ACCEL}, reverseAccel=${GAME_CONFIG.REVERSE_ACCEL}, forwardDecel=${GAME_CONFIG.FORWARD_DECEL}, turnAccel=${GAME_CONFIG.TURN_ACCEL}, turnDecel=${GAME_CONFIG.TURN_DECEL}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
 );
 if (MAP_SOURCE !== 'random') {
   mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
@@ -246,7 +282,7 @@ function parseBZWMap(filename) {
       // position x y z (scale x and y by 0.5)
       const [, x, y, z] = line.split(/\s+/);
       current.x = parseFloat(x) * 0.5;
-      current.z = parseFloat(y) * 0.5; // BZFlag Y -> our Z
+      current.z = -parseFloat(y) * 0.5; // BZFlag +Y (north) -> our -Z (north)
       current.baseY = (parseFloat(z) || 0) * 0.5;
     } else if (current && line.startsWith('size')) {
       // size w d h (BZFlag counts center to edge so this effectively scales by 0.5)
@@ -1212,6 +1248,11 @@ function forceClientReload() {
 function requestServerRestart(reason) {
   log(`Restart requested: ${reason}`);
   forceClientReload();
+
+  if (reason === 'server.js change') {
+    return;
+  }
+
   // Touch server.js to update its timestamp and trigger nodemon file watcher
   // This causes nodemon to detect the "change" and restart immediately
   // without the "waiting for changes" message
@@ -1225,6 +1266,15 @@ function requestServerRestart(reason) {
       process.exit(0);
     }
   }, 1000);
+}
+
+function approachNormalizedValue(currentValue, targetValue, maxStep) {
+  if (!Number.isFinite(targetValue)) return Number.isFinite(currentValue) ? currentValue : 0;
+  const current = Number.isFinite(currentValue) ? currentValue : 0;
+  if (!Number.isFinite(maxStep) || maxStep <= 0) return current;
+  const delta = targetValue - current;
+  if (Math.abs(delta) <= maxStep) return targetValue;
+  return current + Math.sign(delta) * maxStep;
 }
 
 // Helper to send the map list and current map to a given websocket
@@ -1367,9 +1417,33 @@ wss.on('connection', (ws, req) => {
           const y = Number(message.y);
           const z = Number(message.z);
           const r = Number(message.r);
-          const fs = Number(message.fs);
-          const rs = Number(message.rs);
+          const reverseSpeedRatio = Number.isFinite(GAME_CONFIG.REVERSE_SPEED_RATIO)
+            ? GAME_CONFIG.REVERSE_SPEED_RATIO
+            : 0.5;
+          const requestedFS = Math.max(-reverseSpeedRatio, Math.min(1, Number(message.fs)));
+          const requestedRS = Math.max(-1, Math.min(1, Number(message.rs)));
+          let fs = requestedFS;
+          let rs = requestedRS;
           const vv = Number(message.vv);
+                    const enforceMovementLimits = ANTICHEAT_CONFIG.mode !== 'disabled';
+                    if (enforceMovementLimits && Number.isFinite(deltaTime) && deltaTime > 0) {
+                      const forwardRate = Math.abs(requestedFS) < 0.001
+                        ? GAME_CONFIG.FORWARD_DECEL
+                        : (requestedFS >= 0 ? GAME_CONFIG.FORWARD_ACCEL : GAME_CONFIG.REVERSE_ACCEL);
+                      const turnRate = Math.abs(requestedRS) < 0.001
+                        ? GAME_CONFIG.TURN_DECEL
+                        : GAME_CONFIG.TURN_ACCEL;
+
+                      fs = approachNormalizedValue(player.forwardSpeed || 0, requestedFS, forwardRate * deltaTime);
+                      rs = approachNormalizedValue(player.rotationSpeed || 0, requestedRS, turnRate * deltaTime);
+
+                      fs = Math.max(-reverseSpeedRatio, Math.min(1, fs));
+                      rs = Math.max(-1, Math.min(1, rs));
+                    } else {
+                      fs = requestedFS;
+                      rs = requestedRS;
+                    }
+
           const d = message.d !== undefined ? Number(message.d) : undefined; // Optional slide direction
           const vx = message.vx !== undefined ? Number(message.vx) : undefined;
           const vz = message.vz !== undefined ? Number(message.vz) : undefined;

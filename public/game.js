@@ -3573,7 +3573,18 @@ let onGround = false;
 let onObstacle = false;
 let jumpDirection = null; // Stores the direction at jump start
 let currentSupportObstacle = null;
+let smoothedForwardInput = 0;
+let smoothedRotationInput = 0;
 const MIN_LANDING_FEEDBACK_SPEED = 0.35;
+
+function approachValue(currentValue, targetValue, maxStep) {
+  if (!Number.isFinite(currentValue)) return targetValue;
+  if (!Number.isFinite(targetValue)) return currentValue;
+  if (!Number.isFinite(maxStep) || maxStep <= 0) return currentValue;
+  const delta = targetValue - currentValue;
+  if (Math.abs(delta) <= maxStep) return targetValue;
+  return currentValue + Math.sign(delta) * maxStep;
+}
 
 function setAirVelocity(tank, vx, vz) {
   if (!tank || !tank.userData) return;
@@ -3699,7 +3710,10 @@ function handleInputEvents() {
       if (typeof mouseX !== 'undefined') intendedRotation = -mouseX;
     }
   }
-  intendedForward = Math.max(-1, Math.min(1, intendedForward));
+  const reverseSpeedRatio = Number.isFinite(gameConfig?.REVERSE_SPEED_RATIO)
+    ? gameConfig.REVERSE_SPEED_RATIO
+    : 0.5;
+  intendedForward = Math.max(-reverseSpeedRatio, Math.min(1, intendedForward));
   intendedRotation = Math.max(-1, Math.min(1, intendedRotation));
   intendedY = Math.max(-1, Math.min(1, intendedY));
 }
@@ -3743,8 +3757,35 @@ function handleMotion(deltaTime) {
   const priorAirVelocityX = myTank.userData.airVelocityX || 0;
   const priorAirVelocityZ = myTank.userData.airVelocityZ || 0;
 
+  let movementForwardInput = intendedForward;
+  let movementRotationInput = intendedRotation;
+  if (!isInAir) {
+    const forwardAccel = Number.isFinite(gameConfig.FORWARD_ACCEL) ? gameConfig.FORWARD_ACCEL : 1.8;
+    const reverseAccel = Number.isFinite(gameConfig.REVERSE_ACCEL) ? gameConfig.REVERSE_ACCEL : 1.2;
+    const forwardDecel = Number.isFinite(gameConfig.FORWARD_DECEL) ? gameConfig.FORWARD_DECEL : 2.5;
+    const turnAccel = Number.isFinite(gameConfig.TURN_ACCEL) ? gameConfig.TURN_ACCEL : 3.0;
+    const turnDecel = Number.isFinite(gameConfig.TURN_DECEL) ? gameConfig.TURN_DECEL : 4.0;
+
+    const desiredForward = intendedForward;
+    const desiredRotation = intendedRotation;
+
+    const forwardRate = Math.abs(desiredForward) < 0.001
+      ? forwardDecel
+      : (desiredForward >= 0 ? forwardAccel : reverseAccel);
+    const rotationRate = Math.abs(desiredRotation) < 0.001 ? turnDecel : turnAccel;
+
+    smoothedForwardInput = approachValue(smoothedForwardInput, desiredForward, forwardRate * deltaTime);
+    smoothedRotationInput = approachValue(smoothedRotationInput, desiredRotation, rotationRate * deltaTime);
+
+    movementForwardInput = smoothedForwardInput;
+    movementRotationInput = smoothedRotationInput;
+  } else {
+    smoothedForwardInput = intendedForward;
+    smoothedRotationInput = intendedRotation;
+  }
+
   // Determine forward speed for movement calculation
-  let movementForwardSpeed = intendedForward;
+  let movementForwardSpeed = movementForwardInput;
   if (isInAir && jumpDirection !== null) {
     intendedDeltaX = priorAirVelocityX * deltaTime;
     intendedDeltaZ = priorAirVelocityZ * deltaTime;
@@ -3775,8 +3816,8 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     jumpStarted = true; // Mark that jump started this frame
-    myTank.userData.jumpForwardSpeed = intendedForward;
-    myTank.userData.fallForwardSpeed = intendedForward;
+    myTank.userData.jumpForwardSpeed = movementForwardInput;
+    myTank.userData.fallForwardSpeed = movementForwardInput;
     myTank.userData.slideDirection = undefined;
     forceMoveSend = true; // Force send on jump
     if (myTank) renderManager.playLocalJumpSound(myTank.position);
@@ -3831,7 +3872,7 @@ function handleMotion(deltaTime) {
     playerY = result.y;
     playerZ = result.z;
     // Always update playerRotation for visual tank rotation
-    playerRotation = intendedRotation * rotSpeed + oldRotation;
+    playerRotation = movementRotationInput * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
 
@@ -3839,12 +3880,12 @@ function handleMotion(deltaTime) {
     if (jumpStarted) {
       jumpDirection = playerRotation;
       myJumpDirection = jumpDirection;
-      const jumpVelocity = deriveAirVelocityFromState(jumpDirection, intendedForward);
+      const jumpVelocity = deriveAirVelocityFromState(jumpDirection, movementForwardInput);
       setAirVelocity(myTank, jumpVelocity.x, jumpVelocity.z);
     }
   } else if (fallStarted) {
     // Fall started - apply rotation but position was already updated by fallResult
-    playerRotation = intendedRotation * rotSpeed + oldRotation;
+    playerRotation = movementRotationInput * rotSpeed + oldRotation;
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
   }
