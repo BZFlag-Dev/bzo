@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-03-27
+
+### Added
+- Added BZFlag-style spawn visuals with a short ground flash ring and vertical spawn burst on join and respawn.
+
+### Changed
+- Updated first-person camera and shot origin alignment to use model-derived muzzle offsets for closer BZFlag parity.
+- Updated first-person FOV behavior to use BZFlag-style horizontal FOV conversion by display aspect.
+- Updated jump defaults to BZFlag-like values (`jumpVelocity: 19`, `gravity: 9.8`) and aligned landing flash/squish timing to BZFlag feel.
+
+### Fixed
+- Fixed server/client gravity configuration flow so gravity is configurable server-side and propagated through game config.
+- Fixed landing feedback consistency by triggering effects on landing transitions without local threshold suppression.
+
 ## [1.0.7] - 2026-03-26
 
 ### Fixed
