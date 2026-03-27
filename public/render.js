@@ -2034,64 +2034,65 @@ class RenderManager {
     if (!this.scene || !position) return;
 
     const tint = new THREE.Color(typeof color === 'number' ? color : 0x4caf50)
-      .lerp(new THREE.Color(0xffffff), 0.45);
+      .lerp(new THREE.Color(0xffffff), 0.35);
 
-    const ringGeometry = new THREE.RingGeometry(0.7, 1.25, 48);
+    const ringGeometry = new THREE.RingGeometry(0.7, 1.1, 48);
     const ringMaterial = new THREE.MeshBasicMaterial({
       color: tint,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.95,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
     ring.rotation.x = Math.PI / 2;
     ring.position.set(position.x, position.y + 0.05, position.z);
-    ring.scale.set(0.45, 0.45, 1);
-
-    const pulseGeometry = new THREE.SphereGeometry(0.9, 18, 12);
-    const pulseMaterial = new THREE.MeshBasicMaterial({
-      color: tint,
-      transparent: true,
-      opacity: 0.45,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      wireframe: true,
-    });
-    const pulse = new THREE.Mesh(pulseGeometry, pulseMaterial);
-    pulse.position.set(position.x, position.y + 1.0, position.z);
-    pulse.scale.setScalar(0.4);
+    ring.scale.set(0.7, 0.7, 1);
 
     const columnGeometry = new THREE.CylinderGeometry(0.28, 0.55, 3.0, 18, 1, true);
     const columnMaterial = new THREE.MeshBasicMaterial({
       color: tint,
       transparent: true,
-      opacity: 0.24,
+      opacity: 0.34,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
     });
     const column = new THREE.Mesh(columnGeometry, columnMaterial);
     column.position.set(position.x, position.y + 1.5, position.z);
-    column.scale.set(0.5, 0.2, 0.5);
+    column.scale.set(0.4, 0.3, 0.4);
+
+    const topRingGeometry = new THREE.RingGeometry(0.45, 0.78, 40);
+    const topRingMaterial = new THREE.MeshBasicMaterial({
+      color: tint,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const topRing = new THREE.Mesh(topRingGeometry, topRingMaterial);
+    topRing.rotation.x = Math.PI / 2;
+    topRing.position.set(position.x, position.y + 1.35, position.z);
+    topRing.scale.set(0.65, 0.65, 1);
 
     this.worldGroup.add(ring);
-    this.worldGroup.add(pulse);
     this.worldGroup.add(column);
+    this.worldGroup.add(topRing);
 
     this.activeSpawnEffects.push({
       ring,
       ringGeometry,
       ringMaterial,
-      pulse,
-      pulseGeometry,
-      pulseMaterial,
       column,
       columnGeometry,
       columnMaterial,
+      topRing,
+      topRingGeometry,
+      topRingMaterial,
       lifetime: 0,
-      maxLifetime: 1.0,
+      maxLifetime: 0.75,
     });
   }
 
@@ -2299,28 +2300,29 @@ class RenderManager {
       effect.lifetime += dt;
       const progress = Math.min(1, effect.lifetime / effect.maxLifetime);
 
-      const ringScale = 0.45 + progress * 3.8;
+      const ringScale = 0.7 + progress * 3.3;
       effect.ring.scale.set(ringScale, ringScale, 1);
-      effect.ringMaterial.opacity = Math.max(0, 0.85 * (1 - progress));
+      effect.ringMaterial.opacity = Math.max(0, 0.95 * (1 - progress));
 
-      const pulseScale = 0.4 + progress * 1.8;
-      effect.pulse.scale.setScalar(pulseScale);
-      effect.pulseMaterial.opacity = Math.max(0, 0.45 * (1 - progress));
+      const columnPulse = 0.28 + (1 - progress) * 0.72;
+      effect.column.scale.set(0.4 * columnPulse, 0.3 + (1 - progress) * 1.25, 0.4 * columnPulse);
+      effect.columnMaterial.opacity = Math.max(0, 0.34 * (1 - progress));
 
-      const columnPulse = 0.2 + (1 - progress) * 0.8;
-      effect.column.scale.set(0.5 * columnPulse, 0.2 + (1 - progress) * 1.0, 0.5 * columnPulse);
-      effect.columnMaterial.opacity = Math.max(0, 0.24 * (1 - progress));
+      const topRingScale = 0.65 + progress * 1.45;
+      effect.topRing.scale.set(topRingScale, topRingScale, 1);
+      effect.topRing.position.y += dt * 1.8;
+      effect.topRingMaterial.opacity = Math.max(0, 0.55 * (1 - progress));
 
       if (progress >= 1) {
         this.worldGroup.remove(effect.ring);
-        this.worldGroup.remove(effect.pulse);
         this.worldGroup.remove(effect.column);
+        this.worldGroup.remove(effect.topRing);
         effect.ringGeometry.dispose();
         effect.ringMaterial.dispose();
-        effect.pulseGeometry.dispose();
-        effect.pulseMaterial.dispose();
         effect.columnGeometry.dispose();
         effect.columnMaterial.dispose();
+        effect.topRingGeometry.dispose();
+        effect.topRingMaterial.dispose();
         this.activeSpawnEffects.splice(index, 1);
       }
     }

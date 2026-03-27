@@ -1881,6 +1881,7 @@ function handleServerMessage(message) {
 
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
+        const wasAliveBefore = !!(myTank && myTank.userData?.playerState?.health > 0);
         addPlayer(message.player);
 
         // This is our join confirmation, update our tank and finish join
@@ -1934,11 +1935,21 @@ function handleServerMessage(message) {
           myTank.userData.airVelocityX = message.player.airVelocityX || 0;
           myTank.userData.airVelocityZ = message.player.airVelocityZ || 0;
           myTank.visible = true;
+
+          if (!wasAliveBefore && message.player.health > 0) {
+            triggerSpawnEffectForTank(myTank, message.player.color);
+          }
         }
         callUpdateScoreboard();
       } else {
         // Another player joined: update their info and create their tank if needed
+        const existingTank = tanks.get(message.player.id);
+        const wasAliveBefore = !!(existingTank && existingTank.userData?.playerState?.health > 0);
         addPlayer(message.player);
+        const joinedTank = tanks.get(message.player.id);
+        if (!wasAliveBefore && message.player.health > 0 && joinedTank) {
+          triggerSpawnEffectForTank(joinedTank, message.player.color);
+        }
         callUpdateScoreboard();
         showMessage(`${message.player.name} joined the game`);
       }
@@ -2395,6 +2406,10 @@ function handlePlayerRespawn(message) {
     };
 
     tank.visible = true;
+
+    if (message.player.health > 0) {
+      triggerSpawnEffectForTank(tank, message.player.color);
+    }
   }
 
   callUpdateScoreboard();
@@ -3626,6 +3641,15 @@ function updateLandingSquish(deltaTime) {
 
     tank.scale.set(baseScaleX, baseScaleY * squishScaleY, baseScaleZ);
   });
+}
+
+function triggerSpawnEffectForTank(tank, colorOverride = null) {
+  if (!tank || !renderManager || !tank.position) return;
+
+  const defaultColor = 0x4caf50;
+  const tankColor = tank.userData?.playerState?.color;
+  const effectColor = colorOverride ?? tankColor ?? defaultColor;
+  renderManager.createSpawnEffect(tank.position, effectColor);
 }
 
 function approachValue(currentValue, targetValue, maxStep) {
