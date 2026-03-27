@@ -2001,9 +2001,7 @@ function handleServerMessage(message) {
         // Don't check oldVerticalVel < 0 because extrapolation doesn't update tank.userData.verticalVelocity
         if (oldJumpDirection !== null && message.vv === 0) {
           tank.userData.jumpDirection = null;
-          if (Math.abs(oldVerticalVel) >= MIN_LANDING_FEEDBACK_SPEED) {
-            triggerLandingFeedback(tank, Math.abs(oldVerticalVel), { local: message.id === myPlayerId });
-          }
+          triggerLandingFeedback(tank, Math.abs(oldVerticalVel), { local: message.id === myPlayerId });
         }
 
         // Update ghost mesh position to server-confirmed position
@@ -3575,7 +3573,60 @@ let jumpDirection = null; // Stores the direction at jump start
 let currentSupportObstacle = null;
 let smoothedForwardInput = 0;
 let smoothedRotationInput = 0;
-const MIN_LANDING_FEEDBACK_SPEED = 0.35;
+const LANDING_SQUISH_FACTOR = 1.0;
+const LANDING_SQUISH_TIME = 1.0;
+
+function ensureLandingSquishState(tank) {
+  if (!tank?.userData) return;
+  if (!Number.isFinite(tank.userData.baseScaleX)) tank.userData.baseScaleX = tank.scale.x;
+  if (!Number.isFinite(tank.userData.baseScaleY)) tank.userData.baseScaleY = tank.scale.y;
+  if (!Number.isFinite(tank.userData.baseScaleZ)) tank.userData.baseScaleZ = tank.scale.z;
+  if (!Number.isFinite(tank.userData.landingSquishScaleY)) tank.userData.landingSquishScaleY = 1;
+  if (!Number.isFinite(tank.userData.landingSquishRecoverRate)) tank.userData.landingSquishRecoverRate = 1 / LANDING_SQUISH_TIME;
+}
+
+function applyLandingSquish(tank, impactSpeed = 0) {
+  if (!tank?.userData || !gameConfig) return;
+
+  ensureLandingSquishState(tank);
+
+  const gravity = Number.isFinite(gameConfig.GRAVITY) && gameConfig.GRAVITY > 0
+    ? gameConfig.GRAVITY
+    : 9.8;
+  const velocity = Math.max(0, impactSpeed || 0);
+  let k = 0.1 / (2 * gravity * gravity);
+  k *= LANDING_SQUISH_FACTOR;
+
+  const targetScaleY = 1 / (1 + (k * velocity * velocity));
+  if (targetScaleY < tank.userData.landingSquishScaleY) {
+    tank.userData.landingSquishScaleY = targetScaleY;
+  }
+  tank.userData.landingSquishRecoverRate = 1 / LANDING_SQUISH_TIME;
+}
+
+function updateLandingSquish(deltaTime) {
+  tanks.forEach((tank) => {
+    if (!tank?.userData) return;
+    ensureLandingSquishState(tank);
+
+    const baseScaleX = tank.userData.baseScaleX;
+    const baseScaleY = tank.userData.baseScaleY;
+    const baseScaleZ = tank.userData.baseScaleZ;
+
+    let squishScaleY = tank.userData.landingSquishScaleY;
+    if (!Number.isFinite(squishScaleY)) squishScaleY = 1;
+
+    if (squishScaleY < 1) {
+      const recoverRate = Number.isFinite(tank.userData.landingSquishRecoverRate)
+        ? tank.userData.landingSquishRecoverRate
+        : (1 / LANDING_SQUISH_TIME);
+      squishScaleY = Math.min(1, squishScaleY + recoverRate * deltaTime);
+      tank.userData.landingSquishScaleY = squishScaleY;
+    }
+
+    tank.scale.set(baseScaleX, baseScaleY * squishScaleY, baseScaleZ);
+  });
+}
 
 function approachValue(currentValue, targetValue, maxStep) {
   if (!Number.isFinite(currentValue)) return targetValue;
@@ -3622,7 +3673,8 @@ function formatDebugNumber(value) {
 function triggerLandingFeedback(tank, impactSpeed = 0, { local = false } = {}) {
   if (!tank?.position) return;
   const clampedImpact = Math.max(0, impactSpeed || 0);
-  const intensity = Math.max(0.5, Math.min(1.5, 0.55 + clampedImpact / 8));
+  const intensity = 1.0;
+  applyLandingSquish(tank, clampedImpact);
   renderManager.createLandingEffect(tank.position, intensity, { local });
 }
 
@@ -3739,9 +3791,7 @@ function handleMotion(deltaTime) {
     myTank.userData.verticalVelocity = 0;
     setAirVelocity(myTank, 0, 0);
     clearJumpPredictionDebug(myTank);
-    if (landingImpactSpeed >= MIN_LANDING_FEEDBACK_SPEED) {
-      triggerLandingFeedback(myTank, landingImpactSpeed, { local: true });
-    }
+    triggerLandingFeedback(myTank, landingImpactSpeed, { local: true });
   }
 
   const oldX = playerX;
@@ -4668,6 +4718,7 @@ function animate() {
   }
 
   updateProjectiles(deltaTime);
+  updateLandingSquish(deltaTime);
   renderManager.updateExplosions(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);

@@ -240,6 +240,7 @@ class RenderManager {
     this.anaglyphEnabled = false;
     this.activeExplosions = [];
     this.activeLandingEffects = [];
+    this.activeSpawnEffects = [];
 
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
@@ -2001,25 +2002,96 @@ class RenderManager {
     if (local) this.playLocalLandSound(clampedIntensity);
     else this.playLandSound(position);
 
-    const ringGeometry = new THREE.TorusGeometry(0.7, 0.05, 8, 32);
+    const ringGeometry = new THREE.RingGeometry(0.5, 0.9, 48);
     const ringMaterial = new THREE.MeshBasicMaterial({
-      color: 0xbfe8ff,
+      color: 0xffffff,
+      side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.55,
+      opacity: 1.0,
       depthWrite: false
     });
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
     ring.rotation.x = Math.PI / 2;
-    ring.position.set(position.x, position.y + 0.06, position.z);
-    ring.scale.setScalar(0.7 + clampedIntensity * 0.18);
+    ring.position.set(position.x, position.y + 0.03, position.z);
+
+    const startRadius = 2.5;
+    ring.scale.set(startRadius, startRadius, 1);
+
     this.worldGroup.add(ring);
     this.activeLandingEffects.push({
       ring,
       geometry: ringGeometry,
       material: ringMaterial,
       intensity: clampedIntensity,
+      startRadius,
+      expansionRate: 3.5,
       lifetime: 0,
-      maxLifetime: 0.28 + clampedIntensity * 0.1
+      maxLifetime: 1.0
+    });
+  }
+
+  createSpawnEffect(position, color = 0x4caf50) {
+    if (!this.scene || !position) return;
+
+    const tint = new THREE.Color(typeof color === 'number' ? color : 0x4caf50)
+      .lerp(new THREE.Color(0xffffff), 0.45);
+
+    const ringGeometry = new THREE.RingGeometry(0.7, 1.25, 48);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: tint,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(position.x, position.y + 0.05, position.z);
+    ring.scale.set(0.45, 0.45, 1);
+
+    const pulseGeometry = new THREE.SphereGeometry(0.9, 18, 12);
+    const pulseMaterial = new THREE.MeshBasicMaterial({
+      color: tint,
+      transparent: true,
+      opacity: 0.45,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      wireframe: true,
+    });
+    const pulse = new THREE.Mesh(pulseGeometry, pulseMaterial);
+    pulse.position.set(position.x, position.y + 1.0, position.z);
+    pulse.scale.setScalar(0.4);
+
+    const columnGeometry = new THREE.CylinderGeometry(0.28, 0.55, 3.0, 18, 1, true);
+    const columnMaterial = new THREE.MeshBasicMaterial({
+      color: tint,
+      transparent: true,
+      opacity: 0.24,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+    const column = new THREE.Mesh(columnGeometry, columnMaterial);
+    column.position.set(position.x, position.y + 1.5, position.z);
+    column.scale.set(0.5, 0.2, 0.5);
+
+    this.worldGroup.add(ring);
+    this.worldGroup.add(pulse);
+    this.worldGroup.add(column);
+
+    this.activeSpawnEffects.push({
+      ring,
+      ringGeometry,
+      ringMaterial,
+      pulse,
+      pulseGeometry,
+      pulseMaterial,
+      column,
+      columnGeometry,
+      columnMaterial,
+      lifetime: 0,
+      maxLifetime: 1.0,
     });
   }
 
@@ -2222,13 +2294,45 @@ class RenderManager {
   updateExplosions(deltaTime) {
     const dt = Math.max(0.001, Math.min(0.05, deltaTime || 0.016));
 
+    for (let index = this.activeSpawnEffects.length - 1; index >= 0; index -= 1) {
+      const effect = this.activeSpawnEffects[index];
+      effect.lifetime += dt;
+      const progress = Math.min(1, effect.lifetime / effect.maxLifetime);
+
+      const ringScale = 0.45 + progress * 3.8;
+      effect.ring.scale.set(ringScale, ringScale, 1);
+      effect.ringMaterial.opacity = Math.max(0, 0.85 * (1 - progress));
+
+      const pulseScale = 0.4 + progress * 1.8;
+      effect.pulse.scale.setScalar(pulseScale);
+      effect.pulseMaterial.opacity = Math.max(0, 0.45 * (1 - progress));
+
+      const columnPulse = 0.2 + (1 - progress) * 0.8;
+      effect.column.scale.set(0.5 * columnPulse, 0.2 + (1 - progress) * 1.0, 0.5 * columnPulse);
+      effect.columnMaterial.opacity = Math.max(0, 0.24 * (1 - progress));
+
+      if (progress >= 1) {
+        this.worldGroup.remove(effect.ring);
+        this.worldGroup.remove(effect.pulse);
+        this.worldGroup.remove(effect.column);
+        effect.ringGeometry.dispose();
+        effect.ringMaterial.dispose();
+        effect.pulseGeometry.dispose();
+        effect.pulseMaterial.dispose();
+        effect.columnGeometry.dispose();
+        effect.columnMaterial.dispose();
+        this.activeSpawnEffects.splice(index, 1);
+      }
+    }
+
     for (let index = this.activeLandingEffects.length - 1; index >= 0; index -= 1) {
       const effect = this.activeLandingEffects[index];
       effect.lifetime += dt;
       const progress = Math.min(1, effect.lifetime / effect.maxLifetime);
-      effect.ring.scale.x += (3.6 + effect.intensity * 1.6) * dt;
-      effect.ring.scale.y += (3.6 + effect.intensity * 1.6) * dt;
-      effect.material.opacity = Math.max(0, 0.55 * (1 - progress));
+      const radius = effect.startRadius + (effect.expansionRate * effect.lifetime);
+      effect.ring.scale.x = radius;
+      effect.ring.scale.y = radius;
+      effect.material.opacity = Math.max(0, 1.0 - progress);
       if (progress >= 1) {
         this.worldGroup.remove(effect.ring);
         effect.geometry.dispose();
