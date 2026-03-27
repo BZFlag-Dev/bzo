@@ -4109,12 +4109,16 @@ function shoot() {
   const dirX = -Math.sin(playerRotation);
   const dirZ = -Math.cos(playerRotation);
 
-  // Calculate shot origin at end of barrel (3 units forward from tank center)
-  const barrelLength = 3.0;
-  const barrelHeight = 1.7; // Height of barrel relative to tank base
-  const shotX = playerX + dirX * barrelLength;
-  const shotY = (myTank ? myTank.position.y : 0) + barrelHeight;
-  const shotZ = playerZ + dirZ * barrelLength;
+  // Calculate shot origin from model-derived muzzle offsets when available
+  const muzzleForward = Number.isFinite(myTank?.userData?.muzzleForward)
+    ? myTank.userData.muzzleForward
+    : 3.0;
+  const muzzleHeight = Number.isFinite(myTank?.userData?.muzzleHeight)
+    ? myTank.userData.muzzleHeight
+    : 1.57;
+  const shotX = playerX + dirX * muzzleForward;
+  const shotY = (myTank ? myTank.position.y : 0) + muzzleHeight;
+  const shotZ = playerZ + dirZ * muzzleForward;
 
   sendToServer({
     type: 'shoot',

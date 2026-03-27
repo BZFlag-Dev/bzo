@@ -206,23 +206,23 @@ function makeBarrelGeometry() {
 }
 
 function makeWheelGeometry() {
-  const wheel = new THREE.CylinderGeometry(0.42, 0.42, WHEEL_THICKNESS, 20);
+  const wheel = new THREE.CylinderGeometry(0.495, 0.495, WHEEL_THICKNESS, 20);
   wheel.rotateZ(Math.PI / 2);
   wheel.computeVertexNormals();
   return wheel;
 }
 
-const treadHeight = 1.0;
-const treadWidth = 0.52;
+// BZFlag exposed tread dimensions (from AnimatedTreads.cxx, Exposed style)
+const treadHeight = 1.2;              // BZFlag treadHeight (exposed)
+const treadWidth = 0.525;             // BZFlag treadWidth = treadOutside - treadInside = 1.4 - 0.875
 const treadCapRadius = treadHeight / 2;
-const treadMiddleLength = 3.6;
-const TREAD_BODY_OVERLAP = 0.08;
-const treadCenterOffset = BODY_HALF_WIDTH + (treadWidth / 2) - TREAD_BODY_OVERLAP;
-const WHEEL_THICKNESS = 0.22;
+const treadMiddleLength = 4.8;         // BZFlag fullLength - treadHeight = 6.0 - 1.2
+const treadCenterOffset = 0.875 + treadWidth / 2; // BZFlag treadYCenter = treadInside + half treadWidth = 1.1375
+const WHEEL_THICKNESS = 0.473;         // BZFlag wheelWidth ≈ treadWidth * 0.9 = 0.4725
 const TARGET_HALF_MODEL_WIDTH = 1.4;
 const wheelCenterOffset = TARGET_HALF_MODEL_WIDTH - (WHEEL_THICKNESS / 2);
-const wheelCenterZStart = treadMiddleLength / 2;
-const wheelCenterZStep = treadMiddleLength / 3;
+const wheelCenterZStart = treadMiddleLength / 2;  // = 2.4 = BZFlag wheelSpacing * 1.5
+const wheelCenterZStep = treadMiddleLength / 3;   // = 1.6 = BZFlag wheelSpacing
 const CAP_MATS = ['tread_side', 'tread_cap', 'tread_cap'];
 const WHEEL_MATS = ['tread_side', 'tread_cap', 'tread_cap'];
 const BOX_MATS = ['bm0', 'bm1', 'bm2', 'bm3', 'bm4', 'bm5'];
@@ -234,32 +234,32 @@ builder.addObject('body', transformedGeometry(makeCurvedBodyGeometry(), { y: 0.3
 
 builder.addObject('leftTreadMiddle', transformedGeometry(
   makeTreadMiddleGeometry(),
-  { x: -treadCenterOffset, y: 0.5 },
+  { x: -treadCenterOffset, y: treadCapRadius },
 ), BOX_MATS);
 
 builder.addObject('leftTreadFrontCap', transformedGeometry(
   makeTreadCapGeometry(0),
-  { x: -treadCenterOffset, y: 0.5, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: -treadCenterOffset, y: treadCapRadius, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('leftTreadRearCap', transformedGeometry(
   makeTreadCapGeometry(Math.PI),
-  { x: -treadCenterOffset, y: 0.5, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: -treadCenterOffset, y: treadCapRadius, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('rightTreadMiddle', transformedGeometry(
   makeTreadMiddleGeometry(),
-  { x: treadCenterOffset, y: 0.5 },
+  { x: treadCenterOffset, y: treadCapRadius },
 ), BOX_MATS);
 
 builder.addObject('rightTreadFrontCap', transformedGeometry(
   makeTreadCapGeometry(0),
-  { x: treadCenterOffset, y: 0.5, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: treadCenterOffset, y: treadCapRadius, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('rightTreadRearCap', transformedGeometry(
   makeTreadCapGeometry(Math.PI),
-  { x: treadCenterOffset, y: 0.5, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: treadCenterOffset, y: treadCapRadius, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('turret', transformedGeometry(makeTurretGeometry(), {
@@ -274,12 +274,12 @@ const wheelZ = Array.from({ length: 4 }, (_, index) => wheelCenterZStart - (inde
 for (let i = 0; i < wheelZ.length; i += 1) {
   builder.addObject(`leftWheel${i + 1}`, transformedGeometry(makeWheelGeometry(), {
     x: -wheelCenterOffset,
-    y: 0.5,
+    y: treadCapRadius,
     z: wheelZ[i],
   }), WHEEL_MATS);
   builder.addObject(`rightWheel${i + 1}`, transformedGeometry(makeWheelGeometry(), {
     x: wheelCenterOffset,
-    y: 0.5,
+    y: treadCapRadius,
     z: wheelZ[i],
   }), WHEEL_MATS);
 }

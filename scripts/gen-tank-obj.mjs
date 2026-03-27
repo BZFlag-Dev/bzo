@@ -14,7 +14,6 @@ import { writeFileSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BODY_WIDTH = 1.755;
-const BODY_HALF_WIDTH = BODY_WIDTH / 2;
 
 // ── OBJ builder with cumulative global vertex counters ────────────────────────
 class OBJBuilder {
@@ -93,13 +92,12 @@ class OBJBuilder {
 }
 
 // ── geometry parameters (mirror render.js createTank) ────────────────────────
-const treadHeight = 1.0;
+// BZFlag exposed tread dimensions (from AnimatedTreads.cxx, Exposed style)
+const treadHeight = 1.2;              // BZFlag treadHeight (exposed)
 const treadCapRadius = treadHeight / 2;
-const treadMiddleLength = 3.6;
-const TREAD_BODY_OVERLAP = 0.08;
-const TARGET_HALF_MODEL_WIDTH = 1.4;
-const treadWidth = TARGET_HALF_MODEL_WIDTH - (BODY_HALF_WIDTH - TREAD_BODY_OVERLAP);
-const treadCenterOffset = BODY_HALF_WIDTH + (treadWidth / 2) - TREAD_BODY_OVERLAP;
+const treadMiddleLength = 4.8;         // BZFlag fullLength - treadHeight = 6.0 - 1.2
+const treadWidth = 0.525;              // BZFlag treadWidth = treadOutside - treadInside = 1.4 - 0.875
+const treadCenterOffset = 0.875 + treadWidth / 2; // BZFlag treadYCenter = treadInside + half treadWidth = 1.1375
 
 // CylinderGeometry groups: 0=sides, 1=top disk, 2=bottom disk
 // Our half-cylinders only have sides + 2 flat ends → map both ends to 'tread_cap'
@@ -181,32 +179,32 @@ builder.addObject('body', transformedGeometry(new THREE.BoxGeometry(BODY_WIDTH, 
 
 builder.addObject('leftTreadMiddle', transformedGeometry(
   makeTreadMiddleGeometry(),
-  { x: -treadCenterOffset, y: 0.5 },
+  { x: -treadCenterOffset, y: treadCapRadius },
 ), BOX_MATS);
 
 builder.addObject('leftTreadFrontCap', transformedGeometry(
   makeTreadCapGeometry(0),
-  { x: -treadCenterOffset, y: 0.5, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: -treadCenterOffset, y: treadCapRadius, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('leftTreadRearCap', transformedGeometry(
   makeTreadCapGeometry(Math.PI),
-  { x: -treadCenterOffset, y: 0.5, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: -treadCenterOffset, y: treadCapRadius, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('rightTreadMiddle', transformedGeometry(
   makeTreadMiddleGeometry(),
-  { x: treadCenterOffset, y: 0.5 },
+  { x: treadCenterOffset, y: treadCapRadius },
 ), BOX_MATS);
 
 builder.addObject('rightTreadFrontCap', transformedGeometry(
   makeTreadCapGeometry(0),
-  { x: treadCenterOffset, y: 0.5, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: treadCenterOffset, y: treadCapRadius, z: treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('rightTreadRearCap', transformedGeometry(
   makeTreadCapGeometry(Math.PI),
-  { x: treadCenterOffset, y: 0.5, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
+  { x: treadCenterOffset, y: treadCapRadius, z: -treadMiddleLength / 2, rx: Math.PI / 2, rz: Math.PI / 2 },
 ), CAP_MATS);
 
 builder.addObject('turret', transformedGeometry(new THREE.CylinderGeometry(1, 1, 0.8, 32), { y: 1.7 }));

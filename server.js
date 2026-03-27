@@ -113,8 +113,8 @@ const GAME_CONFIG = {
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
   SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
   PAUSE_COUNTDOWN: 2000, // ms
-  JUMP_VELOCITY: 22, // HiX-reachable jump baseline with current gravity
-  GRAVITY: 30, // Gravity acceleration (units per second squared)
+  JUMP_VELOCITY: 19, // BZFlag _jumpVelocity default
+  GRAVITY: 9.8, // BZFlag _gravity magnitude (units per second squared)
   JUMP_COOLDOWN: 500, // ms between jumps
 };
 
@@ -203,6 +203,11 @@ if (Number.isFinite(configJumpVelocity) && configJumpVelocity >= 0) {
   GAME_CONFIG.JUMP_VELOCITY = configJumpVelocity;
 }
 
+const configGravity = Number(serverConfig.gravity);
+if (Number.isFinite(configGravity) && configGravity > 0) {
+  GAME_CONFIG.GRAVITY = configGravity;
+}
+
 const configShotSpeed = Number(serverConfig.shotSpeed);
 if (Number.isFinite(configShotSpeed) && configShotSpeed > 0) {
   GAME_CONFIG.SHOT_SPEED = configShotSpeed;
@@ -220,7 +225,7 @@ if (Number.isFinite(configShotDistance) && configShotDistance > 0) {
 
 log(`Anti-cheat mode: ${ANTICHEAT_CONFIG.mode}`);
 log(
-  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, reverseSpeedRatio=${GAME_CONFIG.REVERSE_SPEED_RATIO}, forwardAccel=${GAME_CONFIG.FORWARD_ACCEL}, reverseAccel=${GAME_CONFIG.REVERSE_ACCEL}, forwardDecel=${GAME_CONFIG.FORWARD_DECEL}, turnAccel=${GAME_CONFIG.TURN_ACCEL}, turnDecel=${GAME_CONFIG.TURN_DECEL}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
+  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, reverseSpeedRatio=${GAME_CONFIG.REVERSE_SPEED_RATIO}, forwardAccel=${GAME_CONFIG.FORWARD_ACCEL}, reverseAccel=${GAME_CONFIG.REVERSE_ACCEL}, forwardDecel=${GAME_CONFIG.FORWARD_DECEL}, turnAccel=${GAME_CONFIG.TURN_ACCEL}, turnDecel=${GAME_CONFIG.TURN_DECEL}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, gravity=${GAME_CONFIG.GRAVITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
 );
 if (MAP_SOURCE !== 'random') {
   mapPath = path.join(__dirname, 'maps', MAP_SOURCE);

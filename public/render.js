@@ -24,7 +24,66 @@ import {
   createObstacleTexture,
 } from './texture.js';
 
+const DEFAULT_MUZZLE_FORWARD = 3.0;
+const DEFAULT_MUZZLE_HEIGHT = 1.57;
+const MUZZLE_TIP_EPSILON = 0.03;
+const BZFLAG_DEFAULT_HORIZONTAL_FOV = 60;
+
 class RenderManager {
+  _getVerticalFovForAspect(aspect) {
+    const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : (16 / 9);
+    const halfHorizontalRadians = THREE.MathUtils.degToRad(BZFLAG_DEFAULT_HORIZONTAL_FOV * 0.5);
+    const halfVerticalRadians = Math.atan(Math.tan(halfHorizontalRadians) / safeAspect);
+    return THREE.MathUtils.radToDeg(halfVerticalRadians * 2);
+  }
+
+  _computeMuzzleFromBarrel(barrel) {
+    if (!barrel || !barrel.geometry) {
+      return { forward: DEFAULT_MUZZLE_FORWARD, height: DEFAULT_MUZZLE_HEIGHT };
+    }
+
+    const position = barrel.geometry.getAttribute('position');
+    if (!position || position.count === 0) {
+      return { forward: DEFAULT_MUZZLE_FORWARD, height: DEFAULT_MUZZLE_HEIGHT };
+    }
+
+    barrel.updateMatrix();
+    const transformed = new THREE.Vector3();
+    let minZ = Number.POSITIVE_INFINITY;
+    const points = [];
+
+    for (let i = 0; i < position.count; i += 1) {
+      transformed.set(position.getX(i), position.getY(i), position.getZ(i)).applyMatrix4(barrel.matrix);
+      points.push({ x: transformed.x, y: transformed.y, z: transformed.z });
+      if (transformed.z < minZ) minZ = transformed.z;
+    }
+
+    const tipPoints = points.filter((point) => point.z <= (minZ + MUZZLE_TIP_EPSILON));
+    if (tipPoints.length === 0) {
+      return { forward: DEFAULT_MUZZLE_FORWARD, height: DEFAULT_MUZZLE_HEIGHT };
+    }
+
+    const avg = tipPoints.reduce((acc, point) => {
+      acc.y += point.y;
+      acc.z += point.z;
+      return acc;
+    }, { y: 0, z: 0 });
+
+    const avgY = avg.y / tipPoints.length;
+    const avgZ = avg.z / tipPoints.length;
+    const forward = Number.isFinite(avgZ) ? Math.max(0.5, -avgZ) : DEFAULT_MUZZLE_FORWARD;
+    const height = Number.isFinite(avgY) ? avgY : DEFAULT_MUZZLE_HEIGHT;
+
+    return { forward, height };
+  }
+
+  _setTankMuzzleData(tankGroup, barrel) {
+    const muzzle = this._computeMuzzleFromBarrel(barrel);
+    tankGroup.userData.muzzleForward = muzzle.forward;
+    tankGroup.userData.muzzleHeight = muzzle.height;
+    tankGroup.userData.cameraHeight = muzzle.height;
+  }
+
   _getViewportSize() {
     const body = document.body;
     const doc = document.documentElement;
@@ -221,7 +280,8 @@ class RenderManager {
 
     const viewport = this._getViewportSize();
 
-    this.camera = new THREE.PerspectiveCamera(75, viewport.width / viewport.height, 0.1, 1000);
+    const verticalFov = this._getVerticalFovForAspect(viewport.width / viewport.height);
+    this.camera = new THREE.PerspectiveCamera(verticalFov, viewport.width / viewport.height, 0.1, 1000);
     this.camera.position.set(0, 15, 20);
     this.camera.lookAt(0, 0, 0);
 
@@ -337,6 +397,7 @@ class RenderManager {
     if (!this.camera || !this.renderer || !this.labelRenderer) return;
     const viewport = this._getViewportSize();
     this.camera.aspect = viewport.width / viewport.height;
+    this.camera.fov = this._getVerticalFovForAspect(this.camera.aspect);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(viewport.width, viewport.height);
     this.labelRenderer.setSize(viewport.width, viewport.height);
@@ -1358,6 +1419,7 @@ class RenderManager {
     const barrel = this._cloneTemplateMesh(templateParts.barrel, barrelMaterial);
     tankGroup.add(barrel);
     tankGroup.userData.barrel = barrel;
+    this._setTankMuzzleData(tankGroup, barrel);
 
     tankGroup.userData.explodableParts = [
       body,
@@ -1421,15 +1483,15 @@ class RenderManager {
     const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
 
     const leftTreadGroup = new THREE.Group();
-    leftTreadGroup.position.set(-1.75, 0.5, 0);
+    leftTreadGroup.position.set(-1.1375, 0.6, 0);
 
     tankGroup.userData.leftTreadTextures = [];
     tankGroup.userData.rightTreadTextures = [];
 
-    const treadHeight = 1.0;
-    const treadWidth = 1.0;
+    const treadHeight = 1.2;            // BZFlag exposed treadHeight
+    const treadWidth = 0.525;           // BZFlag exposed treadWidth (treadOutside - treadInside)
     const treadCapRadius = treadHeight / 2;
-    const treadMiddleLength = 3.0;
+    const treadMiddleLength = 4.8;      // BZFlag fullLength - treadHeight = 6.0 - 1.2
     const treadMiddleGeom = this._tankGeoCache?.treadMiddle ?? new THREE.BoxGeometry(treadWidth, treadHeight, treadMiddleLength);
     const leftTreadRotatedTex = treadTextureRotated.clone();
     leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
@@ -1475,7 +1537,7 @@ class RenderManager {
     tankGroup.add(leftTreadGroup);
 
     const rightTreadGroup = new THREE.Group();
-    rightTreadGroup.position.set(1.75, 0.5, 0);
+    rightTreadGroup.position.set(1.1375, 0.6, 0);
 
     const rightTreadRotatedTex = treadTextureRotated.clone();
     rightTreadRotatedTex.wrapS = THREE.RepeatWrapping;
@@ -1536,12 +1598,13 @@ class RenderManager {
     barrel.castShadow = true;
     tankGroup.add(barrel);
     tankGroup.userData.barrel = barrel;
+    this._setTankMuzzleData(tankGroup, barrel);
 
     tankGroup.userData.leftWheels = [];
     tankGroup.userData.rightWheels = [];
     tankGroup.userData.leftWheelTextures = [];
     tankGroup.userData.rightWheelTextures = [];
-    tankGroup.userData.wheelRadius = 0.42;
+    tankGroup.userData.wheelRadius = 0.495;
 
     tankGroup.userData.treadGroups = [leftTreadGroup, rightTreadGroup];
     tankGroup.userData.explodableParts = [
@@ -2495,21 +2558,23 @@ class RenderManager {
           -tankRotated.z
         );
       } else {
-        // In non-XR first-person, hide the tank body/turret
-        if (myTank.userData.body) myTank.userData.body.visible = false;
+        // In non-XR first-person, keep hull visible like BZFlag; hide turret to avoid center obstruction
+        if (myTank.userData.body) myTank.userData.body.visible = true;
         if (myTank.userData.turret) myTank.userData.turret.visible = false;
         // Reset world group for non-XR
         this.worldGroup.position.set(0, 0, 0);
         this.worldGroup.rotation.y = 0;
-        const fpOffset = new THREE.Vector3(
-          -Math.sin(playerRotation) * 0.5,
-          2.2,
-          -Math.cos(playerRotation) * 0.5,
+        const cameraHeight = Number.isFinite(myTank.userData.cameraHeight)
+          ? myTank.userData.cameraHeight
+          : DEFAULT_MUZZLE_HEIGHT;
+        this.camera.position.set(
+          myTank.position.x,
+          myTank.position.y + cameraHeight,
+          myTank.position.z,
         );
-        this.camera.position.copy(myTank.position).add(fpOffset);
         const lookTarget = new THREE.Vector3(
           myTank.position.x - Math.sin(playerRotation) * 10,
-          myTank.position.y + 2,
+          myTank.position.y + cameraHeight,
           myTank.position.z - Math.cos(playerRotation) * 10,
         );
         this.camera.lookAt(lookTarget);

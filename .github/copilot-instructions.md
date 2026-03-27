@@ -53,6 +53,7 @@
 - Runtime settings (name, MOTD, default map) live in `server-config.json`; `example-server-config.json` documents the expected shape.
 - Obstacles are generated/resolved server-side and sent in the `init` payload; client recreates meshes from that data, so keep the schema stable when extending obstacle properties.
 - Maps in `maps/*.bzw` use scaled BZFlag coordinates (X/Z halved); ensure new parsers respect the scaling so collisions remain accurate.
+- Maps in `maps/*.bzw` use standard BZFlag coordinates at 1:1 scale (box x/y in BZW are half-extents, multiplied ×2 by the parser to get full width/depth); 1 bzo unit = 1 BZFlag unit.
 
 ## Conventions & Testing
 
