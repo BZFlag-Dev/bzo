@@ -302,9 +302,10 @@ function parseBZWMap(filename) {
         current.inverted = rawH < 0;
       }
     } else if (current && line.startsWith('rotation')) {
-      // rotation deg (invert sign to match Three.js)
+      // BZFlag rotation is CCW around +Z; our world maps BZFlag +Y (north) to -Z,
+      // which flips the depth axis. The correct conversion is +deg + π.
       const [, deg] = line.split(/\s+/);
-      current.rotation = -(parseFloat(deg) || 0) * Math.PI / 180;
+      current.rotation = (parseFloat(deg) || 0) * Math.PI / 180 + Math.PI;
     } else if (current && line === 'end') {
       // Use BZW name if present, otherwise assign a generated name
       if (!current.name) {

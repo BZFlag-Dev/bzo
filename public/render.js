@@ -273,7 +273,7 @@ class RenderManager {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
-    this.scene.fog = new THREE.Fog(0x87ceeb, 50, 200);
+    this.scene.fog = new THREE.Fog(0x87ceeb, 120, 500);
 
     // World group - translates all game content for XR positioning
     this.worldGroup = new THREE.Group();
