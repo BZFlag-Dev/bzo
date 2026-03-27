@@ -6,6 +6,14 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-03-27
+
+### Changed
+- Increased scene fog start/end distances (120–500) to better match the 1:1 BZFlag world scale.
+
+### Fixed
+- Fixed obstacle rotation for all rotated boxes, walls, and teleporters parsed from `.bzw` maps by correcting the BZFlag +Y→Three.js -Z axis-flip compensation in the rotation formula.
+
 ## [1.0.8] - 2026-03-27
 
 ### Added
