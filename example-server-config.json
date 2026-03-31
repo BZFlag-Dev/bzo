@@ -18,6 +18,10 @@
   "shotSpeed": 100,
   "shotDuration": 3.5,
   "shotDistance": 350,
+  "fogMode": "none",
+  "fogDensity": 0.001,
+  "fogStart": 50,
+  "fogEnd": 100,
   "antiCheat": {
     "mode": "strict",
     "linearDriftThreshold": 3.0,

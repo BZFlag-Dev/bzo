@@ -116,6 +116,10 @@ const GAME_CONFIG = {
   JUMP_VELOCITY: 19, // BZFlag _jumpVelocity default
   GRAVITY: 9.8, // BZFlag _gravity magnitude (units per second squared)
   JUMP_COOLDOWN: 500, // ms between jumps
+  FOG_MODE: 'none', // BZFlag _fogMode default
+  FOG_DENSITY: 0.001, // BZFlag _fogDensity default
+  FOG_START: null, // Defaults to 0.5 * map size like BZFlag
+  FOG_END: null, // Defaults to map size like BZFlag
 };
 
 // WebSocket keep-alive configuration
@@ -223,9 +227,41 @@ if (Number.isFinite(configShotDistance) && configShotDistance > 0) {
   GAME_CONFIG.SHOT_DISTANCE = configShotDistance;
 }
 
+const validFogModes = new Set(['none', 'linear', 'exp', 'exp2']);
+const configFogMode = typeof serverConfig.fogMode === 'string' ? serverConfig.fogMode.trim().toLowerCase() : '';
+if (validFogModes.has(configFogMode)) {
+  GAME_CONFIG.FOG_MODE = configFogMode;
+}
+
+const configFogDensity = Number(serverConfig.fogDensity);
+if (Number.isFinite(configFogDensity) && configFogDensity >= 0) {
+  GAME_CONFIG.FOG_DENSITY = configFogDensity;
+}
+
+const configFogStart = Number(serverConfig.fogStart);
+if (Number.isFinite(configFogStart) && configFogStart >= 0) {
+  GAME_CONFIG.FOG_START = configFogStart;
+}
+
+const configFogEnd = Number(serverConfig.fogEnd);
+if (Number.isFinite(configFogEnd) && configFogEnd >= 0) {
+  GAME_CONFIG.FOG_END = configFogEnd;
+}
+
+if (!Number.isFinite(GAME_CONFIG.FOG_START)) {
+  GAME_CONFIG.FOG_START = 0.5 * GAME_CONFIG.MAP_SIZE;
+}
+
+if (!Number.isFinite(GAME_CONFIG.FOG_END)) {
+  GAME_CONFIG.FOG_END = GAME_CONFIG.MAP_SIZE;
+}
+
 log(`Anti-cheat mode: ${ANTICHEAT_CONFIG.mode}`);
 log(
   `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, reverseSpeedRatio=${GAME_CONFIG.REVERSE_SPEED_RATIO}, forwardAccel=${GAME_CONFIG.FORWARD_ACCEL}, reverseAccel=${GAME_CONFIG.REVERSE_ACCEL}, forwardDecel=${GAME_CONFIG.FORWARD_DECEL}, turnAccel=${GAME_CONFIG.TURN_ACCEL}, turnDecel=${GAME_CONFIG.TURN_DECEL}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, gravity=${GAME_CONFIG.GRAVITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
+);
+log(
+  `Fog config: mode=${GAME_CONFIG.FOG_MODE}, density=${GAME_CONFIG.FOG_DENSITY}, start=${GAME_CONFIG.FOG_START}, end=${GAME_CONFIG.FOG_END}, color=time-of-day`
 );
 if (MAP_SOURCE !== 'random') {
   mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
@@ -426,15 +462,32 @@ if (MAP_SOURCE === 'random') {
 }
 log(OBSTACLES);
 
+function getMaxObstacleTopY(obstacles = []) {
+  return obstacles.reduce((maxTop, obstacle) => {
+    const baseY = Number.isFinite(obstacle?.baseY) ? obstacle.baseY : 0;
+    const height = Number.isFinite(obstacle?.h) ? obstacle.h : 4;
+    return Math.max(maxTop, baseY + height);
+  }, 0);
+}
+
+function getJumpApexHeight() {
+  const jumpVelocity = Number.isFinite(GAME_CONFIG.JUMP_VELOCITY) ? GAME_CONFIG.JUMP_VELOCITY : 19;
+  const gravity = Number.isFinite(GAME_CONFIG.GRAVITY) && GAME_CONFIG.GRAVITY > 0 ? GAME_CONFIG.GRAVITY : 9.8;
+  return (jumpVelocity * jumpVelocity) / (2 * gravity);
+}
+
 // Generate random clouds with fractal patter.
-function generateClouds() {
+function generateClouds(obstacles = OBSTACLES) {
   const clouds = [];
   const numClouds = 15;
+  const maxObstacleTopY = getMaxObstacleTopY(obstacles);
+  const jumpApexHeight = getJumpApexHeight();
+  const cloudBaseY = maxObstacleTopY + jumpApexHeight;
 
   for (let i = 0; i < numClouds; i++) {
     // Random position in sky
     const x = (Math.random() - 0.5) * 200;
-    const y = 30 + Math.random() * 40;
+    const y = cloudBaseY + Math.random() * 40;
     const z = (Math.random() - 0.5) * 200;
 
     // Fractal puffs (multiple spheres clustered together)
@@ -1336,7 +1389,7 @@ wss.on('connection', (ws, req) => {
   //log(`Player ${player.playerNumber} user agent: ${userAgent}`);
 
   // Send initial server state in init message
-  const clouds = generateClouds();
+  const clouds = generateClouds(OBSTACLES);
   ws.send(JSON.stringify({
     type: 'init',
     player: player.getState(),

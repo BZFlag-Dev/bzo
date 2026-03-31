@@ -17,11 +17,11 @@ import {
   createProjectilePopBuffer,
 } from './audio.js';
 import {
+  createBoundaryTexture,
+  createBoxWallTexture,
   createPyramidTexture,
-  createCobblestoneTexture,
+  createRoofTexture,
   createGroundTexture,
-  createWallTexture,
-  createObstacleTexture,
 } from './texture.js';
 
 const DEFAULT_MUZZLE_FORWARD = 3.0;
@@ -118,95 +118,114 @@ class RenderManager {
     };
   }
 
-    // Set world time (0-23999, like Minecraft)
-    setWorldTime(worldTime) {
-      this._worldTime = worldTime;
-      if (!this.dynamicLightingEnabled) return;
-      // Compute sun/moon positions
-      // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
-      // We'll use a circle in the X/Y plane for sun/moon
-      const MAP_SIZE = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
-      const sunDistance = MAP_SIZE;
-      const moonDistance = sunDistance;
-      const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
-      const moonAngle = sunAngle + Math.PI;
-      // Sun position
-      const sunX = Math.cos(sunAngle) * sunDistance;
-      const sunY = Math.sin(sunAngle) * sunDistance * 0.8; // Lower arc for realism
-      const sunZ = 0;
-      // Moon position
-      const moonX = Math.cos(moonAngle) * moonDistance;
-      const moonY = Math.sin(moonAngle) * moonDistance * 0.8;
-      const moonZ = 0;
-      // Update sun light
-      if (this.sunLight) {
-        this.sunLight.position.set(sunX, sunY, sunZ);
-        this.sunLight.target.position.set(0, 0, 0);
-        this.worldGroup.add(this.sunLight.target);
-        // Lighting intensity
-        const sunUp = sunY > 0;
-        const sunIntensity = sunUp ? 0.7 : 0.0;
-        const ambientIntensity = sunUp ? 1.50 : 0.80;
-        this.sunLight.intensity = sunIntensity;
-        this.ambientLight.intensity = ambientIntensity;
-        this.ambientLight.color.set(0x828293);
-        // Sun casts shadows only during day; moon takes over at night
-        this.sunLight.castShadow = sunUp;
-      }
-      // Update moon light to track the moon mesh position
-      if (this.moonLight) {
-        this.moonLight.position.set(moonX, moonY, moonZ);
-        this.moonLight.target.position.set(0, 0, 0);
-        this.worldGroup.add(this.moonLight.target);
-        const moonUp = moonY > 0;
-        this.moonLight.castShadow = moonUp;
-        this.moonLight.intensity = moonUp ? 0.3 : 0.0;
-      }
-      if (this.sunLight) {
+  _applyFogConfig(gameConfig = null) {
+    if (!this.scene) return;
 
-        // Sun color: add a subtle red-orange tint at dawn/dusk
-        // Day: #fffbe6 (warm white), Night: #23264a, Dawn/Dusk: #ffb366 (orange tint)
-        const noonColor = new THREE.Color(0xfffbe6);
-        const nightColor = new THREE.Color(0x23264a);
-        const dawnTint = new THREE.Color(0xffb366);
-        // t: 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset, 1=midnight
-        const t = Math.max(0, Math.min(1, sunY / (sunDistance * 0.8)));
-        // Compute time-of-day for tinting (worldTime: 0-23999)
-        const timeOfDay = (worldTime % 24000) / 24000;
-        // Dawn: 0.20-0.29, Dusk: 0.70-0.79 (about 1 hour each)
-        let sunColor = noonColor.clone();
-        if (timeOfDay >= 0.20 && timeOfDay < 0.29) {
-          // Dawn
-          const blend = (timeOfDay - 0.20) / 0.09;
-          sunColor.lerp(dawnTint, blend * 0.4); // max 40% tint
-        } else if (timeOfDay >= 0.71 && timeOfDay < 0.80) {
-          // Dusk
-          const blend = 1 - (timeOfDay - 0.71) / 0.09;
-          sunColor.lerp(dawnTint, blend * 0.4);
-        }
-        // Dim at night
-        sunColor.lerp(nightColor, 1 - t);
-        this.sunLight.color.copy(sunColor);
+    const fogMode = typeof gameConfig?.FOG_MODE === 'string' ? gameConfig.FOG_MODE.toLowerCase() : 'none';
+    const fogDensity = Number.isFinite(gameConfig?.FOG_DENSITY) ? gameConfig.FOG_DENSITY : 0.001;
+    const fogStart = Number.isFinite(gameConfig?.FOG_START) ? gameConfig.FOG_START : 50;
+    const fogEnd = Number.isFinite(gameConfig?.FOG_END) ? gameConfig.FOG_END : 100;
+    const baseFogColor = this.scene.background?.clone?.() || new THREE.Color(0x87ceeb);
 
-        // Fog and background color: as before
-        const dayColor = new THREE.Color(0x87ceeb);
-        let fogColor = nightColor.clone().lerp(dayColor, t);
-        this.scene.fog.color.copy(fogColor);
-        this.scene.background.copy(fogColor);
-
-        this._updateCelestialBodies({
-          sunX,
-          sunY,
-          sunZ,
-          moonX,
-          moonY,
-          moonZ,
-          sunColor,
-        });
-      }
-      // Optionally: add/update sun/moon meshes for visuals (not just lighting)
-      // ...
+    if (fogMode === 'linear') {
+      this.scene.fog = new THREE.Fog(baseFogColor, fogStart, fogEnd);
+    } else if (fogMode === 'exp' || fogMode === 'exp2') {
+      this.scene.fog = new THREE.FogExp2(baseFogColor, fogDensity);
+    } else {
+      this.scene.fog = null;
     }
+  }
+
+  // Set world time (0-23999, like Minecraft)
+  setWorldTime(worldTime) {
+    this._worldTime = worldTime;
+    if (!this.dynamicLightingEnabled) return;
+    // Compute sun/moon positions
+    // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
+    // We'll use a circle in the X/Y plane for sun/moon
+    const MAP_SIZE = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
+    const sunDistance = MAP_SIZE;
+    const moonDistance = sunDistance;
+    const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
+    const moonAngle = sunAngle + Math.PI;
+    // Sun position
+    const sunX = Math.cos(sunAngle) * sunDistance;
+    const sunY = Math.sin(sunAngle) * sunDistance * 0.8; // Lower arc for realism
+    const sunZ = 0;
+    // Moon position
+    const moonX = Math.cos(moonAngle) * moonDistance;
+    const moonY = Math.sin(moonAngle) * moonDistance * 0.8;
+    const moonZ = 0;
+    // Update sun light
+    if (this.sunLight) {
+      this.sunLight.position.set(sunX, sunY, sunZ);
+      this.sunLight.target.position.set(0, 0, 0);
+      this.worldGroup.add(this.sunLight.target);
+      // Lighting intensity
+      const sunUp = sunY > 0;
+      const sunIntensity = sunUp ? 0.7 : 0.0;
+      const ambientIntensity = sunUp ? 1.50 : 0.80;
+      this.sunLight.intensity = sunIntensity;
+      this.ambientLight.intensity = ambientIntensity;
+      this.ambientLight.color.set(0x828293);
+      // Sun casts shadows only during day; moon takes over at night
+      this.sunLight.castShadow = sunUp;
+    }
+    // Update moon light to track the moon mesh position
+    if (this.moonLight) {
+      this.moonLight.position.set(moonX, moonY, moonZ);
+      this.moonLight.target.position.set(0, 0, 0);
+      this.worldGroup.add(this.moonLight.target);
+      const moonUp = moonY > 0;
+      this.moonLight.castShadow = moonUp;
+      this.moonLight.intensity = moonUp ? 0.3 : 0.0;
+    }
+    if (this.sunLight) {
+      // Sun color: add a subtle red-orange tint at dawn/dusk
+      // Day: #fffbe6 (warm white), Night: #23264a, Dawn/Dusk: #ffb366 (orange tint)
+      const noonColor = new THREE.Color(0xfffbe6);
+      const nightColor = new THREE.Color(0x23264a);
+      const dawnTint = new THREE.Color(0xffb366);
+      // t: 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset, 1=midnight
+      const t = Math.max(0, Math.min(1, sunY / (sunDistance * 0.8)));
+      // Compute time-of-day for tinting (worldTime: 0-23999)
+      const timeOfDay = (worldTime % 24000) / 24000;
+      // Dawn: 0.20-0.29, Dusk: 0.70-0.79 (about 1 hour each)
+      let sunColor = noonColor.clone();
+      if (timeOfDay >= 0.20 && timeOfDay < 0.29) {
+        // Dawn
+        const blend = (timeOfDay - 0.20) / 0.09;
+        sunColor.lerp(dawnTint, blend * 0.4); // max 40% tint
+      } else if (timeOfDay >= 0.71 && timeOfDay < 0.80) {
+        // Dusk
+        const blend = 1 - (timeOfDay - 0.71) / 0.09;
+        sunColor.lerp(dawnTint, blend * 0.4);
+      }
+      // Dim at night
+      sunColor.lerp(nightColor, 1 - t);
+      this.sunLight.color.copy(sunColor);
+
+      // Keep fog/background color driven by time of day even when fog distances are configurable.
+      const dayColor = new THREE.Color(0x87ceeb);
+      let fogColor = nightColor.clone().lerp(dayColor, t);
+      this.scene.background.copy(fogColor);
+      if (this.scene.fog) {
+        this.scene.fog.color.copy(fogColor);
+      }
+
+      this._updateCelestialBodies({
+        sunX,
+        sunY,
+        sunZ,
+        moonX,
+        moonY,
+        moonZ,
+        sunColor,
+      });
+    }
+    // Optionally: add/update sun/moon meshes for visuals (not just lighting)
+    // ...
+  }
   constructor() {
     this.scene = null;
     this.camera = null;
@@ -274,7 +293,7 @@ class RenderManager {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
-    this.scene.fog = new THREE.Fog(0x87ceeb, 120, 500);
+    this.scene.fog = null;
 
     // World group - translates all game content for XR positioning
     this.worldGroup = new THREE.Group();
@@ -475,6 +494,28 @@ class RenderManager {
     }
   }
 
+  _createBoxFaceMaterials(width, height, depth, sideTextureFactory, topTextureFactory) {
+    const sideTextureScale = 8;
+    const topTextureScale = 2;
+    const materials = [
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+    ];
+
+    materials[0].map.repeat.set(depth / sideTextureScale, height / sideTextureScale);
+    materials[1].map.repeat.set(depth / sideTextureScale, height / sideTextureScale);
+    materials[4].map.repeat.set(width / sideTextureScale, height / sideTextureScale);
+    materials[5].map.repeat.set(width / sideTextureScale, height / sideTextureScale);
+    materials[2].map.repeat.set(width / topTextureScale, depth / topTextureScale);
+    materials[3].map.repeat.set(width / topTextureScale, depth / topTextureScale);
+
+    return materials;
+  }
+
   buildGround(mapSize) {
     if (!this.scene) return;
     this.clearGround();
@@ -522,54 +563,6 @@ class RenderManager {
     const wallHeight = 5;
     const wallThickness = 1;
 
-    const nsWallTexture = createCobblestoneTexture();
-    nsWallTexture.wrapS = THREE.RepeatWrapping;
-    nsWallTexture.wrapT = THREE.RepeatWrapping;
-
-    const makeNsMaterial = () => new THREE.MeshLambertMaterial({ map: nsWallTexture.clone() });
-
-    const nsWallMaterials = [
-      makeNsMaterial(),
-      makeNsMaterial(),
-      makeNsMaterial(),
-      makeNsMaterial(),
-      makeNsMaterial(),
-      makeNsMaterial(),
-    ];
-
-    nsWallMaterials[0].map.repeat.set(wallThickness / 2, wallHeight / 2);
-    nsWallMaterials[1].map.repeat.set(wallThickness / 2, wallHeight / 2);
-    nsWallMaterials[2].map.repeat.set(mapSize / 2, wallThickness / 2);
-    nsWallMaterials[3].map.repeat.set(mapSize / 2, wallThickness / 2);
-    nsWallMaterials[4].map.repeat.set(mapSize / 2, wallHeight / 2);
-    nsWallMaterials[5].map.repeat.set(mapSize / 2, wallHeight / 2);
-
-    const ewWallTexture = createCobblestoneTexture();
-    ewWallTexture.wrapS = THREE.RepeatWrapping;
-    ewWallTexture.wrapT = THREE.RepeatWrapping;
-
-    const makeEwMaterial = () => new THREE.MeshLambertMaterial({ map: ewWallTexture.clone() });
-
-    const ewWallMaterials = [
-      makeEwMaterial(),
-      makeEwMaterial(),
-      makeEwMaterial(),
-      makeEwMaterial(),
-      makeEwMaterial(),
-      makeEwMaterial(),
-    ];
-
-    ewWallMaterials[0].map.repeat.set(mapSize / 2, wallHeight / 2);
-    ewWallMaterials[1].map.repeat.set(mapSize / 2, wallHeight / 2);
-    ewWallMaterials[2].map.repeat.set(mapSize / 2, wallThickness / 2);
-    ewWallMaterials[2].map.rotation = Math.PI / 2;
-    ewWallMaterials[2].map.center.set(0.5, 0.5);
-    ewWallMaterials[3].map.repeat.set(mapSize / 2, wallThickness / 2);
-    ewWallMaterials[3].map.rotation = Math.PI / 2;
-    ewWallMaterials[3].map.center.set(0.5, 0.5);
-    ewWallMaterials[4].map.repeat.set(wallThickness / 2, wallHeight / 2);
-    ewWallMaterials[5].map.repeat.set(wallThickness / 2, wallHeight / 2);
-
     // Create and track boundary meshes
     const boundaryMeshes = [];
 
@@ -584,7 +577,7 @@ class RenderManager {
 
     const northWall = new THREE.Mesh(
       new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
-      nsWallMaterials,
+      this._createBoxFaceMaterials(mapSize + wallThickness * 2, wallHeight, wallThickness, createBoundaryTexture, createBoundaryTexture),
     );
     northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
     northWall.castShadow = true;
@@ -599,7 +592,7 @@ class RenderManager {
 
     const southWall = new THREE.Mesh(
       new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
-      nsWallMaterials,
+      this._createBoxFaceMaterials(mapSize + wallThickness * 2, wallHeight, wallThickness, createBoundaryTexture, createBoundaryTexture),
     );
     southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
     southWall.castShadow = true;
@@ -613,7 +606,7 @@ class RenderManager {
 
     const eastWall = new THREE.Mesh(
       new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-      ewWallMaterials,
+      this._createBoxFaceMaterials(wallThickness, wallHeight, mapSize, createBoundaryTexture, createBoundaryTexture),
     );
     eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
     eastWall.castShadow = true;
@@ -627,7 +620,7 @@ class RenderManager {
 
     const westWall = new THREE.Mesh(
       new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-      ewWallMaterials,
+      this._createBoxFaceMaterials(wallThickness, wallHeight, mapSize, createBoundaryTexture, createBoundaryTexture),
     );
     westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
     westWall.castShadow = true;
@@ -733,26 +726,23 @@ class RenderManager {
           geometry.rotateX(Math.PI);
         }
 
-        // Use new blue marble pyramid texture
         const pyramidTexture = createPyramidTexture();
-        pyramidTexture.wrapS = THREE.RepeatWrapping;
-        pyramidTexture.wrapT = THREE.RepeatWrapping;
-        pyramidTexture.repeat.set(obs.w, obs.h);
+        const pyramidBaseSpan = Math.max(obs.w, obs.d);
+        const pyramidSlantHeight = Math.hypot(h, pyramidBaseSpan / 2);
+        pyramidTexture.repeat.set(pyramidBaseSpan / 8, pyramidSlantHeight / 8);
 
-        const concreteTexture = createObstacleTexture();
-        concreteTexture.wrapS = THREE.RepeatWrapping;
-        concreteTexture.wrapT = THREE.RepeatWrapping;
-        concreteTexture.repeat.set(obs.w, obs.d);
+        const roofTexture = createRoofTexture();
+        roofTexture.repeat.set(obs.w / 2, obs.d / 2);
         if (obs.inverted) {
-          concreteTexture.rotation = Math.PI;
-          concreteTexture.center.set(0.5, 0.5);
+          roofTexture.rotation = Math.PI;
+          roofTexture.center.set(0.5, 0.5);
         }
 
         mesh = new THREE.Mesh(
           geometry,
           [
             new THREE.MeshLambertMaterial({ map: pyramidTexture, flatShading: true }),
-            new THREE.MeshLambertMaterial({ map: concreteTexture, flatShading: true }),
+            new THREE.MeshLambertMaterial({ map: roofTexture, flatShading: true }),
           ],
         );
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
@@ -764,32 +754,7 @@ class RenderManager {
         this.worldGroup.add(mesh);
         this._addDebugLabel(mesh, 'obstacle');
       } else {
-        const concreteTexture = createObstacleTexture();
-        concreteTexture.wrapS = THREE.RepeatWrapping;
-        concreteTexture.wrapT = THREE.RepeatWrapping;
-        concreteTexture.repeat.set(obs.w, h);
-
-        const wallTexture = createWallTexture();
-        wallTexture.wrapS = THREE.RepeatWrapping;
-        wallTexture.wrapT = THREE.RepeatWrapping;
-        wallTexture.repeat.set(obs.d, h);
-
-        const materials = [
-          new THREE.MeshLambertMaterial({ map: wallTexture.clone() }),
-          new THREE.MeshLambertMaterial({ map: wallTexture.clone() }),
-          new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }),
-          new THREE.MeshLambertMaterial({ map: concreteTexture.clone() }),
-          new THREE.MeshLambertMaterial({ map: wallTexture.clone() }),
-          new THREE.MeshLambertMaterial({ map: wallTexture.clone() }),
-        ];
-
-        materials[0].map.repeat.set(obs.d, h);
-        materials[1].map.repeat.set(obs.d, h);
-        materials[4].map.repeat.set(obs.w, h);
-        materials[5].map.repeat.set(obs.w, h);
-        materials[2].map.repeat.set(obs.w, obs.d);
-        materials[3].map.repeat.set(obs.w, obs.d);
-        materials.forEach((mat) => { mat.map.needsUpdate = true; });
+        const materials = this._createBoxFaceMaterials(obs.w, h, obs.d, createBoxWallTexture, createRoofTexture);
 
         mesh = new THREE.Mesh(
           new THREE.BoxGeometry(obs.w, h, obs.d),
@@ -1681,85 +1646,124 @@ class RenderManager {
     sprite.material.needsUpdate = true;
   }
 
-  _createTankTexture(baseColor) {
+  _getSharedImage(path) {
+    if (!this._imageCache) {
+      this._imageCache = new Map();
+    }
+
+    let entry = this._imageCache.get(path);
+    if (!entry) {
+      const image = document.createElement('img');
+      entry = {
+        image,
+        loaded: false,
+        listeners: [],
+      };
+      image.onload = () => {
+        entry.loaded = true;
+        const listeners = entry.listeners.splice(0);
+        listeners.forEach((listener) => {
+          try {
+            listener(image);
+          } catch (error) {
+            console.error('Failed to update texture from image:', error);
+          }
+        });
+      };
+      image.src = path;
+      this._imageCache.set(path, entry);
+    }
+
+    return entry;
+  }
+
+  _createCanvasBackedImageTexture(width, height, drawWhenReady) {
     const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-
-    const baseHex = baseColor.toString(16).padStart(6, '0');
-    const r = parseInt(baseHex.substr(0, 2), 16);
-    const g = parseInt(baseHex.substr(2, 2), 16);
-    const b = parseInt(baseHex.substr(4, 2), 16);
-
-    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-    ctx.fillRect(0, 0, 128, 128);
-
-    const numBlobs = 25;
-    for (let i = 0; i < numBlobs; i += 1) {
-      const x = Math.random() * 128;
-      const y = Math.random() * 128;
-      const radius = Math.random() * 20 + 10;
-      const variation = (Math.random() - 0.5) * 0.4;
-      const newR = Math.max(0, Math.min(255, r + r * variation));
-      const newG = Math.max(0, Math.min(255, g + g * variation));
-      const newB = Math.max(0, Math.min(255, b + b * variation));
-      ctx.fillStyle = `rgba(${Math.floor(newR)}, ${Math.floor(newG)}, ${Math.floor(newB)}, 0.6)`;
-      ctx.beginPath();
-      const points = 8;
-      for (let j = 0; j <= points; j += 1) {
-        const angle = (j / points) * Math.PI * 2;
-        const radiusVariation = radius * (0.7 + Math.random() * 0.6);
-        const px = x + Math.cos(angle) * radiusVariation;
-        const py = y + Math.sin(angle) * radiusVariation;
-        if (j === 0) {
-          ctx.moveTo(px, py);
-        } else {
-          ctx.lineTo(px, py);
-        }
-      }
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    for (let i = 0; i < 15; i += 1) {
-      const x = Math.random() * 128;
-      const y = Math.random() * 128;
-      const radius = Math.random() * 8 + 4;
-      ctx.fillStyle = `rgba(0, 0, 0, ${0.1 + Math.random() * 0.2})`;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
+    canvas.width = width;
+    canvas.height = height;
     const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+
+    const redraw = () => {
+      const ctx = canvas.getContext('2d');
+      drawWhenReady(ctx, canvas, texture);
+      texture.needsUpdate = true;
+    };
+
+    redraw();
+    return { canvas, texture, redraw };
+  }
+
+  _paintTintedBzflagTankTexture(ctx, canvas, image, baseColor) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!image) {
+      ctx.fillStyle = '#777777';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const tint = new THREE.Color(baseColor);
+    const tintR = tint.r * 255;
+    const tintG = tint.g * 255;
+    const tintB = tint.b * 255;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3];
+      if (alpha === 0) continue;
+
+      const luminance = (
+        (0.2126 * data[i]) +
+        (0.7152 * data[i + 1]) +
+        (0.0722 * data[i + 2])
+      ) / 255;
+      const shaded = 0.28 + (luminance * 0.92);
+      data[i] = Math.max(0, Math.min(255, tintR * shaded));
+      data[i + 1] = Math.max(0, Math.min(255, tintG * shaded));
+      data[i + 2] = Math.max(0, Math.min(255, tintB * shaded));
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  _createTankTexture(baseColor) {
+    const source = this._getSharedImage('/textures/green_tank.png');
+    const { texture, redraw } = this._createCanvasBackedImageTexture(128, 128, (ctx, canvas) => {
+      this._paintTintedBzflagTankTexture(
+        ctx,
+        canvas,
+        source.loaded ? source.image : null,
+        baseColor,
+      );
+    });
+
+    if (!source.loaded) {
+      source.listeners.push(redraw);
+    }
+
     return texture;
   }
 
   _createTreadTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#333333';
-    ctx.fillRect(0, 0, 128, 64);
-    ctx.fillStyle = '#222222';
-    for (let x = 0; x < 128; x += 16) {
-      ctx.fillRect(x, 0, 10, 64);
+    const source = this._getSharedImage('/textures/treads.png');
+    const { texture, redraw } = this._createCanvasBackedImageTexture(128, 128, (ctx, canvas) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (source.loaded) {
+        ctx.drawImage(source.image, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = '#2b2b2b';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    });
+
+    if (!source.loaded) {
+      source.listeners.push(redraw);
     }
-    ctx.strokeStyle = '#111111';
-    ctx.lineWidth = 2;
-    for (let x = 10; x < 128; x += 16) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 64);
-      ctx.stroke();
-    }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.needsUpdate = true;
+
     return texture;
   }
 

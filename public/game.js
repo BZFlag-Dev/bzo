@@ -1807,6 +1807,7 @@ function handleServerMessage(message) {
 
       myPlayerId = message.player.id;
       gameConfig = message.config;
+      renderManager._applyFogConfig(gameConfig);
       refreshCollisionColliders();
       playerX = message.player.x;
       playerZ = message.player.z;
