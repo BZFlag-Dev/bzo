@@ -2321,10 +2321,17 @@ function handlePlayerHit(message) {
     // Switch to overview mode and hide crosshair
     lastCameraMode = cameraMode;
     cameraMode = 'overview';
-    // Set camera to initial overview position (not attached to tank)
-    camera.position.set(0, 15, 20);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(0, 0, 0);
+    // Set camera to initial overview position above/behind victim tank
+    if (victimTank) {
+      const vp = victimTank.position;
+      camera.position.set(vp.x, vp.y + 10, vp.z + 22);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(vp.x, vp.y, vp.z);
+    } else {
+      camera.position.set(0, 15, 20);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(0, 0, 0);
+    }
     const crosshair = document.getElementById('crosshair');
     if (crosshair) crosshair.style.display = 'none';
   } else if (message.shooterId === myPlayerId) {
@@ -2359,9 +2366,9 @@ function handlePlayerHit(message) {
     if (message.victimId === myPlayerId) {
       deathFollowTarget = explosionResult?.followTarget || null;
       renderManager.deathFollowTarget = deathFollowTarget;
-      renderManager.deathFollowAnchor = deathFollowTarget
-        ? deathFollowTarget.position.clone()
-        : victimTank.position.clone();
+      renderManager.deathFollowAnchor = victimTank.position.clone();
+      const vp = victimTank.position;
+      debugLog(`deathCam playerPos=${vp.x.toFixed(1)},${vp.y.toFixed(1)},${vp.z.toFixed(1)} hasDebris=${!!deathFollowTarget}`, 'death');
       updateDeathCameraHudVisibility();
     }
   }

@@ -254,6 +254,7 @@ class RenderManager {
     this._tankModelPath = '/obj/default.obj';
     this.deathFollowTarget = null;
     this.deathFollowAnchor = null;
+    this.deathCameraLogged = false;
     this._preloadTankModel('/obj/default.obj');
     this._preloadTankModel('/obj/simple.obj');
     this._preloadTankModel('/obj/bzflag-tank.obj');
@@ -2596,10 +2597,10 @@ class RenderManager {
     if (cameraMode === 'overview') {
       const target = deathFollowTarget || this.deathFollowTarget;
       const focusPoint = target && target.parent
-        ? target.position
+        ? target.getWorldPosition(new THREE.Vector3())
         : this.deathFollowAnchor;
       if (target && target.parent) {
-        this.deathFollowAnchor = target.position.clone();
+        this.deathFollowAnchor = target.getWorldPosition(new THREE.Vector3());
       }
       if (focusPoint) {
         const velocity = target && target.parent ? (target.velocity || new THREE.Vector3()) : new THREE.Vector3();
@@ -2625,6 +2626,13 @@ class RenderManager {
             ? velocity.clone().normalize().multiplyScalar(-20).add(new THREE.Vector3(0, 10, 0))
             : new THREE.Vector3(0, 10, 22);
           const desiredPosition = focusPoint.clone().add(followOffset);
+          if (!this.deathCameraLogged) {
+            const dl = window.gameDebugLog;
+            if (dl) {
+              dl(`deathCam lookAt=${focusPoint.x.toFixed(1)},${focusPoint.y.toFixed(1)},${focusPoint.z.toFixed(1)} camPos=${desiredPosition.x.toFixed(1)},${desiredPosition.y.toFixed(1)},${desiredPosition.z.toFixed(1)} debrisVel=${velocity.x.toFixed(1)},${velocity.y.toFixed(1)},${velocity.z.toFixed(1)}`, 'render');
+            }
+            this.deathCameraLogged = true;
+          }
           this.camera.position.lerp(desiredPosition, 0.045);
           this.camera.up.set(0, 1, 0);
           this.camera.lookAt(focusPoint);
@@ -2633,6 +2641,7 @@ class RenderManager {
       }
       this.deathFollowTarget = null;
       this.deathFollowAnchor = null;
+      this.deathCameraLogged = false;
       this.worldGroup.position.set(0, 0, 0);
       this.worldGroup.quaternion.identity();
       this.camera.position.set(0, 15, 20);
