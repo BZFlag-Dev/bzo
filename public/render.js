@@ -27,12 +27,29 @@ import {
 const DEFAULT_MUZZLE_FORWARD = 3.0;
 const DEFAULT_MUZZLE_HEIGHT = 1.57;
 const MUZZLE_TIP_EPSILON = 0.03;
-const BZFLAG_DEFAULT_HORIZONTAL_FOV = 60;
+const BZFlag_DEFAULT_HORIZONTAL_FOV = 60;
+const TANK_PART_ALIASES = {
+  body: ['body'],
+  turret: ['turret'],
+  barrel: ['barrel'],
+  leftTreadMiddle: ['leftTreadMiddle', 'tread_belt_left', 'leftTrack', 'ltread'],
+  leftTreadFrontCap: ['leftTreadFrontCap', 'tread_cap_left_front', 'leftTrack', 'ltread'],
+  leftTreadRearCap: ['leftTreadRearCap', 'tread_cap_left_rear', 'leftTrack', 'ltread'],
+  rightTreadMiddle: ['rightTreadMiddle', 'tread_belt_right', 'rightTrack', 'rtread'],
+  rightTreadFrontCap: ['rightTreadFrontCap', 'tread_cap_right_front', 'rightTrack', 'rtread'],
+  rightTreadRearCap: ['rightTreadRearCap', 'tread_cap_right_rear', 'rightTrack', 'rtread'],
+};
+const TANK_WHEEL_PREFIX_ALIASES = {
+  left: ['leftWheel', 'wheel_left'],
+  right: ['rightWheel', 'wheel_right'],
+};
+
+const TANK_WHEEL_OUTWARD_NUDGE = 0.02;
 
 class RenderManager {
   _getVerticalFovForAspect(aspect) {
     const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : (16 / 9);
-    const halfHorizontalRadians = THREE.MathUtils.degToRad(BZFLAG_DEFAULT_HORIZONTAL_FOV * 0.5);
+    const halfHorizontalRadians = THREE.MathUtils.degToRad(BZFlag_DEFAULT_HORIZONTAL_FOV * 0.5);
     const halfVerticalRadians = Math.atan(Math.tan(halfHorizontalRadians) / safeAspect);
     return THREE.MathUtils.radToDeg(halfVerticalRadians * 2);
   }
@@ -270,13 +287,16 @@ class RenderManager {
     this._tankGeoCacheByPath = new Map();
     this._tankTemplateByPath = new Map();
     this._tankModelLoadsInFlight = new Set();
-    this._tankModelPath = '/obj/default.obj';
+    this._tankModelReadyPromisesByPath = new Map();
+    this._tankModelReadyResolversByPath = new Map();
+    this._tankModelPath = '/obj/bzflag.obj';
     this.deathFollowTarget = null;
     this.deathFollowAnchor = null;
     this.deathCameraLogged = false;
-    this._preloadTankModel('/obj/default.obj');
+    this._preloadTankModel('/obj/bzflag.obj');
+    this._preloadTankModel('/obj/modern.obj');
     this._preloadTankModel('/obj/simple.obj');
-    this._preloadTankModel('/obj/bzflag-tank.obj');
+    this._preloadTankModel('/obj/wheeled6.obj');
   }
 
   init({ container = document.body } = {}) {
@@ -1006,7 +1026,7 @@ class RenderManager {
   }
 
   _preloadTankModel(modelPath = this._tankModelPath) {
-    const loadPath = modelPath || '/obj/default.obj';
+    const loadPath = modelPath || '/obj/bzflag.obj';
     if (this._tankTemplateByPath.has(loadPath) || this._tankModelLoadsInFlight.has(loadPath)) {
       return;
     }
@@ -1024,10 +1044,21 @@ class RenderManager {
         this._tankTemplate = obj;
         this._tankGeoCache = cache;
       }
+      const readyResolver = this._tankModelReadyResolversByPath.get(loadPath);
+      if (readyResolver) {
+        readyResolver.resolve(obj);
+        this._tankModelReadyResolversByPath.delete(loadPath);
+      }
       this._tankModelLoadsInFlight.delete(loadPath);
     };
 
     loader.load(loadPath, onLoad, undefined, () => {
+      const readyResolver = this._tankModelReadyResolversByPath.get(loadPath);
+      if (readyResolver) {
+        readyResolver.reject(new Error(`Failed to load tank model: ${loadPath}`));
+        this._tankModelReadyResolversByPath.delete(loadPath);
+        this._tankModelReadyPromisesByPath.delete(loadPath);
+      }
       this._tankModelLoadsInFlight.delete(loadPath);
       if (loadPath !== '/obj/simple.obj') {
         this._preloadTankModel('/obj/simple.obj');
@@ -1035,8 +1066,8 @@ class RenderManager {
     });
   }
 
-  setTankModel(modelPath = '/obj/default.obj') {
-    const normalizedPath = modelPath || '/obj/default.obj';
+  setTankModel(modelPath = '/obj/bzflag.obj') {
+    const normalizedPath = modelPath || '/obj/bzflag.obj';
     if (this._tankModelPath === normalizedPath && this._tankTemplateByPath.has(normalizedPath)) return;
     this._tankModelPath = normalizedPath;
     const template = this._tankTemplateByPath.get(normalizedPath) || null;
@@ -1048,6 +1079,22 @@ class RenderManager {
 
   preloadTankModel(modelPath) {
     this._preloadTankModel(modelPath);
+  }
+
+  whenTankModelReady(modelPath = this._tankModelPath) {
+    const loadPath = modelPath || '/obj/bzflag.obj';
+    if (this._tankTemplateByPath.has(loadPath)) {
+      return Promise.resolve(this._tankTemplateByPath.get(loadPath));
+    }
+
+    if (!this._tankModelReadyPromisesByPath.has(loadPath)) {
+      this._tankModelReadyPromisesByPath.set(loadPath, new Promise((resolve, reject) => {
+        this._tankModelReadyResolversByPath.set(loadPath, { resolve, reject });
+      }));
+    }
+
+    this._preloadTankModel(loadPath);
+    return this._tankModelReadyPromisesByPath.get(loadPath);
   }
 
   getTankModel() {
@@ -1064,6 +1111,14 @@ class RenderManager {
       }
     });
     return found;
+  }
+
+  _findFirstTankTemplateMesh(names, modelPath = this._tankModelPath) {
+    for (const name of names) {
+      const mesh = this._findTankTemplateMesh(name, modelPath);
+      if (mesh) return mesh;
+    }
+    return null;
   }
 
   _cloneTemplateMesh(templateMesh, material) {
@@ -1129,6 +1184,22 @@ class RenderManager {
     return mesh;
   }
 
+  _nudgeWheelMeshOutward(mesh, directionHint = 0) {
+    if (!mesh || !mesh.geometry) return;
+
+    if (!mesh.geometry.boundingBox) {
+      mesh.geometry.computeBoundingBox();
+    }
+
+    const box = mesh.geometry.boundingBox;
+    const centerX = box ? (box.min.x + box.max.x) * 0.5 : 0;
+    const direction = directionHint || Math.sign(centerX);
+    if (!direction) return;
+
+    mesh.geometry = mesh.geometry.clone();
+    mesh.geometry.translate(direction * TANK_WHEEL_OUTWARD_NUDGE, 0, 0);
+  }
+
   _getTemplateMeshesByPrefix(prefix, modelPath = this._tankModelPath) {
     const template = this._tankTemplateByPath.get(modelPath);
     if (!template) return [];
@@ -1148,6 +1219,22 @@ class RenderManager {
     return meshes;
   }
 
+  _getTemplateMeshesByPrefixes(prefixes, modelPath = this._tankModelPath) {
+    const seen = new Set();
+    const meshes = [];
+
+    prefixes.forEach((prefix) => {
+      this._getTemplateMeshesByPrefix(prefix, modelPath).forEach((mesh) => {
+        if (seen.has(mesh.uuid)) return;
+        seen.add(mesh.uuid);
+        meshes.push(mesh);
+      });
+    });
+
+    meshes.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    return meshes;
+  }
+
   _createTankFromTemplate(color = 0x4caf50, name = '', modelPath = this._tankModelPath) {
     const template = this._tankTemplateByPath.get(modelPath);
     if (!template) {
@@ -1156,32 +1243,28 @@ class RenderManager {
     }
 
     const templateParts = {
-      body: this._findTankTemplateMesh('body', modelPath),
-      leftTreadMiddle: this._findTankTemplateMesh('leftTreadMiddle', modelPath)
-        || this._findTankTemplateMesh('leftTrack', modelPath)
-        || this._findTankTemplateMesh('ltread', modelPath),
-      leftTreadFrontCap: this._findTankTemplateMesh('leftTreadFrontCap', modelPath)
-        || this._findTankTemplateMesh('leftTrack', modelPath)
-        || this._findTankTemplateMesh('ltread', modelPath),
-      leftTreadRearCap: this._findTankTemplateMesh('leftTreadRearCap', modelPath)
-        || this._findTankTemplateMesh('leftTrack', modelPath)
-        || this._findTankTemplateMesh('ltread', modelPath),
-      rightTreadMiddle: this._findTankTemplateMesh('rightTreadMiddle', modelPath)
-        || this._findTankTemplateMesh('rightTrack', modelPath)
-        || this._findTankTemplateMesh('rtread', modelPath),
-      rightTreadFrontCap: this._findTankTemplateMesh('rightTreadFrontCap', modelPath)
-        || this._findTankTemplateMesh('rightTrack', modelPath)
-        || this._findTankTemplateMesh('rtread', modelPath),
-      rightTreadRearCap: this._findTankTemplateMesh('rightTreadRearCap', modelPath)
-        || this._findTankTemplateMesh('rightTrack', modelPath)
-        || this._findTankTemplateMesh('rtread', modelPath),
-      turret: this._findTankTemplateMesh('turret', modelPath),
-      barrel: this._findTankTemplateMesh('barrel', modelPath),
+      body: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.body, modelPath),
+      leftTreadMiddle: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.leftTreadMiddle, modelPath),
+      leftTreadFrontCap: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.leftTreadFrontCap, modelPath),
+      leftTreadRearCap: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.leftTreadRearCap, modelPath),
+      rightTreadMiddle: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.rightTreadMiddle, modelPath),
+      rightTreadFrontCap: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.rightTreadFrontCap, modelPath),
+      rightTreadRearCap: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.rightTreadRearCap, modelPath),
+      turret: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.turret, modelPath),
+      barrel: this._findFirstTankTemplateMesh(TANK_PART_ALIASES.barrel, modelPath),
     };
-    const leftWheelParts = this._getTemplateMeshesByPrefix('leftWheel', modelPath);
-    const rightWheelParts = this._getTemplateMeshesByPrefix('rightWheel', modelPath);
+    const leftWheelParts = this._getTemplateMeshesByPrefixes(TANK_WHEEL_PREFIX_ALIASES.left, modelPath);
+    const rightWheelParts = this._getTemplateMeshesByPrefixes(TANK_WHEEL_PREFIX_ALIASES.right, modelPath);
 
-    if (Object.values(templateParts).some((part) => !part)) {
+    const hasLeftTread = !!(templateParts.leftTreadMiddle && templateParts.leftTreadFrontCap && templateParts.leftTreadRearCap);
+    const hasRightTread = !!(templateParts.rightTreadMiddle && templateParts.rightTreadFrontCap && templateParts.rightTreadRearCap);
+    const hasWheelPairs = leftWheelParts.length > 0 && rightWheelParts.length > 0;
+
+    if (!templateParts.body || !templateParts.turret || !templateParts.barrel) {
+      return null;
+    }
+
+    if ((!hasLeftTread || !hasRightTread) && !hasWheelPairs) {
       return null;
     }
 
@@ -1231,92 +1314,96 @@ class RenderManager {
     const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
     const treadCapMatSide = new THREE.MeshLambertMaterial({ map: treadCapTextureSide });
 
-    const leftTreadGroup = new THREE.Group();
-    const rightTreadGroup = new THREE.Group();
+    const leftTreadGroup = hasLeftTread ? new THREE.Group() : null;
+    const rightTreadGroup = hasRightTread ? new THREE.Group() : null;
 
-    const leftTreadRotatedTex = treadTextureRotated.clone();
-    leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
-    leftTreadRotatedTex.wrapT = THREE.RepeatWrapping;
-    const leftTreadRotatedMat = new THREE.MeshLambertMaterial({ map: leftTreadRotatedTex });
-    const leftTreadMiddle = this._cloneTemplateMesh(templateParts.leftTreadMiddle, [
-      treadCapMatSide,
-      treadCapMatSide,
-      leftTreadRotatedMat,
-      leftTreadRotatedMat,
-      treadCapMatSide,
-      treadCapMatSide,
-    ]);
-    leftTreadGroup.add(leftTreadMiddle);
-    tankGroup.userData.leftTreadTextures.push(leftTreadRotatedTex);
+    if (hasLeftTread) {
+      const leftTreadRotatedTex = treadTextureRotated.clone();
+      leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
+      leftTreadRotatedTex.wrapT = THREE.RepeatWrapping;
+      const leftTreadRotatedMat = new THREE.MeshLambertMaterial({ map: leftTreadRotatedTex });
+      const leftTreadMiddle = this._cloneTemplateMesh(templateParts.leftTreadMiddle, [
+        treadCapMatSide,
+        treadCapMatSide,
+        leftTreadRotatedMat,
+        leftTreadRotatedMat,
+        treadCapMatSide,
+        treadCapMatSide,
+      ]);
+      leftTreadGroup.add(leftTreadMiddle);
+      tankGroup.userData.leftTreadTextures.push(leftTreadRotatedTex);
 
-    const leftCapGroups = templateParts.leftTreadFrontCap.geometry.groups.length;
-    const leftTreadFrontTex = treadTexture.clone();
-    leftTreadFrontTex.wrapS = THREE.RepeatWrapping;
-    leftTreadFrontTex.wrapT = THREE.RepeatWrapping;
-    const leftTreadFrontMat = new THREE.MeshLambertMaterial({ map: leftTreadFrontTex });
-    const leftTreadFront = this._cloneTemplateMesh(
-      templateParts.leftTreadFrontCap,
-      leftCapGroups === 2
-        ? [leftTreadFrontMat, treadCapMat]
-        : [leftTreadFrontMat, treadCapMat, treadCapMat],
-    );
-    leftTreadGroup.add(leftTreadFront);
-    tankGroup.userData.leftTreadTextures.push(leftTreadFrontTex);
+      const leftCapGroups = templateParts.leftTreadFrontCap.geometry.groups.length;
+      const leftTreadFrontTex = treadTexture.clone();
+      leftTreadFrontTex.wrapS = THREE.RepeatWrapping;
+      leftTreadFrontTex.wrapT = THREE.RepeatWrapping;
+      const leftTreadFrontMat = new THREE.MeshLambertMaterial({ map: leftTreadFrontTex });
+      const leftTreadFront = this._cloneTemplateMesh(
+        templateParts.leftTreadFrontCap,
+        leftCapGroups === 2
+          ? [leftTreadFrontMat, treadCapMat]
+          : [leftTreadFrontMat, treadCapMat, treadCapMat],
+      );
+      leftTreadGroup.add(leftTreadFront);
+      tankGroup.userData.leftTreadTextures.push(leftTreadFrontTex);
 
-    const leftTreadRearTex = treadTexture.clone();
-    leftTreadRearTex.wrapS = THREE.RepeatWrapping;
-    leftTreadRearTex.wrapT = THREE.RepeatWrapping;
-    const leftTreadRearMat = new THREE.MeshLambertMaterial({ map: leftTreadRearTex });
-    const leftTreadRear = this._cloneTemplateMesh(
-      templateParts.leftTreadRearCap,
-      leftCapGroups === 2
-        ? [leftTreadRearMat, treadCapMat]
-        : [leftTreadRearMat, treadCapMat, treadCapMat],
-    );
-    leftTreadGroup.add(leftTreadRear);
-    tankGroup.userData.leftTreadTextures.push(leftTreadRearTex);
+      const leftTreadRearTex = treadTexture.clone();
+      leftTreadRearTex.wrapS = THREE.RepeatWrapping;
+      leftTreadRearTex.wrapT = THREE.RepeatWrapping;
+      const leftTreadRearMat = new THREE.MeshLambertMaterial({ map: leftTreadRearTex });
+      const leftTreadRear = this._cloneTemplateMesh(
+        templateParts.leftTreadRearCap,
+        leftCapGroups === 2
+          ? [leftTreadRearMat, treadCapMat]
+          : [leftTreadRearMat, treadCapMat, treadCapMat],
+      );
+      leftTreadGroup.add(leftTreadRear);
+      tankGroup.userData.leftTreadTextures.push(leftTreadRearTex);
+    }
 
-    const rightTreadRotatedTex = treadTextureRotated.clone();
-    rightTreadRotatedTex.wrapS = THREE.RepeatWrapping;
-    rightTreadRotatedTex.wrapT = THREE.RepeatWrapping;
-    const rightTreadRotatedMat = new THREE.MeshLambertMaterial({ map: rightTreadRotatedTex });
-    const rightTreadMiddle = this._cloneTemplateMesh(templateParts.rightTreadMiddle, [
-      treadCapMatSide,
-      treadCapMatSide,
-      rightTreadRotatedMat,
-      rightTreadRotatedMat,
-      treadCapMatSide,
-      treadCapMatSide,
-    ]);
-    rightTreadGroup.add(rightTreadMiddle);
-    tankGroup.userData.rightTreadTextures.push(rightTreadRotatedTex);
+    if (hasRightTread) {
+      const rightTreadRotatedTex = treadTextureRotated.clone();
+      rightTreadRotatedTex.wrapS = THREE.RepeatWrapping;
+      rightTreadRotatedTex.wrapT = THREE.RepeatWrapping;
+      const rightTreadRotatedMat = new THREE.MeshLambertMaterial({ map: rightTreadRotatedTex });
+      const rightTreadMiddle = this._cloneTemplateMesh(templateParts.rightTreadMiddle, [
+        treadCapMatSide,
+        treadCapMatSide,
+        rightTreadRotatedMat,
+        rightTreadRotatedMat,
+        treadCapMatSide,
+        treadCapMatSide,
+      ]);
+      rightTreadGroup.add(rightTreadMiddle);
+      tankGroup.userData.rightTreadTextures.push(rightTreadRotatedTex);
 
-    const rightCapGroups = templateParts.rightTreadFrontCap.geometry.groups.length;
-    const rightTreadFrontTex = treadTexture.clone();
-    rightTreadFrontTex.wrapS = THREE.RepeatWrapping;
-    rightTreadFrontTex.wrapT = THREE.RepeatWrapping;
-    const rightTreadFrontMat = new THREE.MeshLambertMaterial({ map: rightTreadFrontTex });
-    const rightTreadFront = this._cloneTemplateMesh(
-      templateParts.rightTreadFrontCap,
-      rightCapGroups === 2
-        ? [rightTreadFrontMat, treadCapMat]
-        : [rightTreadFrontMat, treadCapMat, treadCapMat],
-    );
-    rightTreadGroup.add(rightTreadFront);
-    tankGroup.userData.rightTreadTextures.push(rightTreadFrontTex);
+      const rightCapGroups = templateParts.rightTreadFrontCap.geometry.groups.length;
+      const rightTreadFrontTex = treadTexture.clone();
+      rightTreadFrontTex.wrapS = THREE.RepeatWrapping;
+      rightTreadFrontTex.wrapT = THREE.RepeatWrapping;
+      const rightTreadFrontMat = new THREE.MeshLambertMaterial({ map: rightTreadFrontTex });
+      const rightTreadFront = this._cloneTemplateMesh(
+        templateParts.rightTreadFrontCap,
+        rightCapGroups === 2
+          ? [rightTreadFrontMat, treadCapMat]
+          : [rightTreadFrontMat, treadCapMat, treadCapMat],
+      );
+      rightTreadGroup.add(rightTreadFront);
+      tankGroup.userData.rightTreadTextures.push(rightTreadFrontTex);
 
-    const rightTreadRearTex = treadTexture.clone();
-    rightTreadRearTex.wrapS = THREE.RepeatWrapping;
-    rightTreadRearTex.wrapT = THREE.RepeatWrapping;
-    const rightTreadRearMat = new THREE.MeshLambertMaterial({ map: rightTreadRearTex });
-    const rightTreadRear = this._cloneTemplateMesh(
-      templateParts.rightTreadRearCap,
-      rightCapGroups === 2
-        ? [rightTreadRearMat, treadCapMat]
-        : [rightTreadRearMat, treadCapMat, treadCapMat],
-    );
-    rightTreadGroup.add(rightTreadRear);
-    tankGroup.userData.rightTreadTextures.push(rightTreadRearTex);
+      const rightTreadRearTex = treadTexture.clone();
+      rightTreadRearTex.wrapS = THREE.RepeatWrapping;
+      rightTreadRearTex.wrapT = THREE.RepeatWrapping;
+      const rightTreadRearMat = new THREE.MeshLambertMaterial({ map: rightTreadRearTex });
+      const rightTreadRear = this._cloneTemplateMesh(
+        templateParts.rightTreadRearCap,
+        rightCapGroups === 2
+          ? [rightTreadRearMat, treadCapMat]
+          : [rightTreadRearMat, treadCapMat, treadCapMat],
+      );
+      rightTreadGroup.add(rightTreadRear);
+      tankGroup.userData.rightTreadTextures.push(rightTreadRearTex);
+    }
 
     tankGroup.userData.leftWheels = [];
     tankGroup.userData.rightWheels = [];
@@ -1333,6 +1420,7 @@ class RenderManager {
         new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
         new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
       ]);
+      this._nudgeWheelMeshOutward(wheel, -1);
       tankGroup.add(wheel);
       tankGroup.userData.leftWheels.push(wheel);
       tankGroup.userData.leftWheelTextures.push(wheelFaceTexture);
@@ -1351,6 +1439,7 @@ class RenderManager {
         new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
         new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
       ]);
+      this._nudgeWheelMeshOutward(wheel, 1);
       tankGroup.add(wheel);
       tankGroup.userData.rightWheels.push(wheel);
       tankGroup.userData.rightWheelTextures.push(wheelFaceTexture);
@@ -1368,9 +1457,9 @@ class RenderManager {
       tankGroup.userData.wheelRadius = 0.42;
     }
 
-    tankGroup.add(leftTreadGroup);
-    tankGroup.add(rightTreadGroup);
-    tankGroup.userData.treadGroups = [leftTreadGroup, rightTreadGroup];
+    if (leftTreadGroup) tankGroup.add(leftTreadGroup);
+    if (rightTreadGroup) tankGroup.add(rightTreadGroup);
+    tankGroup.userData.treadGroups = [leftTreadGroup, rightTreadGroup].filter(Boolean);
 
     const turretTexture = bodyTexture.clone();
     turretTexture.wrapS = THREE.RepeatWrapping;
@@ -1392,8 +1481,7 @@ class RenderManager {
       body,
       turret,
       barrel,
-      leftTreadGroup,
-      rightTreadGroup,
+      ...tankGroup.userData.treadGroups,
       ...tankGroup.userData.leftWheels,
       ...tankGroup.userData.rightWheels,
     ];
@@ -1658,6 +1746,7 @@ class RenderManager {
         image,
         loaded: false,
         listeners: [],
+        error: null,
       };
       image.onload = () => {
         entry.loaded = true;
@@ -1667,6 +1756,17 @@ class RenderManager {
             listener(image);
           } catch (error) {
             console.error('Failed to update texture from image:', error);
+          }
+        });
+      };
+      image.onerror = () => {
+        entry.error = new Error(`Failed to load image: ${path}`);
+        const listeners = entry.listeners.splice(0);
+        listeners.forEach((listener) => {
+          try {
+            listener(null, entry.error);
+          } catch (error) {
+            console.error('Failed to propagate image load error:', error);
           }
         });
       };
@@ -1695,7 +1795,26 @@ class RenderManager {
     return { canvas, texture, redraw };
   }
 
-  _paintTintedBzflagTankTexture(ctx, canvas, image, baseColor) {
+  preloadImage(path) {
+    const entry = this._getSharedImage(path);
+    if (entry.loaded) {
+      return Promise.resolve(entry.image);
+    }
+    if (entry.error) {
+      return Promise.reject(entry.error);
+    }
+    if (!entry.promise) {
+      entry.promise = new Promise((resolve, reject) => {
+        entry.listeners.push((image, error) => {
+          if (error) reject(error);
+          else resolve(image);
+        });
+      });
+    }
+    return entry.promise;
+  }
+
+  _paintTintedBZFlagTankTexture(ctx, canvas, image, baseColor) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!image) {
@@ -1733,7 +1852,7 @@ class RenderManager {
   _createTankTexture(baseColor) {
     const source = this._getSharedImage('/textures/green_tank.png');
     const { texture, redraw } = this._createCanvasBackedImageTexture(128, 128, (ctx, canvas) => {
-      this._paintTintedBzflagTankTexture(
+      this._paintTintedBZFlagTankTexture(
         ctx,
         canvas,
         source.loaded ? source.image : null,

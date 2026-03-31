@@ -84,6 +84,161 @@ let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
 const pendingDebugPackets = [];
+let pendingJoinRequest = null;
+let renderReadyForJoin = false;
+let gameplayJoinConfirmed = false;
+let initSequence = 0;
+let activeInitSequence = 0;
+
+function waitForAnimationFrame() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function setLoadingOverlayState({ visible = true, progress = 0, status = '', detail = '' } = {}) {
+  const overlay = document.getElementById('loadingOverlay');
+  const statusEl = document.getElementById('loadingStatus');
+  const detailEl = document.getElementById('loadingDetail');
+  const fillEl = document.getElementById('loadingBarFill');
+  if (overlay) {
+    overlay.style.display = visible ? 'flex' : 'none';
+  }
+  if (statusEl && typeof status === 'string') {
+    statusEl.textContent = status;
+  }
+  if (detailEl) {
+    detailEl.textContent = detail || '';
+  }
+  if (fillEl) {
+    const clamped = Math.max(0, Math.min(1, progress));
+    fillEl.style.width = `${Math.round(clamped * 100)}%`;
+  }
+}
+
+function hideLoadingOverlay() {
+  setLoadingOverlayState({ visible: false });
+}
+
+function setPendingJoinRequest(name) {
+  pendingJoinRequest = {
+    name,
+    isMobile,
+    tankModel: selectedTankModelId,
+  };
+}
+
+function maybeSendPendingJoinRequest() {
+  if (!renderReadyForJoin || gameplayJoinConfirmed || !pendingJoinRequest) return;
+  sendToServer({
+    type: 'joinGame',
+    name: pendingJoinRequest.name,
+    isMobile: pendingJoinRequest.isMobile,
+    tankModel: pendingJoinRequest.tankModel,
+  });
+}
+
+async function prepareInitialRender(message, sequenceId) {
+  const localModelPath = getTankModelPathById(selectedTankModelId);
+  const playerModelPaths = (message.players || []).map((player) => getTankModelPathById(getTankModelIdFromPlayer(player)));
+  const modelPaths = Array.from(new Set([localModelPath, ...playerModelPaths].filter(Boolean)));
+  const texturePaths = [
+    '/textures/wall.png',
+    '/textures/boxwall.png',
+    '/textures/roof.png',
+    '/textures/pyrwall.png',
+    '/textures/green_tank.png',
+    '/textures/treads.png',
+  ];
+
+  setLoadingOverlayState({
+    visible: true,
+    progress: 0.05,
+    status: 'Preparing battlefield...',
+    detail: 'Building world geometry',
+  });
+
+  renderManager.buildGround(gameConfig.MAP_SIZE);
+  renderManager.createMapBoundaries(gameConfig.MAP_SIZE);
+  await waitForAnimationFrame();
+  if (sequenceId !== activeInitSequence) return false;
+
+  setLoadingOverlayState({
+    visible: true,
+    progress: 0.3,
+    status: 'Placing obstacles...',
+    detail: 'Synchronizing world objects',
+  });
+
+  if (message.obstacles) {
+    OBSTACLES = message.obstacles;
+    refreshCollisionColliders();
+    renderManager.setObstacles(OBSTACLES);
+  } else {
+    OBSTACLES = [];
+    refreshCollisionColliders();
+    renderManager.setObstacles([]);
+  }
+
+  renderManager.createMountains(gameConfig.MAP_SIZE);
+  if (renderManager.dynamicLightingEnabled) {
+    renderManager.setWorldTime(message.worldTime || 0);
+  } else {
+    renderManager.clearCelestialBodies();
+  }
+  if (message.clouds) {
+    renderManager.createClouds(message.clouds);
+  } else {
+    renderManager.clearClouds();
+  }
+
+  setLoadingOverlayState({
+    visible: true,
+    progress: 0.55,
+    status: 'Loading vehicle systems...',
+    detail: 'Preparing tank models and textures',
+  });
+
+  try {
+    await Promise.all([
+      ...modelPaths.map((path) => renderManager.whenTankModelReady(path)),
+      ...texturePaths.map((path) => renderManager.preloadImage(path).catch(() => null)),
+    ]);
+  } catch (error) {
+    console.warn('Render asset preload failed:', error);
+  }
+  if (sequenceId !== activeInitSequence) return false;
+
+  setLoadingOverlayState({
+    visible: true,
+    progress: 0.82,
+    status: 'Assembling tanks...',
+    detail: 'Creating player vehicles',
+  });
+
+  message.players.forEach((player) => {
+    addPlayer(player);
+  });
+  myTank = tanks.get(myPlayerId);
+  callUpdateScoreboard();
+  await waitForAnimationFrame();
+  if (sequenceId !== activeInitSequence) return false;
+
+  renderReadyForJoin = true;
+  setLoadingOverlayState({
+    visible: true,
+    progress: 1,
+    status: pendingJoinRequest ? 'Entering battle...' : 'Render ready',
+    detail: pendingJoinRequest ? 'Joining game' : 'Waiting for player name',
+  });
+  maybeSendPendingJoinRequest();
+  window.setTimeout(() => {
+    if (sequenceId === activeInitSequence && renderReadyForJoin) {
+      hideLoadingOverlay();
+    }
+  }, 180);
+  return true;
+}
 
 function isDebugHudVisible() {
   const debugHud = document.getElementById('debugHud');
@@ -248,12 +403,15 @@ let mouseControlEnabled = false;
 let mouseX = 0; // Percentage from center (-1 to 1)
 let mouseY = 0; // Percentage from center (-1 to 1)
 
+const DEFAULT_TANK_MODEL_ID = 'bzflag';
+
 let TANK_MODELS = [
-  { id: 'default', path: '/obj/default.obj' },
-  { id: 'simple', path: '/obj/simple.obj' },
-  { id: 'bzflag-tank', path: '/obj/bzflag-tank.obj', label: 'Bzflag Tank' },
+  { id: 'bzflag', path: '/obj/bzflag.obj', label: 'BZFlag' },
+  { id: 'modern', path: '/obj/modern.obj', label: 'Modern' },
+  { id: 'simple', path: '/obj/simple.obj', label: 'Simple' },
+  { id: 'wheeled6', path: '/obj/wheeled6.obj', label: 'Wheeled 6' },
 ];
-let selectedTankModelId = localStorage.getItem('tankModelId') || 'default';
+let selectedTankModelId = localStorage.getItem('tankModelId') || DEFAULT_TANK_MODEL_ID;
 let tankPreviewCard = null;
 const tankPreviewModelCache = new Map();
 let tankPreviewLoader = null;
@@ -262,9 +420,9 @@ let tankPreviewRafId = null;
 
 function getDefaultTankModel() {
   if (!Array.isArray(TANK_MODELS) || TANK_MODELS.length === 0) {
-    return { id: 'default', path: '/obj/default.obj', label: 'Default' };
+    return { id: DEFAULT_TANK_MODEL_ID, path: '/obj/bzflag.obj', label: 'BZFlag' };
   }
-  return TANK_MODELS.find((model) => model.id === 'default') || TANK_MODELS[0];
+  return TANK_MODELS.find((model) => model.id === DEFAULT_TANK_MODEL_ID) || TANK_MODELS[0];
 }
 
 function getTankModelById(modelId) {
@@ -274,10 +432,14 @@ function getTankModelById(modelId) {
 
 function normalizeTankModelId(modelId) {
   let normalized = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';
-  if (normalized === 'bzflag') normalized = 'bzflag-tank';
+  if (normalized === 'default') normalized = DEFAULT_TANK_MODEL_ID;
+  if (normalized === 'bzflag-tank') normalized = 'bzflag';
+  if (normalized === 'tank') normalized = DEFAULT_TANK_MODEL_ID;
   const selected = getTankModelById(normalized);
   return selected ? selected.id : getDefaultTankModel().id;
 }
+
+selectedTankModelId = normalizeTankModelId(selectedTankModelId);
 
 function getTankModelPathById(modelId) {
   const normalizedId = normalizeTankModelId(modelId);
@@ -394,10 +556,19 @@ async function fetchTankModels() {
         path: model.path,
         label: model.label || model.id,
       }))
-      .sort((left, right) => left.id.localeCompare(right.id));
+      .sort((left, right) => {
+        if (left.id === DEFAULT_TANK_MODEL_ID) return -1;
+        if (right.id === DEFAULT_TANK_MODEL_ID) return 1;
+        return left.id.localeCompare(right.id);
+      });
 
     if (models.length > 0) {
       TANK_MODELS = models;
+      const normalizedSelectedTankModelId = normalizeTankModelId(selectedTankModelId);
+      if (normalizedSelectedTankModelId !== selectedTankModelId) {
+        localStorage.setItem('tankModelId', normalizedSelectedTankModelId);
+      }
+      selectedTankModelId = normalizedSelectedTankModelId;
       if (renderManager && typeof renderManager.preloadTankModel === 'function') {
         TANK_MODELS.forEach((model) => {
           if (model && model.path) {
@@ -1653,12 +1824,8 @@ function init() {
       const newName = entryInput.value.trim().substring(0, 20);
       localStorage.setItem('playerName', newName);
       myPlayerName = newName;
-      sendToServer({
-        type: 'joinGame',
-        name: myPlayerName,
-        isMobile,
-        tankModel: selectedTankModelId,
-      });
+      setPendingJoinRequest(myPlayerName);
+      maybeSendPendingJoinRequest();
       toggleEntryDialog();
     });
 
@@ -1666,12 +1833,8 @@ function init() {
       // Send blank name to server to request default Player n assignment
       localStorage.setItem('playerName', '');
       myPlayerName = '';
-      sendToServer({
-        type: 'joinGame',
-        name: myPlayerName,
-        isMobile,
-        tankModel: selectedTankModelId,
-      });
+      setPendingJoinRequest(myPlayerName);
+      maybeSendPendingJoinRequest();
       toggleEntryDialog();
     });
 
@@ -1728,6 +1891,12 @@ function connectToServer() {
     showMessage('Connected to server!');
     debugLog(`ws.open host=${window.location.host} protocol=${window.location.protocol}`);
     flushDebugPacketQueue();
+    setLoadingOverlayState({
+      visible: true,
+      progress: 0.02,
+      status: 'Connected to server',
+      detail: 'Waiting for world state',
+    });
   };
 
   ws.onmessage = (event) => {
@@ -1744,6 +1913,10 @@ function connectToServer() {
   };
 
   ws.onclose = (event) => {
+    renderReadyForJoin = false;
+    gameplayJoinConfirmed = false;
+    activeInitSequence = 0;
+    hideLoadingOverlay();
     let kills = 0;
     let deaths = 0;
     if (myTank && myTank.userData && myTank.userData.playerState) {
@@ -1771,6 +1944,12 @@ function connectToServer() {
 function handleServerMessage(message) {
   switch (message.type) {
     case 'init': {
+      const sequenceId = ++initSequence;
+      activeInitSequence = sequenceId;
+      renderReadyForJoin = false;
+      gameplayJoinConfirmed = false;
+      pendingJoinRequest = null;
+
       // Show server info in entryDialog
       const serverNameEl = document.getElementById('serverName');
       const serverDescriptionEl = document.getElementById('serverDescription');
@@ -1826,62 +2005,25 @@ function handleServerMessage(message) {
         }
       }
       if (myPlayerName !== 'Player' && !/^Player \d+$/.test(myPlayerName)) {
-        sendToServer({
-          type: 'joinGame',
-          name: myPlayerName,
-          isMobile,
-          tankModel: selectedTankModelId,
-        });
+        setPendingJoinRequest(myPlayerName);
       } else {
         // Show name entry dialog
         myPlayerName = message.player.name;
         toggleEntryDialog(myPlayerName);
       }
-      // Only set up world, not join yet
-      // Build world geometry
-      renderManager.buildGround(gameConfig.MAP_SIZE);
-      renderManager.createMapBoundaries(gameConfig.MAP_SIZE);
 
       // Initialize dead reckoning state (velocity-based)
       lastSentForwardSpeed = 0;
       lastSentRotationSpeed = 0;
       lastSentVerticalVelocity = 0;
       lastSentTime = performance.now();
-
-      // Update obstacles from server
-      if (message.obstacles) {
-        OBSTACLES = message.obstacles;
-        refreshCollisionColliders();
-        renderManager.setObstacles(OBSTACLES);
-      } else {
-        OBSTACLES = [];
-        refreshCollisionColliders();
-        renderManager.setObstacles([]);
-      }
-
-      // Create environmental features
-      renderManager.createMountains(gameConfig.MAP_SIZE);
-      if (renderManager.dynamicLightingEnabled) {
-        renderManager.setWorldTime(message.worldTime || 0);
-      } else {
-        renderManager.clearCelestialBodies();
-      }
-      if (message.clouds) {
-        renderManager.createClouds(message.clouds);
-      } else {
-        renderManager.clearClouds();
-      }
-      message.players.forEach(player => {
-        addPlayer(player);
-      });
-      // Ensure myTank is set for the local player after all tanks are created
-      myTank = tanks.get(myPlayerId);
-      callUpdateScoreboard();
+      void prepareInitialRender(message, sequenceId);
       break;
     }
 
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
+        gameplayJoinConfirmed = true;
         const wasAliveBefore = !!(myTank && myTank.userData?.playerState?.health > 0);
         addPlayer(message.player);
 
@@ -1894,6 +2036,7 @@ function handleServerMessage(message) {
 
         // Save the name to localStorage (server may have kept our requested name or assigned default)
         localStorage.setItem('playerName', myPlayerName);
+        pendingJoinRequest = null;
 
         // Update player name display
         document.getElementById('playerName').textContent = myPlayerName;

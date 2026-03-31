@@ -540,6 +540,66 @@ body {
   display: none;
 }
 
+#loadingOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 290;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(4px);
+}
+
+.loadingPanel {
+  width: min(420px, calc(100vw - 32px));
+  padding: 22px 24px;
+  border: 2px solid #4CAF50;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.9);
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
+}
+
+.loadingTitle {
+  color: #4CAF50;
+  font-size: 24px;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+#loadingStatus {
+  color: #f5f8f0;
+  font-size: 15px;
+  text-align: center;
+}
+
+#loadingDetail {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  text-align: center;
+  min-height: 18px;
+  margin-top: 6px;
+}
+
+.loadingBarTrack {
+  width: 100%;
+  height: 14px;
+  margin-top: 16px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(76, 175, 80, 0.45);
+}
+
+#loadingBarFill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2d7d31 0%, #4CAF50 50%, #83d588 100%);
+  transition: width 0.18s ease-out;
+}
+
 #serverInfo {
   margin-bottom: 10px;
   font-size: 1.1em;

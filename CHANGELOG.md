@@ -6,6 +6,26 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-03-31
+
+### Added
+- Added BZFlag obstacle textures for boundaries, boxes, pyramids, tank treads, and tank body detailing.
+- Added a BZFlag-style loading overlay that keeps chat available while delaying active join until render-critical world and tank assets are ready.
+- Added a new `wheeled6` tank model option with a six-wheel armored-car silhouette.
+- Added documentation for the supported tank OBJ naming contract in `docs/tank-model-format.md`.
+
+### Changed
+- Switched the default player tank model to `bzflag`, renamed the old default model to `modern`, and renamed the split BZFlag model asset to `bzflag`.
+- Updated tank model selection and server-side model discovery to prefer the supported selectable models and hide source-only OBJ assets from the menu.
+- Updated cloud height placement to float above the tallest obstacle by roughly one jump height.
+- Added configurable BZFlag-style fog mode, density, start, and end settings while keeping fog color driven by time-of-day.
+
+### Fixed
+- Fixed startup races that could leave the local tank partially initialized until switching models by gating gameplay join on render readiness.
+- Fixed blank tank selection states caused by exposing `tank.obj` as a selectable model.
+- Fixed wheel-face clipping on treaded models by nudging wheel meshes slightly outward from the tread surfaces.
+- Fixed the `wheeled6` model so it renders as a true wheel-only vehicle without fake tread geometry.
+
 ## [1.0.9] - 2026-03-27
 
 ### Changed

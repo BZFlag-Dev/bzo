@@ -285,7 +285,7 @@ for (let i = 0; i < wheelZ.length; i += 1) {
 }
 
 const objText = builder.build();
-const outPath = resolve(__dirname, '../public/obj/default.obj');
+const outPath = resolve(__dirname, '../public/obj/modern.obj');
 writeFileSync(outPath, objText, 'utf-8');
 
 console.log(`Written: ${outPath}`);

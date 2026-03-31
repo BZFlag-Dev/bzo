@@ -49,23 +49,33 @@ app.use(express.static('public'));
 
 function getAvailableTankModels() {
   const objDir = path.join(__dirname, 'public', 'obj');
+  const hiddenModelFiles = new Set(['tank.obj']);
   try {
     return fs.readdirSync(objDir)
       .filter((fileName) => fileName.toLowerCase().endsWith('.obj'))
+      .filter((fileName) => !hiddenModelFiles.has(fileName.toLowerCase()))
       .map((fileName) => {
         const id = fileName.slice(0, -4).toLowerCase();
-        const label = id
-          .split(/[-_\s]+/)
-          .filter(Boolean)
-          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-          .join(' ');
+        const label = id === 'bzflag'
+          ? 'BZFlag'
+          : id === 'wheeled6'
+            ? 'Wheeled 6'
+            : id
+              .split(/[-_\s]+/)
+              .filter(Boolean)
+              .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+              .join(' ');
         return {
           id,
           path: `/obj/${fileName}`,
           label: label || id,
         };
       })
-      .sort((left, right) => left.id.localeCompare(right.id));
+      .sort((left, right) => {
+        if (left.id === 'bzflag') return -1;
+        if (right.id === 'bzflag') return 1;
+        return left.id.localeCompare(right.id);
+      });
   } catch (error) {
     logError('Failed to list tank models:', error.message || error);
     return [];
@@ -77,6 +87,14 @@ function isAllowedTankModel(modelId) {
   const normalized = modelId.trim().toLowerCase();
   if (!/^[a-z0-9_-]+$/.test(normalized)) return false;
   return getAvailableTankModels().some((model) => model.id === normalized);
+}
+
+function normalizeTankModelId(modelId) {
+  const normalized = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';
+  if (normalized === 'default') return 'bzflag';
+  if (normalized === 'bzflag-tank') return 'bzflag';
+  if (normalized === 'tank') return 'bzflag';
+  return normalized;
 }
 
 app.get('/api/tank-models', (req, res) => {
@@ -552,7 +570,7 @@ class Player {
     this.connectDate = new Date();
     // Spread new tank colors away from currently connected players.
     this.color = Player.pickDistinctColor();
-    this.tankModel = 'default';
+    this.tankModel = 'bzflag';
 
     // Extrapolation state
     this.forwardSpeed = 0;
@@ -1676,12 +1694,12 @@ wss.on('connection', (ws, req) => {
         case 'joinGame': {
           let joinName = nameCheck(message.name, player.id);
           const requestedTankModel = typeof message.tankModel === 'string'
-            ? message.tankModel.toLowerCase()
-            : 'default';
+            ? normalizeTankModelId(message.tankModel)
+            : 'bzflag';
           player.name = joinName;
           player.tankModel = isAllowedTankModel(requestedTankModel)
             ? requestedTankModel
-            : 'default';
+            : 'bzflag';
           player.health = 100;
           const spawnPos = findValidSpawnPosition();
           player.x = spawnPos.x;

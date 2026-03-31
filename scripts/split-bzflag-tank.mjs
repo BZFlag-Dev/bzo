@@ -16,8 +16,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Target coord system for Three.js: +X = left, +Y = up, +Z = toward rear.
 // Combined rotation: (x, y, z) -> (-y, z, -x)
 const inputPath = resolve(__dirname, '../public/obj/tank.obj');
-const outputPath = resolve(__dirname, '../public/obj/bzflag-tank.obj');
-const defaultTankPath = resolve(__dirname, '../public/obj/default.obj');
+const outputPath = resolve(__dirname, '../public/obj/bzflag.obj');
+const defaultTankPath = resolve(__dirname, '../public/obj/modern.obj');
 
 const src = readFileSync(inputPath, 'utf-8').split(/\r?\n/);
 
