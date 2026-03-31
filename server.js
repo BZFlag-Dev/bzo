@@ -864,12 +864,13 @@ function getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD) {
 function getWorldBorderColliders() {
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
   const thickness = 4;
+  const boundaryHeight = 1000;
   const span = GAME_CONFIG.MAP_SIZE + thickness * 2;
   return [
-    { type: 'box', name: 'boundary_north', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: -halfMap - thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
-    { type: 'box', name: 'boundary_south', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: halfMap + thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
-    { type: 'box', name: 'boundary_east', collisionKind: 'boundary', infiniteHeight: true, x: halfMap + thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 },
-    { type: 'box', name: 'boundary_west', collisionKind: 'boundary', infiniteHeight: true, x: -halfMap - thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 }
+    { type: 'box', name: 'boundary_north', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: -halfMap - thickness / 2, w: span, d: thickness, h: boundaryHeight, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_south', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: halfMap + thickness / 2, w: span, d: thickness, h: boundaryHeight, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_east', collisionKind: 'boundary', infiniteHeight: true, x: halfMap + thickness / 2, z: 0, w: thickness, d: span, h: boundaryHeight, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_west', collisionKind: 'boundary', infiniteHeight: true, x: -halfMap - thickness / 2, z: 0, w: thickness, d: span, h: boundaryHeight, baseY: 0, rotation: 0 }
   ];
 }
 
@@ -887,10 +888,8 @@ function checkCollision(x, y, z, tankRadius = 2) {
     const tankHeight = tankRadius; // For tanks (radius=2), height=2; for projectiles (radius=0.1), height=0.1
     // Only check if tank top is below obstacle top and tank base is above obstacle base
     const tankTop = y + tankHeight;
-    if (!obs.infiniteHeight) {
-      if (tankTop <= obstacleBase + epsilon) continue;
-      if (y >= obstacleTop - epsilon) continue;
-    }
+    if (tankTop <= obstacleBase + epsilon) continue;
+    if (y >= obstacleTop - epsilon) continue;
 
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;

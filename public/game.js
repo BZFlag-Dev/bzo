@@ -2498,10 +2498,10 @@ function getWorldBorderColliders() {
   const thickness = 4;
   const span = mapSize + thickness * 2;
   cachedWorldBorderColliders = [
-    { type: 'box', name: 'boundary_north', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: -halfMap - thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
-    { type: 'box', name: 'boundary_south', collisionKind: 'boundary', infiniteHeight: true, x: 0, z: halfMap + thickness / 2, w: span, d: thickness, h: 0, baseY: 0, rotation: 0 },
-    { type: 'box', name: 'boundary_east', collisionKind: 'boundary', infiniteHeight: true, x: halfMap + thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 },
-    { type: 'box', name: 'boundary_west', collisionKind: 'boundary', infiniteHeight: true, x: -halfMap - thickness / 2, z: 0, w: thickness, d: span, h: 0, baseY: 0, rotation: 0 }
+    { type: 'box', name: 'boundary_north', collisionKind: 'boundary', x: 0, z: -halfMap - thickness / 2, w: span, d: thickness, h: 1000, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_south', collisionKind: 'boundary', x: 0, z: halfMap + thickness / 2, w: span, d: thickness, h: 1000, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_east', collisionKind: 'boundary', x: halfMap + thickness / 2, z: 0, w: thickness, d: span, h: 1000, baseY: 0, rotation: 0 },
+    { type: 'box', name: 'boundary_west', collisionKind: 'boundary', x: -halfMap - thickness / 2, z: 0, w: thickness, d: span, h: 1000, baseY: 0, rotation: 0 }
   ];
   return cachedWorldBorderColliders;
 }
@@ -2535,22 +2535,18 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
     const pyramidSurface = obs.type === 'pyramid' ? getPyramidSurfaceContact(obs, x, y, z) : null;
 
     // Check if we're "on top" of this obstacle (at its top height or a climbable slope)
-    if (!obs.infiniteHeight) {
-      if (obs.type === 'pyramid') {
-        if (pyramidSurface && pyramidSurface.supportable && Math.abs(y - pyramidSurface.supportSurfaceY) < ONTOP_TOLERANCE) {
-          return { type: 'ontop', obstacle: obs, obstacleTop: pyramidSurface.supportSurfaceY, surfaceNormal: pyramidSurface.normal };
-        }
-      } else if (Math.abs(y - obstacleTop) < ONTOP_TOLERANCE && distSquared < tankRadius * tankRadius) {
-        return { type: 'ontop', obstacle: obs, obstacleTop };
+    if (obs.type === 'pyramid') {
+      if (pyramidSurface && pyramidSurface.supportable && Math.abs(y - pyramidSurface.supportSurfaceY) < ONTOP_TOLERANCE) {
+        return { type: 'ontop', obstacle: obs, obstacleTop: pyramidSurface.supportSurfaceY, surfaceNormal: pyramidSurface.normal };
       }
+    } else if (Math.abs(y - obstacleTop) < ONTOP_TOLERANCE && distSquared < tankRadius * tankRadius) {
+      return { type: 'ontop', obstacle: obs, obstacleTop };
     }
 
     // Only check collision if tank top is below obstacle top and tank base is above obstacle base
     const tankTop = y + tankHeight;
-    if (!obs.infiniteHeight) {
-      if (tankTop <= obstacleBase + epsilon) continue;
-      if (y >= obstacleTop - epsilon) continue;
-    }
+    if (tankTop <= obstacleBase + epsilon) continue;
+    if (y >= obstacleTop - epsilon) continue;
 
     if (obs.type === 'box' || !obs.type) {
       if (distSquared < tankRadius * tankRadius) {
@@ -2595,7 +2591,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     return fallbackY;
   };
   const tryStepUp = (collisionInfo) => {
-    if (!collisionInfo || collisionInfo.type !== 'collision' || !collisionInfo.obstacle || collisionInfo.obstacle.infiniteHeight) {
+    if (!collisionInfo || collisionInfo.type !== 'collision' || !collisionInfo.obstacle) {
       return null;
     }
     const obs = collisionInfo.obstacle;
@@ -2619,7 +2615,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     return null;
   };
   const tryTopSurfaceTransition = (collisionInfo) => {
-    if (!collisionInfo || collisionInfo.type !== 'collision' || !collisionInfo.obstacle || collisionInfo.obstacle.infiniteHeight) {
+    if (!collisionInfo || collisionInfo.type !== 'collision' || !collisionInfo.obstacle) {
       return null;
     }
     const obs = collisionInfo.obstacle;
@@ -2734,6 +2730,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   // Try full movement first
   const currentSupport = y > 0 ? findSupportSurface(x, y, z) : null;
   let collisionObj = checkCollision(newX, candidateY, newZ, tankRadius);
+
 
   if (
     currentSupport &&
@@ -3542,7 +3539,6 @@ function getSupportMargin(obs, preferredObstacle) {
 function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
   let bestSupport = null;
   for (const obs of getCollisionColliders()) {
-    if (obs.infiniteHeight) continue;
     if (obs.type === 'pyramid') {
       const contact = getPyramidSurfaceContact(obs, worldX, worldY, worldZ);
       if (!contact || !contact.supportable) continue;
@@ -3570,7 +3566,7 @@ function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
 }
 
 function isWithinSupportFootprint(obs, worldX, worldY, worldZ, margin = SUPPORT_RETAIN_MARGIN) {
-  if (!obs || obs.infiniteHeight) return false;
+  if (!obs) return false;
 
   if (obs.type === 'pyramid') {
     const contact = getPyramidSurfaceContact(obs, worldX, worldY, worldZ);
