@@ -38,7 +38,8 @@ import {
   toggleDebugLabels,
   updateScoreboard,
   updateAltimeter,
-  updateDegreeBar
+  updateDegreeBar,
+  updateShotStatus
 } from './hud.js';
 import { renderManager } from './render.js';
 import * as THREE from 'three';
@@ -143,12 +144,20 @@ async function prepareInitialRender(message, sequenceId) {
   const playerModelPaths = (message.players || []).map((player) => getTankModelPathById(getTankModelIdFromPlayer(player)));
   const modelPaths = Array.from(new Set([localModelPath, ...playerModelPaths].filter(Boolean)));
   const texturePaths = [
+    '/textures/std_ground.png',
     '/textures/wall.png',
     '/textures/boxwall.png',
     '/textures/roof.png',
     '/textures/pyrwall.png',
     '/textures/green_tank.png',
+    '/textures/green_bolt.png',
+    '/textures/shot_tail.png',
     '/textures/treads.png',
+    '/textures/mountain1.png',
+    '/textures/mountain2.png',
+    '/textures/mountain3.png',
+    '/textures/mountain4.png',
+    '/textures/mountain5.png',
   ];
 
   setLoadingOverlayState({
@@ -340,7 +349,6 @@ function getPlayerShotColor(playerId) {
 }
 
 // Input state
-let lastShotTime = 0;
 
 // Entry Dialog
 function toggleEntryDialog(name = '') {
@@ -485,6 +493,27 @@ function setSelectedTankModel(modelId, { persist = true, applyToRender = true } 
   if (tankPreviewCard) {
     loadTankPreviewModel(selected.path);
   }
+
+  if (pendingJoinRequest) {
+    pendingJoinRequest.tankModel = selectedTankModelId;
+  }
+
+  if (gameplayJoinConfirmed && myPlayerId) {
+    const currentTank = tanks.get(myPlayerId);
+    const currentPlayerState = currentTank?.userData?.playerState;
+    if (currentPlayerState) {
+      addPlayer({
+        ...currentPlayerState,
+        tankModel: selectedTankModelId,
+      });
+      myTank = tanks.get(myPlayerId);
+    }
+    sendToServer({
+      type: 'setTankModel',
+      tankModel: selectedTankModelId,
+    });
+  }
+
   updateSelectedTankOptionUI();
 }
 
@@ -2111,6 +2140,16 @@ function handleServerMessage(message) {
       break;
     }
 
+    case 'playerUpdated':
+      if (message.player) {
+        addPlayer(message.player);
+        if (message.player.id === myPlayerId) {
+          myTank = tanks.get(myPlayerId);
+        }
+        callUpdateScoreboard();
+      }
+      break;
+
     case 'pm': {
       // Compact playerMoved message
       const tank = tanks.get(message.id);
@@ -2434,12 +2473,24 @@ function removeShield(playerId) {
 
 function createProjectile(data) {
   const shotColor = getPlayerShotColor(data.playerId);
+  const shotSpeed = Number.isFinite(gameConfig?.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
+  const shotRange = Number.isFinite(gameConfig?.SHOT_RANGE)
+    ? gameConfig.SHOT_RANGE
+    : (Number.isFinite(gameConfig?.SHOT_DISTANCE) ? gameConfig.SHOT_DISTANCE : 350);
+  const networkLeadSeconds = Number.isFinite(data.createdAt)
+    ? Math.max(0, (Date.now() - data.createdAt) / 1000)
+    : 0;
+  const leadDistance = Math.min(shotRange, shotSpeed * networkLeadSeconds);
   const projectile = renderManager.createProjectile({
     ...data,
+    x: data.x + (data.dirX * leadDistance),
+    z: data.z + (data.dirZ * leadDistance),
     color: shotColor.getHex(),
   });
   if (!projectile) return;
   projectile.userData.playerId = data.playerId;
+  projectile.userData.createdAt = data.createdAt;
+  projectile.userData.shotSlot = Number.isInteger(data.shotSlot) ? data.shotSlot : 0;
   projectile.userData.radarColor = `#${shotColor.getHexString()}`;
   projectiles.set(data.id, projectile);
 }
@@ -2450,6 +2501,14 @@ function removeProjectile(id) {
     renderManager.removeProjectile(projectile);
     projectiles.delete(id);
   }
+}
+
+function getActiveProjectileCountForPlayer(playerId) {
+  let count = 0;
+  projectiles.forEach((projectile) => {
+    if (projectile?.userData?.playerId === playerId) count++;
+  });
+  return count;
 }
 
 function handlePlayerHit(message) {
@@ -4316,10 +4375,9 @@ function handleMotion(deltaTime) {
   }
   // Fire button: keyboard Space, mobile/XR/gamepad virtualInput.fire
   if ((!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire)) {
-    const now = Date.now();
-    if (now - lastShotTime > gameConfig.SHOT_COOLDOWN) {
+    const maxActiveShots = Number.isFinite(gameConfig?.SHOT_MAX_ACTIVE) ? gameConfig.SHOT_MAX_ACTIVE : 1;
+    if (getActiveProjectileCountForPlayer(myPlayerId) < maxActiveShots) {
       shoot();
-      lastShotTime = now;
     }
   }
 }
@@ -4352,7 +4410,7 @@ function shoot() {
 }
 
 function updateProjectiles(deltaTime) {
-  const projectileSpeed = 18; // units per second (adjust as needed)
+  const projectileSpeed = Number.isFinite(gameConfig?.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
   projectiles.forEach((projectile) => {
     projectile.position.x += projectile.userData.dirX * projectileSpeed * deltaTime;
     projectile.position.z += projectile.userData.dirZ * projectileSpeed * deltaTime;
@@ -4835,6 +4893,7 @@ function animate() {
   updateChatWindow();
   updateAltimeter({ myTank });
   updateDegreeBar({ myTank, playerRotation });
+  updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
 
   // Only schedule next frame if not in XR mode (XR loop handles scheduling)
   if (!isXREnabled()) {

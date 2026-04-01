@@ -126,8 +126,14 @@ const GAME_CONFIG = {
   TURN_ACCEL: 3.0, // Turn input acceleration (normalized units per second)
   TURN_DECEL: 4.0, // Turn input deceleration to zero
   SHOT_SPEED: 100, // BZFlag _shotSpeed default (units per second)
-  SHOT_COOLDOWN: 1000, // ms
-  SHOT_DISTANCE: 350, // Derived from default shot duration (3.5s) at SHOT_SPEED
+  SHOT_RANGE: 350, // BZFlag _shotRange default (world units)
+  SHOT_DISTANCE: 350, // Legacy alias for client/radar code
+  SHOT_RELOAD_TIME: 1000, // ms; configurable independently until shot-slot behavior matches BZFlag
+  SHOT_COOLDOWN: 1000, // Legacy alias used by existing client fire gating
+  SHOT_MAX_ACTIVE: 1, // BZFlag maxShots default
+  SHOT_RADIUS: 0.5, // BZFlag _shotRadius default
+  SHOT_TAIL_LENGTH: 4.0, // BZFlag _shotTailLength default
+  SHOTS_KEEP_VERTICAL_VELOCITY: false, // BZFlag _shotsKeepVerticalVelocity default
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
   SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
   PAUSE_COUNTDOWN: 2000, // ms
@@ -235,15 +241,52 @@ if (Number.isFinite(configShotSpeed) && configShotSpeed > 0) {
   GAME_CONFIG.SHOT_SPEED = configShotSpeed;
 }
 
+const configShotRange = Number(serverConfig.shotRange);
+if (Number.isFinite(configShotRange) && configShotRange > 0) {
+  GAME_CONFIG.SHOT_RANGE = configShotRange;
+}
+
 const configShotDuration = Number(serverConfig.shotDuration);
 if (Number.isFinite(configShotDuration) && configShotDuration > 0) {
-  GAME_CONFIG.SHOT_DISTANCE = GAME_CONFIG.SHOT_SPEED * configShotDuration;
+  GAME_CONFIG.SHOT_RANGE = GAME_CONFIG.SHOT_SPEED * configShotDuration;
 }
 
 const configShotDistance = Number(serverConfig.shotDistance);
 if (Number.isFinite(configShotDistance) && configShotDistance > 0) {
-  GAME_CONFIG.SHOT_DISTANCE = configShotDistance;
+  GAME_CONFIG.SHOT_RANGE = configShotDistance;
 }
+
+const configShotReloadTime = Number(serverConfig.shotReloadTime);
+if (Number.isFinite(configShotReloadTime) && configShotReloadTime > 0) {
+  GAME_CONFIG.SHOT_RELOAD_TIME = configShotReloadTime;
+}
+
+const configShotCooldown = Number(serverConfig.shotCooldown);
+if (Number.isFinite(configShotCooldown) && configShotCooldown > 0) {
+  GAME_CONFIG.SHOT_RELOAD_TIME = configShotCooldown;
+}
+
+const configShotMaxActive = Number(serverConfig.shotMaxActive);
+if (Number.isInteger(configShotMaxActive) && configShotMaxActive > 0) {
+  GAME_CONFIG.SHOT_MAX_ACTIVE = configShotMaxActive;
+}
+
+const configShotRadius = Number(serverConfig.shotRadius);
+if (Number.isFinite(configShotRadius) && configShotRadius > 0) {
+  GAME_CONFIG.SHOT_RADIUS = configShotRadius;
+}
+
+const configShotTailLength = Number(serverConfig.shotTailLength);
+if (Number.isFinite(configShotTailLength) && configShotTailLength >= 0) {
+  GAME_CONFIG.SHOT_TAIL_LENGTH = configShotTailLength;
+}
+
+if (typeof serverConfig.shotsKeepVerticalVelocity === 'boolean') {
+  GAME_CONFIG.SHOTS_KEEP_VERTICAL_VELOCITY = serverConfig.shotsKeepVerticalVelocity;
+}
+
+GAME_CONFIG.SHOT_DISTANCE = GAME_CONFIG.SHOT_RANGE;
+GAME_CONFIG.SHOT_COOLDOWN = GAME_CONFIG.SHOT_RELOAD_TIME;
 
 const validFogModes = new Set(['none', 'linear', 'exp', 'exp2']);
 const configFogMode = typeof serverConfig.fogMode === 'string' ? serverConfig.fogMode.trim().toLowerCase() : '';
@@ -276,7 +319,7 @@ if (!Number.isFinite(GAME_CONFIG.FOG_END)) {
 
 log(`Anti-cheat mode: ${ANTICHEAT_CONFIG.mode}`);
 log(
-  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, reverseSpeedRatio=${GAME_CONFIG.REVERSE_SPEED_RATIO}, forwardAccel=${GAME_CONFIG.FORWARD_ACCEL}, reverseAccel=${GAME_CONFIG.REVERSE_ACCEL}, forwardDecel=${GAME_CONFIG.FORWARD_DECEL}, turnAccel=${GAME_CONFIG.TURN_ACCEL}, turnDecel=${GAME_CONFIG.TURN_DECEL}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, gravity=${GAME_CONFIG.GRAVITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotDistance=${GAME_CONFIG.SHOT_DISTANCE}, shotDuration≈${(GAME_CONFIG.SHOT_DISTANCE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s`
+  `Gameplay config: tankSpeed=${GAME_CONFIG.TANK_SPEED}, tankRotationSpeed=${GAME_CONFIG.TANK_ROTATION_SPEED}, reverseSpeedRatio=${GAME_CONFIG.REVERSE_SPEED_RATIO}, forwardAccel=${GAME_CONFIG.FORWARD_ACCEL}, reverseAccel=${GAME_CONFIG.REVERSE_ACCEL}, forwardDecel=${GAME_CONFIG.FORWARD_DECEL}, turnAccel=${GAME_CONFIG.TURN_ACCEL}, turnDecel=${GAME_CONFIG.TURN_DECEL}, jumpVelocity=${GAME_CONFIG.JUMP_VELOCITY}, gravity=${GAME_CONFIG.GRAVITY}, shotSpeed=${GAME_CONFIG.SHOT_SPEED}, shotRange=${GAME_CONFIG.SHOT_RANGE}, shotReloadTime=${GAME_CONFIG.SHOT_RELOAD_TIME}ms, shotDuration≈${(GAME_CONFIG.SHOT_RANGE / GAME_CONFIG.SHOT_SPEED).toFixed(2)}s, shotMaxActive=${GAME_CONFIG.SHOT_MAX_ACTIVE}, shotRadius=${GAME_CONFIG.SHOT_RADIUS}, shotTailLength=${GAME_CONFIG.SHOT_TAIL_LENGTH}, shotsKeepVerticalVelocity=${GAME_CONFIG.SHOTS_KEEP_VERTICAL_VELOCITY}`
 );
 log(
   `Fog config: mode=${GAME_CONFIG.FOG_MODE}, density=${GAME_CONFIG.FOG_DENSITY}, start=${GAME_CONFIG.FOG_START}, end=${GAME_CONFIG.FOG_END}, color=time-of-day`
@@ -853,9 +896,10 @@ class Player {
 
 // Projectile class
 class Projectile {
-  constructor(id, playerId, x, y, z, dirX, dirZ) {
+  constructor(id, playerId, shotSlot, x, y, z, dirX, dirZ) {
     this.id = id;
     this.playerId = playerId;
+    this.shotSlot = shotSlot;
     this.x = x;
     this.y = y || 2.2; // Default height if not specified (tank height + barrel height)
     this.z = z;
@@ -1147,12 +1191,30 @@ function validateShot(player, shotX, shotY, shotZ) {
     return false;
   }
 
-  if (now - player.lastShot < GAME_CONFIG.SHOT_COOLDOWN) {
-    log(`Player "${player.name}" shot too quickly`);
+  let activeShotCount = 0;
+  projectiles.forEach((proj) => {
+    if (proj.playerId === player.id) activeShotCount++;
+  });
+
+  if (activeShotCount >= GAME_CONFIG.SHOT_MAX_ACTIVE) {
+    log(`Player "${player.name}" exceeded active shot slots (${activeShotCount}/${GAME_CONFIG.SHOT_MAX_ACTIVE})`);
     return false;
   }
 
   return true;
+}
+
+function getAvailableShotSlot(playerId) {
+  const occupiedSlots = new Set();
+  projectiles.forEach((proj) => {
+    if (proj.playerId === playerId && Number.isInteger(proj.shotSlot) && proj.shotSlot >= 0) {
+      occupiedSlots.add(proj.shotSlot);
+    }
+  });
+  for (let slot = 0; slot < GAME_CONFIG.SHOT_MAX_ACTIVE; slot++) {
+    if (!occupiedSlots.has(slot)) return slot;
+  }
+  return -1;
 }
 
 // Broadcast to all players except sender
@@ -1176,25 +1238,31 @@ function broadcastAll(message) {
 }
 
 // Game loop - update projectiles and check collisions
+let lastGameLoopAt = Date.now();
 function gameLoop() {
 
   // Advance world time (20 ticks/sec, 24000 ticks/day)
   worldTime = (worldTime + 1) % 24000;
   const now = Date.now();
+  const loopDeltaSeconds = Math.min(0.1, Math.max(0, (now - lastGameLoopAt) / 1000));
+  lastGameLoopAt = now;
   // No need to broadcast worldTime periodically; clients track it locally at 20 ticks/sec.
 
   // Update projectiles
   projectiles.forEach((proj, id) => {
     const deltaTime = (now - proj.createdAt) / 1000;
-    proj.x += proj.dirX * GAME_CONFIG.SHOT_SPEED * 0.016; // ~60fps
-    proj.z += proj.dirZ * GAME_CONFIG.SHOT_SPEED * 0.016;
+    proj.x += proj.dirX * GAME_CONFIG.SHOT_SPEED * loopDeltaSeconds;
+    proj.z += proj.dirZ * GAME_CONFIG.SHOT_SPEED * loopDeltaSeconds;
 
-    // Remove if out of bounds, too old, or traveled > SHOT_DISTANCE units
+    // Remove if out of bounds, too old, or traveled > shot range
     const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+    const maxShotLifetime = GAME_CONFIG.SHOT_SPEED > 0
+      ? (GAME_CONFIG.SHOT_RANGE / GAME_CONFIG.SHOT_SPEED) + 1
+      : 10;
     const dx = proj.x - proj.originX;
     const dz = proj.z - proj.originZ;
     const distTraveled = Math.sqrt(dx * dx + dz * dz);
-    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > 10 || distTraveled > GAME_CONFIG.SHOT_DISTANCE) {
+    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > maxShotLifetime || distTraveled > GAME_CONFIG.SHOT_RANGE) {
       projectiles.delete(id);
       broadcastAll({ type: 'projectileRemoved', id });
       log(`Projectile ${id} removed (out of bounds ${distTraveled} or expired)`);
@@ -1638,12 +1706,16 @@ wss.on('connection', (ws, req) => {
           // message: { type: 'shot', x, y, z, dirX, dirZ }
           if (player.health <= 0) break; // Dead players can't shoot
           if (!validateShot(player, message.x, message.y, message.z)) break;
-          const now = Date.now();
-          player.lastShot = now;
+          const shotSlot = getAvailableShotSlot(player.id);
+          if (shotSlot < 0) {
+            log(`Player "${player.name}" had no free shot slot despite passing validation`);
+            break;
+          }
           const id = (++projectileIdCounter).toString();
           const proj = new Projectile(
             id,
             player.id,
+            shotSlot,
             message.x,
             message.y,
             message.z,
@@ -1658,6 +1730,7 @@ wss.on('connection', (ws, req) => {
             x: proj.x,
             y: proj.y,
             z: proj.z,
+            shotSlot: proj.shotSlot,
             dirX: proj.dirX,
             dirZ: proj.dirZ,
             createdAt: proj.createdAt
@@ -1722,6 +1795,25 @@ wss.on('connection', (ws, req) => {
             type: 'playerJoined',
             player: player.getState(),
           });
+          break;
+        }
+
+        case 'setTankModel': {
+          const requestedTankModel = typeof message.tankModel === 'string'
+            ? normalizeTankModelId(message.tankModel)
+            : '';
+          if (!isAllowedTankModel(requestedTankModel)) {
+            ws.send(JSON.stringify({ error: 'Invalid tank model' }));
+            break;
+          }
+
+          if (player.tankModel !== requestedTankModel) {
+            player.tankModel = requestedTankModel;
+            broadcastAll({
+              type: 'playerUpdated',
+              player: player.getState(),
+            });
+          }
           break;
         }
 

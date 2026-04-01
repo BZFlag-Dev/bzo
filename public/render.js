@@ -45,6 +45,19 @@ const TANK_WHEEL_PREFIX_ALIASES = {
 };
 
 const TANK_WHEEL_OUTWARD_NUDGE = 0.02;
+const MOUNTAIN_TEXTURE_PATHS = [
+  '/textures/mountain1.png',
+  '/textures/mountain2.png',
+  '/textures/mountain3.png',
+  '/textures/mountain4.png',
+  '/textures/mountain5.png',
+];
+const BZFLAG_MOUNTAIN_FACE_COUNT = 16;
+const BZFLAG_NIGHT_ELEVATION = -0.25;
+const BZFLAG_DUSK_ELEVATION = -0.17;
+const BZFLAG_TWILIGHT_ELEVATION = -0.087;
+const BZFLAG_DAWN_ELEVATION = 0.0;
+const BZFLAG_DAY_ELEVATION = 0.087;
 
 class RenderManager {
   _getVerticalFovForAspect(aspect) {
@@ -173,73 +186,101 @@ class RenderManager {
     const moonX = Math.cos(moonAngle) * moonDistance;
     const moonY = Math.sin(moonAngle) * moonDistance * 0.8;
     const moonZ = 0;
-    // Update sun light
+    const sunElevation = Math.max(-1, Math.min(1, sunY / (sunDistance * 0.8 || 1)));
+    const moonElevation = Math.max(-1, Math.min(1, moonY / (moonDistance * 0.8 || 1)));
+    const lerpTriplet = (from, to, t) => from.map((value, index) => value + (to[index] - value) * t);
+    const toThreeColor = (triplet) => new THREE.Color().setRGB(triplet[0], triplet[1], triplet[2]);
+
+    const highSunColor = [1.75, 1.75, 1.4];
+    const lowSunColor = [0.75, 0.27, 0.0];
+    const moonColor = [0.4, 0.4, 0.4];
+    const nightAmbient = [0.3, 0.3, 0.3];
+    const dayAmbient = [0.35, 0.5, 0.5];
+    const nightSky = [0.04, 0.04, 0.08];
+    const zenithSky = [0.25, 0.55, 0.86];
+    const horizonSky = [0.43, 0.75, 0.95];
+    const sunrise1 = [0.30, 0.12, 0.08];
+    const sunrise2 = [0.47, 0.12, 0.08];
+
+    let directColor = highSunColor;
+    let directBrightness = 1.0;
+    if (sunElevation <= -0.009) {
+      directColor = moonColor;
+      directBrightness = 0.35;
+    } else if (sunElevation < BZFLAG_DAY_ELEVATION) {
+      const t = Math.max(0, Math.min(1, (sunElevation - BZFLAG_DAWN_ELEVATION) / (BZFLAG_DAY_ELEVATION - BZFLAG_DAWN_ELEVATION)));
+      directColor = lerpTriplet(lowSunColor, highSunColor, t);
+      directBrightness = t;
+    }
+
+    let ambientColor = dayAmbient;
+    if (sunElevation < BZFLAG_DUSK_ELEVATION) {
+      ambientColor = nightAmbient;
+    } else if (sunElevation < BZFLAG_DAY_ELEVATION) {
+      const t = Math.max(0, Math.min(1, (sunElevation - BZFLAG_DUSK_ELEVATION) / (BZFLAG_DAY_ELEVATION - BZFLAG_DUSK_ELEVATION)));
+      ambientColor = lerpTriplet(nightAmbient, dayAmbient, t);
+    }
+
+    let skyZenithColor = zenithSky;
+    let skySunDirColor = horizonSky;
+    if (sunElevation < BZFLAG_NIGHT_ELEVATION) {
+      skyZenithColor = nightSky;
+      skySunDirColor = nightSky;
+    } else if (sunElevation < BZFLAG_TWILIGHT_ELEVATION) {
+      const t = Math.max(0, Math.min(1, (sunElevation - BZFLAG_NIGHT_ELEVATION) / (BZFLAG_TWILIGHT_ELEVATION - BZFLAG_NIGHT_ELEVATION)));
+      skyZenithColor = nightSky;
+      skySunDirColor = lerpTriplet(nightSky, sunrise1, t);
+    } else if (sunElevation < BZFLAG_DAWN_ELEVATION) {
+      const t = Math.max(0, Math.min(1, (sunElevation - BZFLAG_TWILIGHT_ELEVATION) / (BZFLAG_DAWN_ELEVATION - BZFLAG_TWILIGHT_ELEVATION)));
+      skyZenithColor = nightSky;
+      skySunDirColor = lerpTriplet(sunrise1, sunrise2, t);
+    } else if (sunElevation < BZFLAG_DAY_ELEVATION) {
+      const t = Math.max(0, Math.min(1, (sunElevation - BZFLAG_DAWN_ELEVATION) / (BZFLAG_DAY_ELEVATION - BZFLAG_DAWN_ELEVATION)));
+      skyZenithColor = lerpTriplet(nightSky, zenithSky, t);
+      skySunDirColor = lerpTriplet(sunrise2, horizonSky, t);
+    }
+
+    const ambientThreeColor = toThreeColor(ambientColor);
+    const directThreeColor = toThreeColor(directColor);
+    const backgroundColor = toThreeColor(lerpTriplet(skySunDirColor, skyZenithColor, 0.35));
+
+    if (this.ambientLight) {
+      this.ambientLight.color.copy(ambientThreeColor);
+      this.ambientLight.intensity = 1.0;
+    }
+
     if (this.sunLight) {
       this.sunLight.position.set(sunX, sunY, sunZ);
       this.sunLight.target.position.set(0, 0, 0);
       this.worldGroup.add(this.sunLight.target);
-      // Lighting intensity
-      const sunUp = sunY > 0;
-      const sunIntensity = sunUp ? 0.7 : 0.0;
-      const ambientIntensity = sunUp ? 1.50 : 0.80;
-      this.sunLight.intensity = sunIntensity;
-      this.ambientLight.intensity = ambientIntensity;
-      this.ambientLight.color.set(0x828293);
-      // Sun casts shadows only during day; moon takes over at night
-      this.sunLight.castShadow = sunUp;
+      this.sunLight.color.copy(directThreeColor);
+      this.sunLight.intensity = sunElevation >= -0.009 ? Math.max(0.35, directBrightness) : 0.0;
+      this.sunLight.castShadow = sunElevation > (0.5 * BZFLAG_DAY_ELEVATION);
     }
-    // Update moon light to track the moon mesh position
+
     if (this.moonLight) {
       this.moonLight.position.set(moonX, moonY, moonZ);
       this.moonLight.target.position.set(0, 0, 0);
       this.worldGroup.add(this.moonLight.target);
-      const moonUp = moonY > 0;
-      this.moonLight.castShadow = moonUp;
-      this.moonLight.intensity = moonUp ? 0.3 : 0.0;
+      this.moonLight.color.copy(toThreeColor(moonColor));
+      this.moonLight.intensity = sunElevation < -0.009 && moonElevation > -0.009 ? 0.35 : 0.0;
+      this.moonLight.castShadow = this.moonLight.intensity > 0;
     }
-    if (this.sunLight) {
-      // Sun color: add a subtle red-orange tint at dawn/dusk
-      // Day: #fffbe6 (warm white), Night: #23264a, Dawn/Dusk: #ffb366 (orange tint)
-      const noonColor = new THREE.Color(0xfffbe6);
-      const nightColor = new THREE.Color(0x23264a);
-      const dawnTint = new THREE.Color(0xffb366);
-      // t: 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset, 1=midnight
-      const t = Math.max(0, Math.min(1, sunY / (sunDistance * 0.8)));
-      // Compute time-of-day for tinting (worldTime: 0-23999)
-      const timeOfDay = (worldTime % 24000) / 24000;
-      // Dawn: 0.20-0.29, Dusk: 0.70-0.79 (about 1 hour each)
-      let sunColor = noonColor.clone();
-      if (timeOfDay >= 0.20 && timeOfDay < 0.29) {
-        // Dawn
-        const blend = (timeOfDay - 0.20) / 0.09;
-        sunColor.lerp(dawnTint, blend * 0.4); // max 40% tint
-      } else if (timeOfDay >= 0.71 && timeOfDay < 0.80) {
-        // Dusk
-        const blend = 1 - (timeOfDay - 0.71) / 0.09;
-        sunColor.lerp(dawnTint, blend * 0.4);
-      }
-      // Dim at night
-      sunColor.lerp(nightColor, 1 - t);
-      this.sunLight.color.copy(sunColor);
 
-      // Keep fog/background color driven by time of day even when fog distances are configurable.
-      const dayColor = new THREE.Color(0x87ceeb);
-      let fogColor = nightColor.clone().lerp(dayColor, t);
-      this.scene.background.copy(fogColor);
-      if (this.scene.fog) {
-        this.scene.fog.color.copy(fogColor);
-      }
-
-      this._updateCelestialBodies({
-        sunX,
-        sunY,
-        sunZ,
-        moonX,
-        moonY,
-        moonZ,
-        sunColor,
-      });
+    this.scene.background.copy(backgroundColor);
+    if (this.scene.fog) {
+      this.scene.fog.color.copy(backgroundColor);
     }
+
+    this._updateCelestialBodies({
+      sunX,
+      sunY,
+      sunZ,
+      moonX,
+      moonY,
+      moonZ,
+      sunColor: directThreeColor,
+    });
     // Optionally: add/update sun/moon meshes for visuals (not just lighting)
     // ...
   }
@@ -387,7 +428,7 @@ class RenderManager {
   _initDynamicLights() {
     if (!this.scene) return;
     // Ambient, sun, and moon light will be updated dynamically
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Brighter baseline for cartoon-like visibility
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
     this.worldGroup.add(this.ambientLight);
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
     this.sunLight.castShadow = true;
@@ -398,7 +439,7 @@ class RenderManager {
     this.sunLight.shadow.camera.top = 120;
     this.sunLight.shadow.camera.bottom = -120;
     this.worldGroup.add(this.sunLight);
-    this.moonLight = new THREE.DirectionalLight(0xccccff, 0.3);
+    this.moonLight = new THREE.DirectionalLight(0xffffff, 0.0);
     this.moonLight.castShadow = true;
     this.moonLight.shadow.mapSize.width = 1024;
     this.moonLight.shadow.mapSize.height = 1024;
@@ -540,11 +581,13 @@ class RenderManager {
     if (!this.scene) return;
     this.clearGround();
 
-    const groundGeometry = new THREE.PlaneGeometry(mapSize * 3, mapSize * 3);
+    const groundExtent = mapSize * 10;
+    const groundRepeat = 0.05;
+    const groundGeometry = new THREE.PlaneGeometry(groundExtent * 2, groundExtent * 2);
     const groundTexture = createGroundTexture();
     groundTexture.wrapS = THREE.RepeatWrapping;
     groundTexture.wrapT = THREE.RepeatWrapping;
-    groundTexture.repeat.set(20, 20);
+    groundTexture.repeat.set(groundExtent * 2 * groundRepeat, groundExtent * 2 * groundRepeat);
 
     const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundTexture,
@@ -558,7 +601,10 @@ class RenderManager {
     this.ground.receiveShadow = true;
     this.worldGroup.add(this.ground);
 
-    this.gridHelper = new THREE.GridHelper(mapSize * 3, mapSize, 0x000000, 0x555555);
+    const gridSpacing = 5;
+    const gridDivisions = Math.max(1, Math.round(mapSize / gridSpacing));
+    this.gridHelper = new THREE.GridHelper(mapSize, gridDivisions, 0x000000, 0x555555);
+    this.gridHelper.position.y = 0.02;
     this.worldGroup.add(this.gridHelper);
   }
 
@@ -866,51 +912,119 @@ class RenderManager {
     this.mountainMeshes = [];
   }
 
+  _createSharedImageTexture(path) {
+    const source = this._getSharedImage(path);
+    const texture = new THREE.Texture();
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    const applyImage = (image) => {
+      if (!image) return;
+      texture.image = image;
+      texture.needsUpdate = true;
+    };
+
+    if (source.loaded) {
+      applyImage(source.image);
+    } else if (!source.error) {
+      source.listeners.push((image) => {
+        applyImage(image);
+      });
+    }
+
+    return texture;
+  }
+
+  _createMountainStripGeometry(radius, height, startAngle, angleLength, segmentCount, textureWidth = 512) {
+    const positions = [];
+    const normals = [];
+    const uvs = [];
+    const indices = [];
+    const angleStep = angleLength / segmentCount;
+
+    for (let i = 0; i <= segmentCount; i += 1) {
+      const angle = startAngle + angleStep * i;
+      const x = radius * Math.cos(angle);
+      const z = radius * Math.sin(angle);
+      const nx = -Math.SQRT1_2 * Math.cos(angle);
+      const nz = -Math.SQRT1_2 * Math.sin(angle);
+      let u = i / segmentCount;
+      if (MOUNTAIN_TEXTURE_PATHS.length !== 1) {
+        u = (u * (textureWidth - 2) + 1) / textureWidth;
+      }
+
+      positions.push(x, 0, z);
+      positions.push(x, height, z);
+
+      normals.push(nx, Math.SQRT1_2, nz);
+      normals.push(nx, Math.SQRT1_2, nz);
+
+      uvs.push(u, 0.02);
+      uvs.push(u, 0.99);
+    }
+
+    for (let i = 0; i < segmentCount; i += 1) {
+      const base = i * 2;
+      indices.push(base, base + 1, base + 2);
+      indices.push(base + 1, base + 3, base + 2);
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setIndex(indices);
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    return geometry;
+  }
+
   createMountains(mapSize) {
     if (!this.scene) return;
     this.clearMountains();
 
-    const mountainDistance = 1.8 * mapSize;
-    const mountainCount = 8;
+    const mountainDistance = 2.25 * mapSize;
+    const mountainHeight = 0.9 * mapSize;
+    const numMountainTextures = MOUNTAIN_TEXTURE_PATHS.length;
+    const numFacesPerTexture = Math.ceil(BZFLAG_MOUNTAIN_FACE_COUNT / numMountainTextures);
+    const angleScale = Math.PI / (numMountainTextures * numFacesPerTexture);
+    const segmentAngle = angleScale * numFacesPerTexture;
 
-    for (let i = 0; i < mountainCount; i += 1) {
-      const angle = (i / mountainCount) * Math.PI * 2;
-      const x = Math.cos(angle) * mountainDistance;
-      const z = Math.sin(angle) * mountainDistance;
-
-      const width = 30 + Math.random() * 40;
-      const height = 40 + Math.random() * 60;
-
-      const geometry = new THREE.ConeGeometry(width / 2, height, 4);
-      const color = new THREE.Color().setHSL(0.3, 0.3, 0.3 + Math.random() * 0.2);
-      const material = new THREE.MeshStandardMaterial({
-        color,
-        flatShading: true,
-        roughness: 0.9,
-        metalness: 0.1,
+    for (let textureIndex = 0, n = Math.floor(numFacesPerTexture / 2);
+      textureIndex < numMountainTextures;
+      textureIndex += 1, n += numFacesPerTexture) {
+      const texture = this._createSharedImageTexture(MOUNTAIN_TEXTURE_PATHS[textureIndex]);
+      const material = new THREE.MeshLambertMaterial({
+        map: texture,
+        transparent: true,
+        alphaTest: 0.02,
+        side: THREE.DoubleSide,
       });
-      const mountain = new THREE.Mesh(geometry, material);
-      mountain.position.set(x, height / 2, z);
-      mountain.rotation.y = Math.random() * Math.PI * 2;
-      mountain.receiveShadow = true;
-      mountain.castShadow = true;
-      this.worldGroup.add(mountain);
 
-      const snowCapHeight = height * 0.3;
-      const snowGeometry = new THREE.ConeGeometry(width / 4, snowCapHeight, 4);
-      const snowMaterial = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        flatShading: true,
-        roughness: 0.7,
-        metalness: 0.0,
-      });
-      const snowCap = new THREE.Mesh(snowGeometry, snowMaterial);
-      snowCap.position.set(x, height - snowCapHeight / 2, z);
-      snowCap.rotation.y = mountain.rotation.y;
-      snowCap.receiveShadow = true;
-      this.worldGroup.add(snowCap);
+      const frontGeometry = this._createMountainStripGeometry(
+        mountainDistance,
+        mountainHeight,
+        angleScale * n,
+        segmentAngle,
+        numFacesPerTexture,
+      );
+      const frontMountain = new THREE.Mesh(frontGeometry, material);
+      frontMountain.receiveShadow = false;
+      frontMountain.castShadow = false;
+      this.worldGroup.add(frontMountain);
+      this.mountainMeshes.push(frontMountain);
 
-      this.mountainMeshes.push(mountain, snowCap);
+      const backGeometry = this._createMountainStripGeometry(
+        mountainDistance,
+        mountainHeight,
+        Math.PI + angleScale * n,
+        segmentAngle,
+        numFacesPerTexture,
+      );
+      const backMountain = new THREE.Mesh(backGeometry, material.clone());
+      backMountain.receiveShadow = false;
+      backMountain.castShadow = false;
+      this.worldGroup.add(backMountain);
+      this.mountainMeshes.push(backMountain);
     }
   }
 
@@ -1867,6 +1981,120 @@ class RenderManager {
     return texture;
   }
 
+  _paintTintedBZFlagBoltTexture(ctx, canvas, image, baseColor) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!image) {
+      ctx.fillStyle = '#ffff66';
+      ctx.beginPath();
+      ctx.arc(canvas.width / 2, canvas.height / 2, canvas.width * 0.16, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const tint = new THREE.Color(baseColor);
+    const tintR = tint.r * 255;
+    const tintG = tint.g * 255;
+    const tintB = tint.b * 255;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3];
+      if (alpha === 0) continue;
+
+      const luminance = (
+        (0.2126 * data[i]) +
+        (0.7152 * data[i + 1]) +
+        (0.0722 * data[i + 2])
+      ) / 255;
+      const shaded = 0.35 + (luminance * 0.95);
+      data[i] = Math.max(0, Math.min(255, tintR * shaded));
+      data[i + 1] = Math.max(0, Math.min(255, tintG * shaded));
+      data[i + 2] = Math.max(0, Math.min(255, tintB * shaded));
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  _createBoltTexture(baseColor) {
+    const source = this._getSharedImage('/textures/green_bolt.png');
+    const { texture, redraw } = this._createCanvasBackedImageTexture(64, 64, (ctx, canvas) => {
+      this._paintTintedBZFlagBoltTexture(
+        ctx,
+        canvas,
+        source.loaded ? source.image : null,
+        baseColor,
+      );
+    });
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    if (!source.loaded) {
+      source.listeners.push(redraw);
+    }
+
+    return texture;
+  }
+
+  _paintTintedBZFlagTailTexture(ctx, canvas, image, baseColor) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!image) {
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      gradient.addColorStop(1, '#ffff66');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, canvas.height * 0.3, canvas.width, canvas.height * 0.4);
+      return;
+    }
+
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    const tint = new THREE.Color(baseColor);
+    const tintR = tint.r * 255;
+    const tintG = tint.g * 255;
+    const tintB = tint.b * 255;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i + 3];
+      if (alpha === 0) continue;
+
+      const luminance = (
+        (0.2126 * data[i]) +
+        (0.7152 * data[i + 1]) +
+        (0.0722 * data[i + 2])
+      ) / 255;
+      const shaded = 0.3 + (luminance * 0.95);
+      data[i] = Math.max(0, Math.min(255, tintR * shaded));
+      data[i + 1] = Math.max(0, Math.min(255, tintG * shaded));
+      data[i + 2] = Math.max(0, Math.min(255, tintB * shaded));
+      data[i + 3] = Math.max(0, Math.min(255, alpha * 0.9));
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  _createShotTailTexture(baseColor) {
+    const source = this._getSharedImage('/textures/shot_tail.png');
+    const { texture, redraw } = this._createCanvasBackedImageTexture(128, 32, (ctx, canvas) => {
+      this._paintTintedBZFlagTailTexture(
+        ctx,
+        canvas,
+        source.loaded ? source.image : null,
+        baseColor,
+      );
+    });
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    if (!source.loaded) {
+      source.listeners.push(redraw);
+    }
+
+    return texture;
+  }
+
   _createTreadTexture() {
     const source = this._getSharedImage('/textures/treads.png');
     const { texture, redraw } = this._createCanvasBackedImageTexture(128, 128, (ctx, canvas) => {
@@ -2222,15 +2450,51 @@ class RenderManager {
 
   createProjectile(data) {
     if (!this.scene) return null;
-    const geometry = new THREE.SphereGeometry(0.3, 8, 8);
     const projectileColor = typeof data.color === 'number' ? data.color : 0xffff00;
-    const material = new THREE.MeshBasicMaterial({ color: projectileColor });
-    const projectile = new THREE.Mesh(geometry, material);
+    const projectileTexture = this._createBoltTexture(projectileColor);
+    const headMaterial = new THREE.SpriteMaterial({
+      map: projectileTexture,
+      color: 0xffffff,
+      transparent: true,
+      depthWrite: false,
+    });
+    const projectile = new THREE.Group();
     projectile.position.set(data.x, data.y, data.z);
+
+    const tailTexture = this._createShotTailTexture(projectileColor);
+    const tailMaterial = new THREE.SpriteMaterial({
+      map: tailTexture,
+      color: 0xffffff,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.82,
+    });
+
+    const tail = new THREE.Sprite(tailMaterial);
+    tail.center.set(0.86, 0.5);
+    tail.scale.set(4.8, 0.75, 1);
+
+    const head = new THREE.Sprite(headMaterial);
+    head.scale.set(1.35, 1.35, 1);
+
+    const dir = new THREE.Vector3(data.dirX || 0, 0, data.dirZ || -1);
+    if (dir.lengthSq() < 0.0001) {
+      dir.set(0, 0, -1);
+    } else {
+      dir.normalize();
+    }
+    tail.position.set(-dir.x * 1.6, 0, -dir.z * 1.6);
+
+    projectile.add(tail);
+    projectile.add(head);
     projectile.userData = {
       dirX: data.dirX,
       dirZ: data.dirZ,
       color: projectileColor,
+      projectileTexture,
+      shotTailTexture: tailTexture,
+      head,
+      tail,
     };
     // Only add a point light if dynamic lighting is enabled
     if (this.dynamicLightingEnabled) {
@@ -2271,8 +2535,10 @@ class RenderManager {
       this.projectileLights.delete(projectile);
     }
     this.worldGroup.remove(projectile);
-    if (projectile.geometry) projectile.geometry.dispose();
-    if (projectile.material) projectile.material.dispose();
+    if (projectile.userData?.head?.material?.map) projectile.userData.head.material.map.dispose();
+    if (projectile.userData?.head?.material) projectile.userData.head.material.dispose();
+    if (projectile.userData?.tail?.material?.map) projectile.userData.tail.material.map.dispose();
+    if (projectile.userData?.tail?.material) projectile.userData.tail.material.dispose();
   }
 
   createExplosion(position, tank) {

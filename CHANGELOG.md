@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-04-01
+
+### Added
+- Added BZFlag mountain, ground, bolt, and shot-tail textures to the client asset set.
+- Added BZFlag-style onscreen shot-slot indicators beside the target HUD.
+
+### Changed
+- Updated mountains and ground to use BZFlag-style placement, scale, and texture repetition for a closer classic battlefield look.
+- Retuned world lighting toward BZFlag day/night colors while keeping `bzo`'s world-time cycle.
+- Switched projectile rendering from simple glowing spheres to BZFlag-inspired tinted bolt sprites with matching colored tails.
+- Updated shot speed/range handling so server simulation, client rendering, radar visibility, and config defaults all use the same BZFlag-style values.
+- Switched firing behavior from cooldown-only shooting to BZFlag-style shot slots, with the example config defaulting to one slot and the runtime server config set to three.
+
+### Fixed
+- Fixed projectile desync that made local shots appear much slower than the server-tracked projectile speed.
+- Fixed shot-slot HUD behavior so each slot tracks its actual active projectile instead of multiple slots animating together.
+
 ## [1.0.10] - 2026-03-31
 
 ### Added

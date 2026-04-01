@@ -28,6 +28,18 @@ const altimeterRenderState = {
   colorKey: ''
 };
 
+const shotStatusRenderState = {
+  canvas: null,
+  controlBox: null,
+  width: 0,
+  height: 0,
+  dpr: 0,
+  topPx: null,
+  leftPx: null,
+  stateKey: '',
+  colorKey: ''
+};
+
 function getHudCanvasContext(cache, canvasId, controlBoxId = 'controlBox') {
   if (!cache.canvas) {
     cache.canvas = document.getElementById(canvasId);
@@ -484,5 +496,95 @@ export function updateAltimeter({ myTank, tickSpacing = 5 }) {
   ctx.moveTo(centerLineStart, centerY);
   ctx.lineTo(centerLineEnd, centerY);
   ctx.stroke();
+  ctx.restore();
+}
+
+export function updateShotStatus({ myPlayerId, projectiles, gameConfig, now = Date.now() }) {
+  const hud = getHudCanvasContext(shotStatusRenderState, 'shotStatus');
+  if (!hud || !myPlayerId || !gameConfig) return;
+  const { canvas: shotStatus, controlBox, ctx } = hud;
+  const maxSlots = Math.max(1, Math.floor(gameConfig.SHOT_MAX_ACTIVE || 1));
+  const indicatorWidth = Math.max(18, Math.round(window.innerWidth / 50));
+  const indicatorHeight = Math.max(8, Math.round(window.innerHeight / 80));
+  const indicatorSpace = Math.max(2, Math.round(indicatorHeight / 10) + 2);
+  const totalHeight = (indicatorHeight * maxSlots) + (indicatorSpace * Math.max(0, maxSlots - 1));
+  if (shotStatus.style.width !== `${indicatorWidth}px`) {
+    shotStatus.style.width = `${indicatorWidth}px`;
+  }
+  if (shotStatus.style.height !== `${totalHeight}px`) {
+    shotStatus.style.height = `${totalHeight}px`;
+  }
+  const statusRect = shotStatus.getBoundingClientRect();
+  const statusWidth = Math.round(statusRect.width);
+  const statusHeight = Math.round(statusRect.height);
+  if (!statusWidth || !statusHeight) return;
+  const dpr = window.devicePixelRatio || 1;
+  const resized = resizeHudCanvasIfNeeded(shotStatusRenderState, shotStatus, statusWidth, statusHeight, dpr);
+  const boxRect = controlBox?.getBoundingClientRect();
+  if (boxRect) {
+    const topPx = Math.round(boxRect.top + ((boxRect.height - totalHeight) / 2));
+    const leftPx = Math.round(boxRect.right + indicatorWidth + 16);
+    if (shotStatusRenderState.topPx !== topPx) {
+      shotStatus.style.top = `${topPx}px`;
+      shotStatusRenderState.topPx = topPx;
+    }
+    if (shotStatusRenderState.leftPx !== leftPx) {
+      shotStatus.style.left = `${leftPx}px`;
+      shotStatusRenderState.leftPx = leftPx;
+    }
+  }
+
+  const shotSpeed = Number.isFinite(gameConfig.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
+  const shotRange = Number.isFinite(gameConfig.SHOT_RANGE)
+    ? gameConfig.SHOT_RANGE
+    : (Number.isFinite(gameConfig.SHOT_DISTANCE) ? gameConfig.SHOT_DISTANCE : 350);
+  const slotLifetimeMs = shotSpeed > 0 ? (shotRange / shotSpeed) * 1000 : 0;
+  const slotProgress = new Array(maxSlots).fill(1);
+  if (projectiles && typeof projectiles.forEach === 'function') {
+    projectiles.forEach((projectile) => {
+      if (projectile?.userData?.playerId !== myPlayerId) return;
+      const slotIndex = Number.isInteger(projectile?.userData?.shotSlot) ? projectile.userData.shotSlot : -1;
+      if (slotIndex < 0 || slotIndex >= maxSlots) return;
+      const createdAt = Number.isFinite(projectile?.userData?.createdAt) ? projectile.userData.createdAt : now;
+      const ageMs = Math.max(0, now - createdAt);
+      const progress = slotLifetimeMs > 0 ? Math.max(0, Math.min(1, ageMs / slotLifetimeMs)) : 0;
+      slotProgress[slotIndex] = progress;
+    });
+  }
+
+  const stateKey = `${maxSlots}:${slotProgress.map((value) => value.toFixed(2)).join('|')}`;
+  const colorKey = 'bzflag-shot-slots';
+  if (!resized && shotStatusRenderState.stateKey === stateKey && shotStatusRenderState.colorKey === colorKey) {
+    return;
+  }
+  shotStatusRenderState.stateKey = stateKey;
+  shotStatusRenderState.colorKey = colorKey;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, statusWidth, statusHeight);
+
+  const slotHeight = indicatorHeight;
+  const slotWidth = indicatorWidth;
+  const readyColor = 'rgba(255, 255, 255, 0.5)';
+  const reloadBaseColor = 'rgba(255, 0, 0, 0.5)';
+  const reloadFillColor = 'rgba(0, 255, 0, 0.5)';
+
+  ctx.save();
+  for (let i = 0; i < maxSlots; i++) {
+    const x = 0;
+    const y = i * (slotHeight + indicatorSpace);
+    const progress = slotProgress[i];
+    const available = progress >= 1;
+
+    if (available) {
+      ctx.fillStyle = readyColor;
+      ctx.fillRect(x, y, slotWidth, slotHeight);
+    } else {
+      ctx.fillStyle = reloadBaseColor;
+      ctx.fillRect(x, y, slotWidth, slotHeight);
+      ctx.fillStyle = reloadFillColor;
+      ctx.fillRect(x, y, slotWidth * progress, slotHeight);
+    }
+  }
   ctx.restore();
 }

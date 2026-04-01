@@ -856,6 +856,14 @@ canvas {
   z-index: 50;
 }
 
+#shotStatus {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  pointer-events: none;
+  z-index: 50;
+}
+
 #controlBox {
   position: fixed;
   top: 50%;
@@ -898,6 +906,11 @@ canvas {
   width: 2px;
   height: 100%;
   transform: translateX(-50%);
+}
+
+@media (max-width: 900px), (max-width: 600px) {
+  #shotStatus {
+  }
 }
 
 #crosshair .center {
