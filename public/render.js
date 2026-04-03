@@ -2461,19 +2461,6 @@ class RenderManager {
     const projectile = new THREE.Group();
     projectile.position.set(data.x, data.y, data.z);
 
-    const tailTexture = this._createShotTailTexture(projectileColor);
-    const tailMaterial = new THREE.SpriteMaterial({
-      map: tailTexture,
-      color: 0xffffff,
-      transparent: true,
-      depthWrite: false,
-      opacity: 0.82,
-    });
-
-    const tail = new THREE.Sprite(tailMaterial);
-    tail.center.set(0.86, 0.5);
-    tail.scale.set(4.8, 0.75, 1);
-
     const head = new THREE.Sprite(headMaterial);
     head.scale.set(1.35, 1.35, 1);
 
@@ -2483,18 +2470,43 @@ class RenderManager {
     } else {
       dir.normalize();
     }
-    tail.position.set(-dir.x * 1.6, 0, -dir.z * 1.6);
+    const tailSegmentCount = 6;
+    const tailTexture = this._createShotTailTexture(projectileColor);
+    const tailSegments = [];
+    let uvCell = Math.floor(Math.random() * 16);
+    for (let i = 0; i < tailSegmentCount; i += 1) {
+      uvCell = (uvCell + 1) % 16;
+      const u = (uvCell % 4) * 0.25;
+      const v = Math.floor(uvCell / 4) * 0.25;
+      const segmentTexture = tailTexture.clone();
+      segmentTexture.repeat.set(0.25, 0.25);
+      segmentTexture.offset.set(u, v);
+      segmentTexture.needsUpdate = true;
 
-    projectile.add(tail);
+      const segmentMaterial = new THREE.SpriteMaterial({
+        map: segmentTexture,
+        color: 0xffffff,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.74 - (i * 0.1),
+        blending: THREE.AdditiveBlending,
+      });
+      const segment = new THREE.Sprite(segmentMaterial);
+      const scale = 0.78 - (i * 0.08);
+      segment.scale.set(scale, scale, 1);
+      const distance = 0.34 + (i * 0.28);
+      segment.position.set(-dir.x * distance, 0, -dir.z * distance);
+      projectile.add(segment);
+      tailSegments.push(segment);
+    }
     projectile.add(head);
     projectile.userData = {
       dirX: data.dirX,
       dirZ: data.dirZ,
       color: projectileColor,
       projectileTexture,
-      shotTailTexture: tailTexture,
       head,
-      tail,
+      tailSegments,
     };
     // Only add a point light if dynamic lighting is enabled
     if (this.dynamicLightingEnabled) {
@@ -2537,8 +2549,12 @@ class RenderManager {
     this.worldGroup.remove(projectile);
     if (projectile.userData?.head?.material?.map) projectile.userData.head.material.map.dispose();
     if (projectile.userData?.head?.material) projectile.userData.head.material.dispose();
-    if (projectile.userData?.tail?.material?.map) projectile.userData.tail.material.map.dispose();
-    if (projectile.userData?.tail?.material) projectile.userData.tail.material.dispose();
+    if (Array.isArray(projectile.userData?.tailSegments)) {
+      for (const segment of projectile.userData.tailSegments) {
+        if (segment?.material?.map) segment.material.map.dispose();
+        if (segment?.material) segment.material.dispose();
+      }
+    }
   }
 
   createExplosion(position, tank) {

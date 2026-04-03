@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-04-01
+
+### Changed
+- Updated projectile/shot behavior to better match classic BZFlag feel and timing.
+- Refined shot handling so client and server behavior stays aligned with the BZFlag-style firing model.
+
 ## [1.0.11] - 2026-04-01
 
 ### Added
