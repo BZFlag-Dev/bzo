@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.0.
 
 ## [Unreleased]
+
+## [1.0.14] - 2026-04-08
+
+### Fixed
+- Synchronized release metadata so `package-lock.json` now matches `package.json` versioning for the published package (`1.0.14`).
+- Cut a follow-up patch release to carry the metadata correction without rewriting the previously published `v1.0.13` release.
+
 ## [1.0.13] - 2026-04-07
 
 ### Added
