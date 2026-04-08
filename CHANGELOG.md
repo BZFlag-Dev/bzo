@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.0.
 
 ## [Unreleased]
+## [1.0.13] - 2026-04-07
+
+### Added
+- Added projected planar (stencil-style) shadows for tanks: each visible tank casts a soft ground shadow computed by projecting its geometry onto the ground plane along the sun direction.
+
+### Changed
+- Switched from real-time Three.js shadow mapping (PCFSoftShadowMap) to projected planar shadows for better performance; shadow map generation on lights is now disabled.
+- Updated npm dependencies to address audit findings.
 
 ## [1.0.12] - 2026-04-01
 
