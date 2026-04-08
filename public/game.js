@@ -71,6 +71,15 @@ function updateFps() {
     receivedBytes = 0;
     lastReceivedBytesUpdate = now;
   }
+  // --- Projected Shadows Update ---
+  // Gather all tank meshes (visible tanks)
+  const tankMeshes = [];
+  tanks.forEach((tank) => {
+    if (tank && tank.visible !== false && tank.geometry) {
+      tankMeshes.push(tank);
+    }
+  });
+  renderManager.updateProjectedShadows(tankMeshes);
 }
 
 // Game state

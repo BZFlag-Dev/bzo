@@ -386,8 +386,9 @@ class RenderManager {
 
     this.renderer.xr.enabled = true;
     this.renderer.setSize(viewport.width, viewport.height);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Disable real-time shadow mapping for performance
+    this.renderer.shadowMap.enabled = false;
+    //this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.labelRenderer = new CSS2DRenderer();
@@ -431,23 +432,108 @@ class RenderManager {
     this.ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
     this.worldGroup.add(this.ambientLight);
     this.sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.width = 2048;
-    this.sunLight.shadow.mapSize.height = 2048;
-    this.sunLight.shadow.camera.left = -120;
-    this.sunLight.shadow.camera.right = 120;
-    this.sunLight.shadow.camera.top = 120;
-    this.sunLight.shadow.camera.bottom = -120;
+    this.sunLight.castShadow = false;
     this.worldGroup.add(this.sunLight);
     this.moonLight = new THREE.DirectionalLight(0xffffff, 0.0);
-    this.moonLight.castShadow = true;
-    this.moonLight.shadow.mapSize.width = 1024;
-    this.moonLight.shadow.mapSize.height = 1024;
-    this.moonLight.shadow.camera.left = -120;
-    this.moonLight.shadow.camera.right = 120;
-    this.moonLight.shadow.camera.top = 120;
-    this.moonLight.shadow.camera.bottom = -120;
+    this.moonLight.castShadow = false;
     this.worldGroup.add(this.moonLight);
+  }
+
+  // --- Projected Planar Shadows (Stencil-style) ---
+  // For each mesh, create a shadow mesh projected onto the ground
+  _createProjectedShadowMesh(sourceMesh, lightDirection) {
+    // Project geometry onto ground (y=0) in the direction of -lightDirection, using world coordinates
+    if (!sourceMesh.geometry) return null;
+    const shadowGeo = sourceMesh.geometry.clone();
+    const posAttr = shadowGeo.getAttribute('position');
+    const dir = lightDirection.clone().normalize();
+    // Use the mesh's world matrix to get world position for each vertex
+    sourceMesh.updateMatrixWorld();
+    const worldMatrix = sourceMesh.matrixWorld;
+    const temp = new THREE.Vector3();
+    for (let i = 0; i < posAttr.count; ++i) {
+      temp.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+      temp.applyMatrix4(worldMatrix);
+      // Project to ground (y=0) along -dir
+      const t = temp.y / (dir.y !== 0 ? dir.y : 1e-6);
+      temp.x = temp.x - t * dir.x;
+      temp.y = 0.01; // Slightly above ground to avoid z-fighting
+      temp.z = temp.z - t * dir.z;
+      // Set back to geometry (in world space)
+      posAttr.setXYZ(i, temp.x, temp.y, temp.z);
+    }
+    shadowGeo.computeVertexNormals();
+    const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
+    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+    // Place shadow mesh at origin, since vertices are in world space
+    shadowMesh.position.set(0, 0, 0);
+    shadowMesh.rotation.set(0, 0, 0);
+    shadowMesh.scale.set(1, 1, 1);
+    shadowMesh.matrixAutoUpdate = false;
+    shadowMesh.renderOrder = 1; // Draw after ground
+    shadowMesh.frustumCulled = false; // Always render shadow
+    return shadowMesh;
+  }
+
+  // Call this after creating each obstacle/tank mesh
+  _addProjectedShadowForMesh(mesh, lightDirection) {
+    if (!mesh || mesh.visible === false) {
+      // Remove shadow if mesh is hidden or gone
+      if (mesh && mesh.userData.shadowMesh) {
+        this.worldGroup.remove(mesh.userData.shadowMesh);
+        mesh.userData.shadowMesh.geometry.dispose();
+        mesh.userData.shadowMesh.material.dispose();
+        mesh.userData.shadowMesh = null;
+      }
+      return;
+    }
+    // Remove any previous shadow
+    if (mesh.userData.shadowMesh) {
+      this.worldGroup.remove(mesh.userData.shadowMesh);
+      mesh.userData.shadowMesh.geometry.dispose();
+      mesh.userData.shadowMesh.material.dispose();
+      mesh.userData.shadowMesh = null;
+    }
+    // Always set transform to match mesh, even if at origin
+    if (mesh.position && mesh.rotation && mesh.scale) {
+      const shadowMesh = this._createProjectedShadowMesh(mesh, lightDirection);
+      if (shadowMesh) {
+        // shadowMesh is already in world coordinates, so just add it
+        this.worldGroup.add(shadowMesh);
+        mesh.userData.shadowMesh = shadowMesh;
+      }
+    }
+  }
+
+  // Update all projected shadows (call each frame or when light/objects move)
+  updateProjectedShadows(tankMeshes = []) {
+    // Use sun or moon depending on which is visible
+    const light = (this.sunLight && this.sunLight.intensity > 0.5) ? this.sunLight : this.moonLight;
+    const dir = light ? light.position.clone().normalize() : new THREE.Vector3(1, -2, 1).normalize();
+
+    // --- Obstacles: only update if light direction changed ---
+    if (!this._lastObstacleShadowDir || !dir.equals(this._lastObstacleShadowDir)) {
+      for (const mesh of this.obstacleMeshes) {
+        this._addProjectedShadowForMesh(mesh, dir);
+      }
+      // Store a copy of the direction
+      this._lastObstacleShadowDir = dir.clone();
+    }
+
+    // --- Tanks: update every frame ---
+    for (const tank of tankMeshes) {
+      if (!tank || tank.visible === false) continue;
+      // If tank is a group, project for all visible mesh children
+      if (tank.isGroup && tank.children && tank.children.length > 0) {
+        tank.traverse((child) => {
+          if (child.isMesh && child.visible !== false && child.geometry) {
+            this._addProjectedShadowForMesh(child, dir);
+          }
+        });
+      } else if (tank.isMesh && tank.geometry) {
+        this._addProjectedShadowForMesh(tank, dir);
+      }
+    }
   }
 
   updateSunLighting() {
@@ -746,6 +832,13 @@ class RenderManager {
   clearObstacles() {
     if (!this.scene) return;
     this.obstacleMeshes.forEach((mesh) => {
+      // Remove and dispose shadow mesh if present
+      if (mesh.userData && mesh.userData.shadowMesh) {
+        this.worldGroup.remove(mesh.userData.shadowMesh);
+        mesh.userData.shadowMesh.geometry?.dispose();
+        mesh.userData.shadowMesh.material?.dispose();
+        mesh.userData.shadowMesh = null;
+      }
       this.worldGroup.remove(mesh);
       if (mesh.geometry) mesh.geometry.dispose();
       if (Array.isArray(mesh.material)) {
@@ -813,8 +906,8 @@ class RenderManager {
         );
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
         mesh.rotation.y = obs.rotation || 0;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
         mesh.name = obs.name || `Pyramid ${i + 1}`;
         if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         this.worldGroup.add(mesh);
@@ -828,8 +921,8 @@ class RenderManager {
         );
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
         mesh.rotation.y = obs.rotation || 0;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
         mesh.name = obs.name || `Box ${i + 1}`;
         if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         this.worldGroup.add(mesh);
