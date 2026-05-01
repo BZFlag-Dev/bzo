@@ -439,33 +439,51 @@ class RenderManager {
     this.worldGroup.add(this.moonLight);
   }
 
+  _getWorldGroupLocalMatrix(object) {
+    if (!this.worldGroup || !object) return null;
+
+    this.worldGroup.updateMatrixWorld(true);
+    object.updateMatrixWorld(true);
+
+    return new THREE.Matrix4()
+      .copy(this.worldGroup.matrixWorld)
+      .invert()
+      .multiply(object.matrixWorld);
+  }
+
   // --- Projected Planar Shadows (Stencil-style) ---
-  // For each mesh, create a shadow mesh projected onto the ground
+  // Build each shadow in worldGroup-local space so XR can move the whole world
+  // without applying the camera transform to the shadow twice.
   _createProjectedShadowMesh(sourceMesh, lightDirection) {
-    // Project geometry onto ground (y=0) in the direction of -lightDirection, using world coordinates
     if (!sourceMesh.geometry) return null;
+
+    const localMatrix = this._getWorldGroupLocalMatrix(sourceMesh);
+    if (!localMatrix) return null;
+
     const shadowGeo = sourceMesh.geometry.clone();
     const posAttr = shadowGeo.getAttribute('position');
     const dir = lightDirection.clone().normalize();
-    // Use the mesh's world matrix to get world position for each vertex
-    sourceMesh.updateMatrixWorld();
-    const worldMatrix = sourceMesh.matrixWorld;
     const temp = new THREE.Vector3();
+
     for (let i = 0; i < posAttr.count; ++i) {
       temp.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-      temp.applyMatrix4(worldMatrix);
+      temp.applyMatrix4(localMatrix);
       // Project to ground (y=0) along -dir
       const t = temp.y / (dir.y !== 0 ? dir.y : 1e-6);
       temp.x = temp.x - t * dir.x;
       temp.y = 0.01; // Slightly above ground to avoid z-fighting
       temp.z = temp.z - t * dir.z;
-      // Set back to geometry (in world space)
+      // Set back to geometry in worldGroup-local space
       posAttr.setXYZ(i, temp.x, temp.y, temp.z);
     }
+
+    posAttr.needsUpdate = true;
     shadowGeo.computeVertexNormals();
+
     const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
     const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-    // Place shadow mesh at origin, since vertices are in world space
+
+    // Place shadow mesh at origin because vertices are already in worldGroup-local space.
     shadowMesh.position.set(0, 0, 0);
     shadowMesh.rotation.set(0, 0, 0);
     shadowMesh.scale.set(1, 1, 1);
@@ -498,7 +516,7 @@ class RenderManager {
     if (mesh.position && mesh.rotation && mesh.scale) {
       const shadowMesh = this._createProjectedShadowMesh(mesh, lightDirection);
       if (shadowMesh) {
-        // shadowMesh is already in world coordinates, so just add it
+        // shadowMesh geometry is already in worldGroup-local coordinates.
         this.worldGroup.add(shadowMesh);
         mesh.userData.shadowMesh = shadowMesh;
       }
