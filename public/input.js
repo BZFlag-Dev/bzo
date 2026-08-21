@@ -10,8 +10,14 @@
 
 import { getXRControllerInput, xrState } from './webxr.js';
 
-// Virtual input state (for mobile/touch)
+// Shared virtual input state exposed to the game loop.
 export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
+
+// Keep each input source separate so one source cannot leave stale values in
+// the shared state when another source starts or stops reporting input.
+const touchInput = { forward: 0, turn: 0, fire: false, jump: false };
+const gamepadInput = { forward: 0, turn: 0, fire: false, jump: false };
+const xrInputState = { forward: 0, turn: 0, fire: false, jump: false };
 
 // Keyboard input state
 export const keys = {};
@@ -22,9 +28,71 @@ let gamepadIndex = -1;
 let gamepadInfo = null;
 let lastGamepadButtonState = { fire: false, jump: false };
 let gamepadFrameCounter = 0;
+let gamepadListenersAttached = false;
+let inputHandlersAttached = false;
+let lifecycleListenersAttached = false;
+let resetTouchState = () => {};
+
+function resetInputValues(inputState) {
+  inputState.forward = 0;
+  inputState.turn = 0;
+  inputState.fire = false;
+  inputState.jump = false;
+}
+
+function syncVirtualInput() {
+  const source = xrState.enabled
+    ? xrInputState
+    : gamepadConnected
+      ? gamepadInput
+      : touchInput;
+  virtualInput.forward = source.forward;
+  virtualInput.turn = source.turn;
+  virtualInput.fire = source.fire;
+  virtualInput.jump = source.jump;
+}
+
+function resetGamepadInput() {
+  resetInputValues(gamepadInput);
+  lastGamepadButtonState = { fire: false, jump: false };
+  gamepadFrameCounter = 0;
+  syncVirtualInput();
+}
+
+function resetXRInput() {
+  resetInputValues(xrInputState);
+  syncVirtualInput();
+}
+
+function clearKeyboardInput() {
+  Object.keys(keys).forEach((code) => {
+    keys[code] = false;
+  });
+}
+
+function clearTransientInput() {
+  clearKeyboardInput();
+  resetInputValues(touchInput);
+  resetGamepadInput();
+  resetXRInput();
+  resetTouchState();
+  syncVirtualInput();
+}
+
+function setupInputLifecycleListeners() {
+  if (lifecycleListenersAttached) return;
+
+  window.addEventListener('blur', clearTransientInput);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearTransientInput();
+  });
+  lifecycleListenersAttached = true;
+}
 
 // Gamepad detection and event listeners
 function setupGamepadListeners() {
+  if (gamepadListenersAttached) return;
+
   // Listen for gamepad connections
   window.addEventListener('gamepadconnected', (e) => {
     console.log('[Gamepad] Connected:', e.gamepad.id);
@@ -37,6 +105,7 @@ function setupGamepadListeners() {
       axes: e.gamepad.axes.length,
       mapping: e.gamepad.mapping,
     };
+    resetGamepadInput();
     console.log('[Gamepad] Info:', gamepadInfo);
   });
 
@@ -46,16 +115,12 @@ function setupGamepadListeners() {
       gamepadConnected = false;
       gamepadIndex = -1;
       gamepadInfo = null;
-      // Reset virtual input
-      virtualInput.forward = 0;
-      virtualInput.turn = 0;
-      virtualInput.fire = false;
-      virtualInput.jump = false;
+      resetGamepadInput();
     }
   });
 
   // Initial check for already-connected gamepads
-  const gamepads = navigator.getGamepads();
+  const gamepads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
   for (let i = 0; i < gamepads.length; i++) {
     if (gamepads[i]) {
       console.log('[Gamepad] Found at startup:', gamepads[i].id);
@@ -72,16 +137,29 @@ function setupGamepadListeners() {
       break;
     }
   }
+
+  gamepadListenersAttached = true;
 }
 
 // Update virtualInput from gamepad state (called each frame)
 export function updateVirtualInputFromGamepad() {
   if (!gamepadConnected || gamepadIndex < 0) return;
 
+  if (typeof navigator.getGamepads !== 'function') {
+    gamepadConnected = false;
+    gamepadIndex = -1;
+    gamepadInfo = null;
+    resetGamepadInput();
+    return;
+  }
+
   const gamepads = navigator.getGamepads();
   const gamepad = gamepads[gamepadIndex];
   if (!gamepad) {
     gamepadConnected = false;
+    gamepadIndex = -1;
+    gamepadInfo = null;
+    resetGamepadInput();
     return;
   }
 
@@ -91,6 +169,7 @@ export function updateVirtualInputFromGamepad() {
   // Apply deadzone to prevent drift
   const deadzone = 0.2;
   function applyDeadzone(value) {
+    if (!Number.isFinite(value)) return 0;
     if (Math.abs(value) < deadzone) {
       return 0;
     }
@@ -114,29 +193,32 @@ export function updateVirtualInputFromGamepad() {
     const axisY = axes[1];
     const axisX = axes[0];
     
-    virtualInput.forward = -applyDeadzone(axisY);
-    virtualInput.turn = -applyDeadzone(axisX);
+    gamepadInput.forward = -applyDeadzone(axisY);
+    gamepadInput.turn = -applyDeadzone(axisX);
   } else {
     // No axes available, reset to 0
-    virtualInput.forward = 0;
-    virtualInput.turn = 0;
+    gamepadInput.forward = 0;
+    gamepadInput.turn = 0;
   }
 
   // Fire button: A button (0) or right trigger (7)
-  const firePressed = 
+  const firePressed = Boolean(
     (buttons[0] && buttons[0].pressed) ||
-    (buttons[7] && buttons[7].pressed);
-  virtualInput.fire = firePressed;
+    (buttons[7] && buttons[7].pressed)
+  );
+  gamepadInput.fire = firePressed;
 
   // Jump button: B button (1) or left trigger (6)
-  const jumpPressed = 
+  const jumpPressed = Boolean(
     (buttons[1] && buttons[1].pressed) ||
-    (buttons[6] && buttons[6].pressed);
-  virtualInput.jump = jumpPressed;
+    (buttons[6] && buttons[6].pressed)
+  );
+  gamepadInput.jump = jumpPressed;
 
   // Track button state changes
   lastGamepadButtonState.fire = firePressed;
   lastGamepadButtonState.jump = jumpPressed;
+  syncVirtualInput();
 
   // Debug logging every 120 frames (every 2 seconds at 60fps)
   gamepadFrameCounter++;
@@ -156,7 +238,7 @@ export function updateVirtualInputFromGamepad() {
     }
     if (activeAxes.length > 0 || activeButtons.length > 0) {
       console.log('[Gamepad] Active:', activeAxes.join(', '), activeButtons.join(', '));
-      console.log('[Gamepad] virtualInput:', `forward=${virtualInput.forward.toFixed(2)}, turn=${virtualInput.turn.toFixed(2)}, fire=${virtualInput.fire}, jump=${virtualInput.jump}`);
+      console.log('[Gamepad] virtualInput:', `forward=${gamepadInput.forward.toFixed(2)}, turn=${gamepadInput.turn.toFixed(2)}, fire=${gamepadInput.fire}, jump=${gamepadInput.jump}`);
     }
   }
 }
@@ -173,8 +255,12 @@ export function getGamepadInfo() {
 
 // Setup all input event listeners
 export function setupInputHandlers() {
+  if (inputHandlersAttached) return;
+  inputHandlersAttached = true;
+
   // Setup gamepad detection
   setupGamepadListeners();
+  setupInputLifecycleListeners();
 
   // Touch/virtual joystick
   const joystick = document.getElementById('joystick');
@@ -184,11 +270,14 @@ export function setupInputHandlers() {
   let joystickActive = false;
   let joystickTouchId = null;
   let joystickCenter = { x: 0, y: 0 };
+  let setFirePressed = () => {};
+  let setJumpPressed = () => {};
   function setJoystick(x, y) {
     const mag = Math.sqrt(x * x + y * y);
     if (mag > 1) { x /= mag; y /= mag; }
-    virtualInput.forward = -y;
-    virtualInput.turn = -x;
+    touchInput.forward = -y;
+    touchInput.turn = -x;
+    syncVirtualInput();
     if (knob) knob.style.transform = `translate(${x * 35}px, ${y * 35}px)`;
   }
   function handleJoystickStart(e) {
@@ -260,37 +349,48 @@ export function setupInputHandlers() {
       e.preventDefault();
     }
   }
+  resetTouchState = () => {
+    joystickActive = false;
+    joystickTouchId = null;
+    setJoystick(0, 0);
+    touchInput.fire = false;
+    touchInput.jump = false;
+    setFirePressed(false);
+    setJumpPressed(false);
+    syncVirtualInput();
+  };
   if (joystick) {
     joystick.addEventListener('touchstart', handleJoystickStart);
     joystick.addEventListener('touchmove', handleJoystickMove);
     joystick.addEventListener('touchend', handleJoystickEnd);
+    joystick.addEventListener('touchcancel', handleJoystickEnd);
     joystick.addEventListener('mousedown', handleJoystickStart);
     window.addEventListener('mousemove', handleJoystickMove);
     window.addEventListener('mouseup', handleJoystickEnd);
   }
   if (fireBtn) {
-    function setFirePressed(pressed) {
+    setFirePressed = (pressed) => {
       if (pressed) fireBtn.classList.add('pressed');
       else fireBtn.classList.remove('pressed');
-    }
-    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
-    fireBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
-    fireBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.fire = true; setFirePressed(true); });
-    fireBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.fire = false; setFirePressed(false); });
-    fireBtn.addEventListener('mouseleave', () => { setFirePressed(false); });
-    fireBtn.addEventListener('touchcancel', () => { setFirePressed(false); });
+    };
+    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); touchInput.fire = true; syncVirtualInput(); setFirePressed(true); });
+    fireBtn.addEventListener('touchend', e => { e.preventDefault(); touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
+    fireBtn.addEventListener('mousedown', e => { e.preventDefault(); touchInput.fire = true; syncVirtualInput(); setFirePressed(true); });
+    fireBtn.addEventListener('mouseup', e => { e.preventDefault(); touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
+    fireBtn.addEventListener('mouseleave', () => { touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
+    fireBtn.addEventListener('touchcancel', () => { touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
   }
   if (jumpBtn) {
-    function setJumpPressed(pressed) {
+    setJumpPressed = (pressed) => {
       if (pressed) jumpBtn.classList.add('pressed');
       else jumpBtn.classList.remove('pressed');
-    }
-    jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
-    jumpBtn.addEventListener('touchend', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
-    jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); virtualInput.jump = true; setJumpPressed(true); });
-    jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); virtualInput.jump = false; setJumpPressed(false); });
-    jumpBtn.addEventListener('mouseleave', () => { setJumpPressed(false); });
-    jumpBtn.addEventListener('touchcancel', () => { setJumpPressed(false); });
+    };
+    jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); touchInput.jump = true; syncVirtualInput(); setJumpPressed(true); });
+    jumpBtn.addEventListener('touchend', e => { e.preventDefault(); touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
+    jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); touchInput.jump = true; syncVirtualInput(); setJumpPressed(true); });
+    jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
+    jumpBtn.addEventListener('mouseleave', () => { touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
+    jumpBtn.addEventListener('touchcancel', () => { touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
   }
 
   // Keyboard
@@ -320,27 +420,33 @@ export function setupInputHandlers() {
 let vxrFrameCounter = 0;
 
 export function updateVirtualInputFromXR() {
-  if (!xrState.enabled) return;
+  if (!xrState.enabled) {
+    resetXRInput();
+    return;
+  }
 
-  const xrInput = getXRControllerInput();
+  const controllerInput = getXRControllerInput();
+  const leftThumbstick = controllerInput.leftThumbstick || { x: 0, y: 0 };
+  const rightThumbstick = controllerInput.rightThumbstick || { x: 0, y: 0 };
 
-  // Right controller thumbstick: forward/backward (Y-axis) and left/right turn (X-axis)
-  const newForward = -xrInput.rightThumbstick.y;
-  virtualInput.forward = newForward;
+  // Use the left controller for movement and the right controller for turning.
+  const newForward = -leftThumbstick.y;
+  xrInputState.forward = newForward;
 
-  // Right controller thumbstick left/right: tank rotation
-  virtualInput.turn = -xrInput.rightThumbstick.x;
+  // Right controller thumbstick left/right: tank rotation.
+  xrInputState.turn = -rightThumbstick.x;
 
   // Right trigger OR A button: fire
-  virtualInput.fire = xrInput.rightTrigger > 0.5 || xrInput.buttonA;
+  xrInputState.fire = controllerInput.rightTrigger > 0.5 || controllerInput.buttonA;
 
   // B button OR side grip button: jump
-  virtualInput.jump = xrInput.buttonB || xrInput.buttonGrip;
+  xrInputState.jump = controllerInput.buttonB || controllerInput.buttonGrip;
+  syncVirtualInput();
 
   // Debug logging every 60 frames
   vxrFrameCounter++;
   if (vxrFrameCounter % 60 === 0) {
-    //debugLog(`virtualInput: forward=${newForward.toFixed(2)}, turn=${virtualInput.turn.toFixed(2)}, fire=${virtualInput.fire}, jump=${virtualInput.jump}`);
+    //debugLog(`virtualInput: forward=${newForward.toFixed(2)}, turn=${xrInputState.turn.toFixed(2)}, fire=${xrInputState.fire}, jump=${xrInputState.jump}`);
   }
 }
 
