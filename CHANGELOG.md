@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.15] - 2026-08-23
+
+### Added
+- Added a more stable WebXR foundation with cleaner session lifecycle handling and controller/input state isolation.
+
+### Changed
+- Updated the client to Three.js 0.185.1 and synced the browser import map and dependency versions to match the updated renderer.
+- Improved renderer scheduling so the app handles normal playback and XR sessions more predictably.
+
+### Fixed
+- Fixed wall impacts while jumping so tanks keep the vertical component of their jump and resume a valid horizontal trajectory after contact instead of sticking to the obstacle.
+- Stabilized WebXR startup, visibility changes, controller changes, and session teardown paths to reduce stale input and renderer issues.
+
 ## [1.0.14] - 2026-04-08
 
 ### Fixed
