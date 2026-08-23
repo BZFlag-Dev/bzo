@@ -739,7 +739,6 @@ const BOX_SLIDE_EPSILON = 0.01;
 const BOX_SLIDE_AXIS_EPSILON = 1e-5;
 const BOX_SLIDE_TIE_EPSILON = 1e-4;
 const BOX_SLIDE_MAX_CHAIN_DEPTH = 1;
-const BOX_SLIDE_MIN_RATIO = 0.15;
 const CLIMBABLE_SURFACE_NORMAL_Y = 0.7;
 const MAX_BUMP_HEIGHT = 0.165;
 const ONTOP_TOLERANCE = 0.1;
@@ -3186,6 +3185,8 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
       x: surfaceSlideResult.x,
       y: surfaceSlideResult.y,
       z: surfaceSlideResult.z,
+      trajectoryDeltaX: surfaceSlideResult.slideX,
+      trajectoryDeltaZ: surfaceSlideResult.slideZ,
       moved: true,
       altered: true,
       landedOn,
@@ -3225,7 +3226,6 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
   const visualHalfD = obs.d / 2;
   const nextVisited = new Set(visitedObstacles);
   nextVisited.add(obs);
-  const intendedMagnitude = Math.hypot(deltaX, deltaZ);
   const getCompositeCenter = (targetObs) => {
     let sumX = 0;
     let sumZ = 0;
@@ -3406,12 +3406,8 @@ function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, 
     }
 
     const slideWorld = localToWorldVector(slideLocal.x, slideLocal.z);
-    const slideMagnitude = Math.hypot(slideWorld.x, slideWorld.z);
-    // Ignore "slides" that are just tiny face-hugging creep; they tend to
-    // trap the player visually and create drift against server prediction.
-    if (intendedMagnitude > BOX_SLIDE_AXIS_EPSILON && slideMagnitude < intendedMagnitude * BOX_SLIDE_MIN_RATIO) {
-      return null;
-    }
+    // A zero tangential component is a valid stop. During a jump this lets
+    // the vertical component continue after a perpendicular wall impact.
     const normalWorld = localToWorldVector(normalLocal.x, normalLocal.z);
     const outwardVectorX = finalWorld.x - compositeCenter.x;
     const outwardVectorZ = finalWorld.z - compositeCenter.z;
@@ -4170,17 +4166,25 @@ function handleMotion(deltaTime) {
     myTank.rotation.y = playerRotation;
   }
 
-  // Calculate actual movement direction for slide detection (BEFORE using it in forwardSpeed calc)
+  const actualDeltaX = playerX - oldX;
+  const actualDeltaZ = playerZ - oldZ;
+  const trajectoryDeltaX = Number.isFinite(result.trajectoryDeltaX)
+    ? result.trajectoryDeltaX
+    : actualDeltaX;
+  const trajectoryDeltaZ = Number.isFinite(result.trajectoryDeltaZ)
+    ? result.trajectoryDeltaZ
+    : actualDeltaZ;
+
+  // Calculate actual movement direction for slide detection before using it
+  // in the forward speed calculation.
   let slideDirection = null;
   if (result.moved && result.altered) {
     // Slide occurred - calculate actual movement direction
-    const actualDeltaX = playerX - oldX;
-    const actualDeltaZ = playerZ - oldZ;
-    const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
+    const actualDistance = Math.hypot(trajectoryDeltaX, trajectoryDeltaZ);
 
     if (actualDistance > 0.001) {
       // Calculate direction from movement vector
-      const actualDirection = Math.atan2(-actualDeltaX, -actualDeltaZ);
+      const actualDirection = Math.atan2(-trajectoryDeltaX, -trajectoryDeltaZ);
 
       // Determine expected direction (r on ground, jumpDirection in air)
       const expectedDirection = isInAir && jumpDirection !== null ? jumpDirection : playerRotation;
@@ -4197,8 +4201,8 @@ function handleMotion(deltaTime) {
 
   if ((isInAir || jumpStarted || fallStarted) && deltaTime > 0) {
     if (result.moved && result.altered) {
-      const newAirVelocityX = (playerX - oldX) / deltaTime;
-      const newAirVelocityZ = (playerZ - oldZ) / deltaTime;
+      const newAirVelocityX = trajectoryDeltaX / deltaTime;
+      const newAirVelocityZ = trajectoryDeltaZ / deltaTime;
       const airVelocityDelta = Math.hypot(newAirVelocityX - priorAirVelocityX, newAirVelocityZ - priorAirVelocityZ);
       setAirVelocity(myTank, newAirVelocityX, newAirVelocityZ);
       if (airVelocityDelta > AIR_VELOCITY_THRESHOLD) {
