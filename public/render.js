@@ -575,6 +575,15 @@ class RenderManager {
     return this.renderer;
   }
 
+  setAnimationLoop(callback) {
+    if (!this.renderer || typeof this.renderer.setAnimationLoop !== 'function') {
+      return false;
+    }
+
+    this.renderer.setAnimationLoop(callback);
+    return true;
+  }
+
   getLabelRenderer() {
     return this.labelRenderer;
   }

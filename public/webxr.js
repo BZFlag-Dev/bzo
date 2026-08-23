@@ -12,12 +12,16 @@ let xrSupported = false;
 let xrEnabled = false;
 let xrMode = null; // 'immersive-vr' or 'immersive-ar'
 let xrInputSources = new Map(); // Map of controller input source ID -> controller state
+let xrSessionLifecycle = null;
+let xrStartPromise = null;
+let xrEndPromise = null;
 
 export const xrState = {
   enabled: false,
   isSupported: false,
   headPose: null, // { position: THREE.Vector3, quaternion: THREE.Quaternion }
   controllers: new Map(), // input source ID -> { pose, grip, select }
+  frameCounter: 0,
 };
 
 // Send debug message through app-wide logger in game.js
@@ -80,25 +84,53 @@ async function requestXRSession(renderer, animationCallback) {
     return false;
   }
 
+  if (xrSession || xrStartPromise) {
+    debugLog('XR session request ignored because a session is already active or starting');
+    return Boolean(xrSession);
+  }
+
+  if (xrEndPromise) {
+    await xrEndPromise;
+  }
+
+  const startPromise = startXRSession(renderer, animationCallback);
+  xrStartPromise = startPromise;
+
+  try {
+    return await startPromise;
+  } finally {
+    if (xrStartPromise === startPromise) {
+      xrStartPromise = null;
+    }
+  }
+}
+
+async function startXRSession(renderer, animationCallback) {
+  let session = null;
+
   try {
     debugLog('About to call navigator.xr.requestSession with mode: ' + xrMode);
     // Request XR session (AR or VR based on device support)
     const sessionFeatures = {
       optionalFeatures: ['hand-tracking', 'local-floor'],
     };
-    xrSession = await navigator.xr.requestSession(xrMode, sessionFeatures);
+    session = await navigator.xr.requestSession(xrMode, sessionFeatures);
 
     debugLog('XR session (mode=' + xrMode + ') created successfully');
-    xrEnabled = true;
-    xrState.enabled = true;
-
-    // Setup input handling
-    setupXRInput();
+    xrSession = session;
+    xrSessionLifecycle = createXRSessionLifecycle(session, renderer);
 
     // Configure renderer for XR
     debugLog('Configuring renderer for XR...');
     renderer.xr.enabled = true;
-    renderer.xr.setSession(xrSession);
+    await renderer.xr.setSession(session);
+
+    if (xrSessionLifecycle?.session !== session || xrSessionLifecycle.ended) {
+      throw new Error('XR session ended before renderer setup completed');
+    }
+
+    xrEnabled = true;
+    xrState.enabled = true;
 
     // Set up the XR animation loop
     if (animationCallback) {
@@ -107,30 +139,133 @@ async function requestXRSession(renderer, animationCallback) {
     }
 
     debugLog('XR session started successfully');
-
-    // Listen for session end
-    xrSession.addEventListener('end', () => {
-      debugLog('XR session ended');
-      endXRSession();
-    });
-
     return true;
   } catch (err) {
     debugLog('ERROR: Failed to create XR session: ' + err.message);
-    xrEnabled = false;
-    xrState.enabled = false;
+    if (session && xrSessionLifecycle?.session === session) {
+      await endXRSession(session, { requestEnd: true, restoreLoop: false });
+    } else {
+      resetXRState();
+    }
     return false;
   }
 }
 
-// End XR session
-function endXRSession() {
-  if (xrSession) {
-    xrSession.end();
-    xrSession = null;
+function createXRSessionLifecycle(session, renderer) {
+  const lifecycle = {
+    session,
+    renderer,
+    ended: false,
+    endRequested: false,
+    inputSourcesChangeHandler: null,
+    visibilityChangeHandler: null,
+    endHandler: null,
+  };
+
+  lifecycle.inputSourcesChangeHandler = event => {
+    if (xrSessionLifecycle !== lifecycle) {
+      return;
+    }
+
+    event.removed?.forEach(inputSource => {
+      removeXRInputSource(inputSource);
+    });
+    event.added?.forEach(inputSource => {
+      addXRInputSource(inputSource);
+    });
+  };
+
+  lifecycle.visibilityChangeHandler = () => {
+    if (xrSessionLifecycle !== lifecycle) {
+      return;
+    }
+
+    if (session.visibilityState === 'hidden') {
+      xrState.headPose = null;
+      resetXRControllerStates();
+      xrState.controllers.clear();
+    }
+  };
+
+  lifecycle.endHandler = () => {
+    if (xrSessionLifecycle !== lifecycle) {
+      return;
+    }
+
+    lifecycle.ended = true;
+    debugLog('XR session ended');
+    void endXRSession(session, { requestEnd: false, restoreLoop: true });
+  };
+
+  session.addEventListener('inputsourceschange', lifecycle.inputSourcesChangeHandler);
+  session.addEventListener('visibilitychange', lifecycle.visibilityChangeHandler);
+  session.addEventListener('end', lifecycle.endHandler);
+  setupXRInput(session);
+
+  return lifecycle;
+}
+
+async function endXRSession(session = xrSession, { requestEnd = true, restoreLoop = false } = {}) {
+  if (xrEndPromise) {
+    return await xrEndPromise;
   }
+
+  const lifecycle = xrSessionLifecycle?.session === session ? xrSessionLifecycle : null;
+  if (lifecycle && !requestEnd) {
+    lifecycle.ended = true;
+  }
+
+  const endPromise = Promise.resolve().then(async () => {
+    if (requestEnd && lifecycle && !lifecycle.ended && !lifecycle.endRequested) {
+      lifecycle.endRequested = true;
+      try {
+        await session.end();
+      } catch (err) {
+        debugLog('XR session end request failed: ' + err.message);
+      }
+    }
+
+    cleanupXRSession(lifecycle, session);
+    if (restoreLoop) {
+      restoreNormalAnimationLoop();
+    }
+  });
+
+  xrEndPromise = endPromise;
+  try {
+    await endPromise;
+  } finally {
+    if (xrEndPromise === endPromise) {
+      xrEndPromise = null;
+    }
+  }
+}
+
+function cleanupXRSession(lifecycle, session) {
+  if (lifecycle) {
+    session.removeEventListener('inputsourceschange', lifecycle.inputSourcesChangeHandler);
+    session.removeEventListener('visibilitychange', lifecycle.visibilityChangeHandler);
+    session.removeEventListener('end', lifecycle.endHandler);
+
+    if (typeof lifecycle.renderer?.setAnimationLoop === 'function') {
+      lifecycle.renderer.setAnimationLoop(null);
+    } else if (lifecycle.renderer?.xr) {
+      lifecycle.renderer.xr.setAnimationLoop(null);
+    }
+  }
+
+  if (!lifecycle || xrSessionLifecycle === lifecycle) {
+    xrSession = null;
+    xrSessionLifecycle = null;
+    resetXRState();
+  }
+}
+
+function resetXRState() {
   xrEnabled = false;
   xrState.enabled = false;
+  xrState.headPose = null;
+  xrState.frameCounter = 0;
   xrInputSources.clear();
   xrState.controllers.clear();
 }
@@ -150,34 +285,87 @@ export function setNormalAnimationLoop(renderer, callback) {
 export function restoreNormalAnimationLoop() {
   if (normalAnimationCallback) {
     const { renderer, callback } = normalAnimationCallback;
-    if (!renderer || !renderer.xr) {
+    if (!renderer) {
       return;
     }
-    renderer.xr.setAnimationLoop(null); // Clear XR loop
-    // Resume normal RAF
-    requestAnimationFrame(callback);
+    if (typeof renderer.setAnimationLoop === 'function') {
+      renderer.setAnimationLoop(callback);
+    } else if (renderer.xr) {
+      renderer.xr.setAnimationLoop(null); // Clear XR loop
+      // Resume normal RAF when the renderer has no unified animation-loop API.
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(callback);
+      }
+    } else if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(callback);
+    }
   }
 }
 
+function createXRControllerState(inputSource) {
+  return {
+    inputSource,
+    gamepad: null,
+    thumbstick: { x: 0, y: 0 },
+    trigger: 0,
+    triggerPressed: false,
+    grip: 0,
+    buttonA: false,
+    buttonB: false,
+    buttonGrip: false,
+  };
+}
+
+function addXRInputSource(inputSource) {
+  const handedness = inputSource?.handedness;
+  if (!handedness) {
+    return;
+  }
+
+  const controller = xrInputSources.get(handedness) || createXRControllerState(inputSource);
+  controller.inputSource = inputSource;
+  xrInputSources.set(handedness, controller);
+}
+
+function removeXRInputSource(inputSource) {
+  const handedness = inputSource?.handedness;
+  if (!handedness) {
+    return;
+  }
+
+  const controller = xrInputSources.get(handedness);
+  if (!controller || controller.inputSource === inputSource) {
+    xrInputSources.delete(handedness);
+    xrState.controllers.delete(handedness);
+  }
+}
+
+function resetXRControllerState(controller) {
+  controller.gamepad = null;
+  controller.thumbstick.x = 0;
+  controller.thumbstick.y = 0;
+  controller.trigger = 0;
+  controller.triggerPressed = false;
+  controller.grip = 0;
+  controller.buttonA = false;
+  controller.buttonB = false;
+  controller.buttonGrip = false;
+}
+
+function resetXRControllerStates() {
+  xrInputSources.forEach(resetXRControllerState);
+  xrState.controllers.forEach(resetXRControllerState);
+}
+
 // Setup XR input (controllers)
-function setupXRInput() {
-  if (!xrSession) return;
+function setupXRInput(session = xrSession) {
+  if (!session) {
+    return;
+  }
 
-  xrSession.addEventListener('inputsourceschange', (event) => {
-    event.added.forEach((inputSource) => {
-      xrInputSources.set(inputSource.handedness, {
-        inputSource,
-        gamepad: null,
-        pressed: false,
-          thumbstick: { x: 0, y: 0 },
-          grip: 0,
-      });
-    });
-
-    event.removed.forEach((inputSource) => {
-      xrInputSources.delete(inputSource.handedness);
-    });
-  });
+  for (const inputSource of session.inputSources || []) {
+    addXRInputSource(inputSource);
+  }
 }
 
 // Update XR controller input each frame
@@ -186,32 +374,37 @@ export function updateXRControllerInput() {
     return;
   }
 
-  let frameCounter = xrState.frameCounter || 0;
-  xrState.frameCounter = frameCounter + 1;
+  if (xrSession.visibilityState === 'hidden') {
+    resetXRControllerStates();
+    xrState.controllers.clear();
+    return;
+  }
 
-  for (const inputSource of xrSession.inputSources) {
+  const frameCounter = xrState.frameCounter || 0;
+  xrState.frameCounter = frameCounter + 1;
+  const activeHandedness = new Set();
+  xrState.controllers.clear();
+
+  for (const inputSource of xrSession.inputSources || []) {
     const handedness = inputSource.handedness; // 'left' or 'right'
+    if (!handedness) {
+      continue;
+    }
+    activeHandedness.add(handedness);
 
     if (!xrInputSources.has(handedness)) {
-      xrInputSources.set(handedness, {
-        inputSource,
-        gamepad: null,
-        thumbstick: { x: 0, y: 0 },
-        trigger: 0,
-        grip: 0,
-        buttonA: false,
-        buttonB: false,
-        buttonGrip: false,
-      });
+      addXRInputSource(inputSource);
     }
 
     const controller = xrInputSources.get(handedness);
+    resetXRControllerState(controller);
+    controller.inputSource = inputSource;
     controller.gamepad = inputSource.gamepad;
 
     // Get thumbstick and trigger values from gamepad
     if (inputSource.gamepad) {
-      const axes = inputSource.gamepad.axes;
-      const buttons = inputSource.gamepad.buttons;
+      const axes = inputSource.gamepad.axes || [];
+      const buttons = inputSource.gamepad.buttons || [];
 
       // Left controller: thumbstick for movement (axes 0, 1)
       if (handedness === 'left') {
@@ -227,21 +420,17 @@ export function updateXRControllerInput() {
         controller.thumbstick.x = axes[2] || 0; // left/right (turn)
         controller.thumbstick.y = axes[3] || 0; // up/down (unused in phase 1)
 
-        controller.buttonA = false;
-        controller.buttonB = false;
-          controller.buttonGrip = false;
-
         // Trigger button (index 0) for shooting
         if (buttons[0]) {
           controller.trigger = buttons[0].value; // 0-1
-          controller.triggerPressed = buttons[0].pressed;
+          controller.triggerPressed = buttons[0].pressed || false;
         }
 
-          // Side grip/squeeze button (index 1) for jumping
-          if (buttons[1]) {
+        // Side grip/squeeze button (index 1) for jumping
+        if (buttons[1]) {
           controller.grip = buttons[1].value; // 0-1
           controller.buttonGrip = buttons[1].pressed || false;
-          }
+        }
 
         // A button (index 4) for firing
         if (buttons[4]) {
@@ -259,6 +448,12 @@ export function updateXRControllerInput() {
     }
 
     xrState.controllers.set(handedness, controller);
+  }
+
+  for (const handedness of xrInputSources.keys()) {
+    if (!activeHandedness.has(handedness)) {
+      xrInputSources.delete(handedness);
+    }
   }
 }
 
@@ -299,10 +494,14 @@ export async function initXR() {
 
 export async function toggleXRSession(renderer, animationCallback) {
   debugLog('toggleXRSession called, currently enabled: ' + xrEnabled);
-  if (xrEnabled) {
+  if (xrStartPromise) {
+    debugLog('XR session start already in progress');
+    return await xrStartPromise;
+  }
+
+  if (xrSession || xrEnabled || xrEndPromise) {
     debugLog('Ending XR session...');
-    endXRSession();
-    restoreNormalAnimationLoop();
+    await endXRSession(xrSession, { requestEnd: true, restoreLoop: true });
     return false;
   } else {
     debugLog('Starting XR session...');

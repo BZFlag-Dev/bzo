@@ -1890,11 +1890,13 @@ function init() {
     }
   }, 100);
 
-  // Set up XR animation loop restoration capability
-  setNormalAnimationLoop(renderManager.getRenderer(), animate);
-
-  // Start game loop
-  animate();
+  // Let Three.js own frame scheduling in both normal and XR modes.
+  const renderer = renderManager.getRenderer();
+  setNormalAnimationLoop(renderer, animate);
+  if (!renderManager.setAnimationLoop(animate)) {
+    // Keep the update loop alive when renderer initialization failed.
+    runFallbackAnimationLoop();
+  }
 }
 
 function sendToServer(message) {
@@ -4871,6 +4873,13 @@ function extrapolatePosition(player, dt) {
   }
 }
 
+function runFallbackAnimationLoop() {
+  animate();
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(runFallbackAnimationLoop);
+  }
+}
+
 function animate() {
   selectedFaceDebugTouchedThisFrame = false;
   supportSurfaceDebugTouchedThisFrame = false;
@@ -4898,11 +4907,6 @@ function animate() {
   updateAltimeter({ myTank });
   updateDegreeBar({ myTank, playerRotation });
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
-
-  // Only schedule next frame if not in XR mode (XR loop handles scheduling)
-  if (!isXREnabled()) {
-    requestAnimationFrame(animate);
-  }
 
   updateXRControllerInput();
   handleInputEvents();
