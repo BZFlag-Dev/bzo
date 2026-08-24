@@ -56,8 +56,8 @@ function getSectionRange(content, headingPrefix) {
 }
 
 const version = normalizeVersion(process.argv[2] || process.env.npm_config_version);
-if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
-  fail('usage: npm run release:prepare -- <x.y.z>');
+if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+  fail('usage: npm run release:prepare -- <x.y.z> (stable SemVer only)');
 }
 
 const today = new Date().toISOString().slice(0, 10);
