@@ -46,6 +46,20 @@ Then open:
 
 - `http://localhost:3000`
 
+The image is multi-arch (`linux/amd64` and `linux/arm64`), so Docker will pull the
+correct variant for your host by default.
+
+If you need to force an architecture, set `platform` in compose:
+
+```yaml
+services:
+  bzo:
+    image: ghcr.io/bzflag-dev/bzo:latest
+    platform: linux/amd64 # or linux/arm64
+    volumes:
+      - ./data:/data
+```
+
 ### Direct docker run
 
 ```bash
@@ -57,6 +71,41 @@ docker run -d \
 ```
 
 The image defaults to `SERVER_CONFIG_PATH=/data/server-config.json`.
+
+To force a specific architecture when running directly:
+
+```bash
+docker run -d \
+  --name bzo \
+  --platform linux/amd64 \
+  -p 3000:3000 \
+  -v bzo-data:/data \
+  ghcr.io/bzflag-dev/bzo:latest
+```
+
+Use `--platform linux/arm64` on ARM hosts if you want to pin that explicitly.
+
+### Docker data persistence
+
+- Persist server settings and runtime config by mounting `/data` (already done in
+  `docker-compose.yml`).
+- `SERVER_CONFIG_PATH` defaults to `/data/server-config.json`.
+
+### Persisting custom maps (optional)
+
+Built-in maps ship inside the image. If you want your own map files to persist
+across image updates, mount a host directory to `/app/maps`:
+
+```yaml
+services:
+  bzo:
+    image: ghcr.io/bzflag-dev/bzo:latest
+    volumes:
+      - ./data:/data
+      - ./maps:/app/maps:ro
+```
+
+Then set `mapFile` in `./data/server-config.json` to one of the files in `./maps`.
 
 ## Install from source
 
@@ -141,14 +190,22 @@ If you want automatic container updates, use your preferred container update man
 
 ## Controls
 
-- `W` / `S` — move forward/backward
-- `A` / `D` — turn left/right
+- `W` / `S` or `Up` / `Down` — move forward/backward
+- `A` / `D` or `Left` / `Right` — turn left/right
 - `Space` — shoot
 - `Tab` — jump
+- `Q` — self-destruct
+- `P` — pause/resume
+- `N` — open chat
+- `Enter` — send chat (while chat input is focused)
+- `Esc` — exit chat input or mouse mode
 - `M` — toggle mouse movement
-- `C` — toggle camera
-- `O` — operator panel
-- `/` or `T` — chat
+- `C` — cycle camera mode
+- `O` — toggle operator panel
+- `F` — toggle fullscreen
+- `I` — toggle debug HUD
+- `B` — toggle nearby voice microphone
+- `/` or `?` — show/hide help panel
 
 ## WebXR
 
