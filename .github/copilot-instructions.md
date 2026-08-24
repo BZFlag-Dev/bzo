@@ -42,9 +42,9 @@
 - `forceClientReload()` broadcasts a `reload` message and closes sockets; it is exposed globally and triggered on `SIGUSR1` or watched file changes.
 
 ## Client Architecture (`public/`)
-- `game.js` owns scene setup, Three.js assets, WebSocket handling, HUD orchestration, and per-frame prediction; any protocol changes must be reflected in its `handleServerMessage` switch.
+- `client.js` owns scene setup, Three.js assets, WebSocket handling, HUD orchestration, and per-frame prediction; any protocol changes must be reflected in its `handleServerMessage` switch.
 - Input is centralized in `input.js`, which exports `setupInputHandlers`, `virtualInput`, and `keys` for desktop and mobile controls.
-- HUD helpers live in `hud.js`; prefer extending those utilities over duplicating UI logic in `game.js`.
+- HUD helpers live in `hud.js`; prefer extending those utilities over duplicating UI logic in `client.js`.
 - Audio buffers are generated procedurally in `audio.js` for shooting, explosions, jumping, and landing.
 - `styles.css` and `index.html` define HUD layout, mobile overlays, and the import map (currently referencing Three.js 0.160.0 even though `package.json` pulls 0.181.2; align versions if upgrading).
 - Client connects back to the host that served it (`ws://<host>`); avoid hardcoding URLs so the same build runs locally and in production.
@@ -227,7 +227,7 @@ WebXR support enables VR gameplay on headsets like Meta Quest 2. Phase 1 impleme
   - Right thumbstick X → turn left/right
   - Right trigger → fire (Phase 2)
 
-**game.js:**
+**client.js:**
 - XR button added to settings HUD (enabled/disabled based on support)
 - `initXR()` called on DOMContentLoaded to detect support
 - `updateXRControllerInput()` called each frame before handleInputEvents
