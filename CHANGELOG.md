@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-08-24
+
+### Added
+- Added an explicit project policy that distribution artifacts remain public by default, including container images and release downloads.
+
+### Changed
+- Migrated repository and container registry references from `BZFlag-Dev` to `timriker` across docs, scripts, runtime links, and Docker defaults.
+
+### Fixed
+- Fixed post-transfer pull failures caused by stale owner paths by updating published image references to `ghcr.io/timriker/bzo`.
+
 ## [1.0.19] - 2026-08-24
 
 ### Added
