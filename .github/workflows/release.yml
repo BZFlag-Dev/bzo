@@ -112,11 +112,41 @@ jobs:
         with:
           category: /language:javascript-typescript
 
+  node-compatibility:
+    name: Release Node.js compatibility
+    needs: gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '18.19.1'
+          - '24.19.0'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Check runtime compatibility
+        run: npm run check
+
   build:
     name: Build Ubuntu ${{ matrix.ubuntu }} images
     needs:
       - gate
       - codeql
+      - node-compatibility
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
