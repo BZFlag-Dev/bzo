@@ -106,11 +106,36 @@ for (const tag of releaseTags) {
   }
 }
 
-if (parsedTags.some((tag) => tag.version === candidate.version)) {
+function readTagCommit(tag) {
+  try {
+    return execFileSync('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}^{}`], {
+      cwd: rootDir,
+      encoding: 'utf8',
+    }).trim();
+  } catch (error) {
+    fail(`unable to resolve release tag "${tag}": ${error.message}`);
+  }
+}
+
+const currentRef = normalizeTag(process.env.GITHUB_REF_NAME || process.env.GITHUB_REF);
+const currentSha = process.env.GITHUB_SHA || '';
+const candidateTagExists = parsedTags.some((tag) => tag.tag === candidate.tag);
+const isCurrentWorkflowTag = currentRef === candidate.tag && Boolean(currentSha);
+
+if (candidateTagExists && !isCurrentWorkflowTag) {
   fail(`tag "${candidate.tag}" already exists in the release history`);
 }
 
+if (candidateTagExists && isCurrentWorkflowTag && readTagCommit(candidate.tag) !== currentSha) {
+  fail(`tag "${candidate.tag}" does not resolve to the workflow commit`);
+}
+
+if (parsedTags.some((tag) => tag.version === candidate.version && tag.tag !== candidate.tag)) {
+  fail(`release version "${candidate.version}" already exists under another tag`);
+}
+
 const previous = parsedTags
+  .filter((tag) => tag.tag !== candidate.tag)
   .sort((left, right) => compareVersions(right, left))[0];
 
 if (!previous) {
