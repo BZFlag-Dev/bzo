@@ -144,6 +144,7 @@ const GAME_CONFIG = {
   FOG_DENSITY: 0.001, // BZFlag _fogDensity default
   FOG_START: null, // Defaults to 0.5 * map size like BZFlag
   FOG_END: null, // Defaults to map size like BZFlag
+  VOICE_NEARBY_RADIUS: 60, // Maximum distance for the initial Nearby voice channel
 };
 
 // WebSocket keep-alive configuration
@@ -281,6 +282,55 @@ if (Number.isFinite(configShotTailLength) && configShotTailLength >= 0) {
   GAME_CONFIG.SHOT_TAIL_LENGTH = configShotTailLength;
 }
 
+const configuredVoiceNearbyRadius = Number(
+  process.env.VOICE_NEARBY_RADIUS ?? serverConfig.voiceNearbyRadius
+);
+if (Number.isFinite(configuredVoiceNearbyRadius) && configuredVoiceNearbyRadius > 0) {
+  GAME_CONFIG.VOICE_NEARBY_RADIUS = configuredVoiceNearbyRadius;
+}
+
+function parseVoiceIceServers(value) {
+  let source = value;
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch (error) {
+      logError('Could not parse VOICE_ICE_SERVERS as JSON:', error.message || error);
+      source = source.split(',').map((url) => url.trim()).filter(Boolean);
+    }
+  }
+
+  const entries = Array.isArray(source) ? source : source ? [source] : [];
+  return entries
+    .map((entry) => {
+      const candidate = typeof entry === 'string' ? { urls: [entry] } : entry;
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+      const urls = Array.isArray(candidate.urls)
+        ? candidate.urls
+        : typeof candidate.urls === 'string'
+          ? [candidate.urls]
+          : [];
+      const validUrls = urls
+        .filter((url) => typeof url === 'string' && /^(?:stun|turn|turns):/i.test(url))
+        .map((url) => url.slice(0, 2048));
+      if (validUrls.length === 0) return null;
+
+      const normalized = { urls: validUrls };
+      if (typeof candidate.username === 'string' && candidate.username.length <= 256) {
+        normalized.username = candidate.username;
+      }
+      if (typeof candidate.credential === 'string' && candidate.credential.length <= 2048) {
+        normalized.credential = candidate.credential;
+      }
+      return normalized;
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+const configuredVoiceIceServers = process.env.VOICE_ICE_SERVERS ?? serverConfig.voiceIceServers;
+const VOICE_ICE_SERVERS = parseVoiceIceServers(configuredVoiceIceServers);
+
 if (typeof serverConfig.shotsKeepVerticalVelocity === 'boolean') {
   GAME_CONFIG.SHOTS_KEEP_VERTICAL_VELOCITY = serverConfig.shotsKeepVerticalVelocity;
 }
@@ -324,6 +374,8 @@ log(
 log(
   `Fog config: mode=${GAME_CONFIG.FOG_MODE}, density=${GAME_CONFIG.FOG_DENSITY}, start=${GAME_CONFIG.FOG_START}, end=${GAME_CONFIG.FOG_END}, color=time-of-day`
 );
+log(`Voice config: nearbyRadius=${GAME_CONFIG.VOICE_NEARBY_RADIUS}`);
+log(`Voice ICE config: ${VOICE_ICE_SERVERS.length} server entr${VOICE_ICE_SERVERS.length === 1 ? 'y' : 'ies'}`);
 if (MAP_SOURCE !== 'random') {
   mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
   if (!fs.existsSync(mapPath)) {
@@ -614,6 +666,12 @@ class Player {
     // Spread new tank colors away from currently connected players.
     this.color = Player.pickDistinctColor();
     this.tankModel = 'bzflag';
+    // Roles are server-authoritative. A player remains active unless joinGame
+    // explicitly requests the receive-only spectator role.
+    this.role = 'active';
+    this.joined = false;
+    this.voiceMicEnabled = false;
+    this.voiceRosterSignature = '';
 
     // Extrapolation state
     this.forwardSpeed = 0;
@@ -808,6 +866,8 @@ class Player {
       connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
       color: this.color,
       tankModel: this.tankModel,
+      role: this.role,
+      voiceMicEnabled: this.voiceMicEnabled,
     };
   }
 
@@ -1237,8 +1297,171 @@ function broadcastAll(message) {
   });
 }
 
+// Nearby voice protocol. Clients send voiceState with { enabled }, and send
+// voiceOffer/voiceAnswer with { targetId, description }. ICE messages use
+// { targetId, candidate }, where candidate may be null for end-of-candidates.
+// The legacy alias `to` is accepted for targetId so reconnecting clients can
+// keep their peer-routing field without widening the server-side permissions.
+// The server replies with voiceRoster, voiceState, voiceOffer, voiceAnswer,
+// and voiceIceCandidate. Every server-to-client voice message includes the
+// nearby channel name and signaling messages identify their sender in `from`.
+// Signaling is forwarded only to eligible nearby peers. Audio media remains on
+// the WebRTC connection, not on this socket.
+// TODO: Add team and global routing when those game modes exist; this initial
+// protocol intentionally supports the Nearby channel only.
+const VOICE_CHANNEL = 'nearby';
+const VOICE_ROSTER_REFRESH_INTERVAL = 200;
+const MAX_VOICE_SDP_LENGTH = 128 * 1024;
+const MAX_VOICE_CANDIDATE_LENGTH = 16 * 1024;
+
+function sendToPlayer(player, message) {
+  if (player?.ws?.readyState === 1) {
+    player.ws.send(JSON.stringify(message));
+  }
+}
+
+function normalizePlayerId(value) {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+    return String(value);
+  }
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) {
+    return value;
+  }
+  return null;
+}
+
+function isNearbyVoicePeer(source, target) {
+  if (!source || !target || source.id === target.id) return false;
+  if (!source.joined || !target.joined) return false;
+  if (!Number.isFinite(source.x) || !Number.isFinite(source.z)
+    || !Number.isFinite(target.x) || !Number.isFinite(target.z)) {
+    return false;
+  }
+  return distance(source.x, source.z, target.x, target.z) <= GAME_CONFIG.VOICE_NEARBY_RADIUS;
+}
+
+function getNearbyVoicePeers(player) {
+  return Array.from(players.values())
+    .filter((candidate) => isNearbyVoicePeer(player, candidate))
+    .sort((left, right) => Number(left.id) - Number(right.id));
+}
+
+function getVoicePeerState(peer) {
+  return {
+    id: peer.id,
+    name: peer.name,
+    role: peer.role,
+    micEnabled: peer.role === 'active' && peer.voiceMicEnabled === true,
+  };
+}
+
+function sendVoiceRoster(player, force = false) {
+  if (!player.joined) return;
+
+  const peers = getNearbyVoicePeers(player);
+  const signature = peers
+    .map((peer) => `${peer.id}:${peer.role}:${peer.voiceMicEnabled === true ? 1 : 0}`)
+    .join('|');
+  if (!force && player.voiceRosterSignature === signature) return;
+
+  player.voiceRosterSignature = signature;
+  sendToPlayer(player, {
+    type: 'voiceRoster',
+    channel: VOICE_CHANNEL,
+    nearbyRadius: GAME_CONFIG.VOICE_NEARBY_RADIUS,
+    peers: peers.map(getVoicePeerState),
+  });
+}
+
+function refreshVoiceRosters(force = false) {
+  players.forEach((player) => sendVoiceRoster(player, force));
+}
+
+function sendNearbyVoiceState(player) {
+  if (!player.joined) return;
+
+  const stateMessage = {
+    type: 'voiceState',
+    channel: VOICE_CHANNEL,
+    playerId: player.id,
+    role: player.role,
+    enabled: player.role === 'active' && player.voiceMicEnabled === true,
+  };
+  sendToPlayer(player, stateMessage);
+  getNearbyVoicePeers(player).forEach((peer) => sendToPlayer(peer, stateMessage));
+}
+
+function getVoiceDescription(message, expectedType) {
+  const description = message && message.description;
+  if (!description || typeof description !== 'object' || Array.isArray(description)) return null;
+  if (description.type !== expectedType || typeof description.sdp !== 'string') return null;
+  if (description.sdp.length === 0 || description.sdp.length > MAX_VOICE_SDP_LENGTH) return null;
+  return {
+    type: expectedType,
+    sdp: description.sdp,
+  };
+}
+
+function getVoiceCandidate(message) {
+  const candidate = message && message.candidate;
+  if (candidate === null) return null;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  if (typeof candidate.candidate !== 'string' || candidate.candidate.length > MAX_VOICE_CANDIDATE_LENGTH) {
+    return null;
+  }
+  if (candidate.sdpMid !== undefined && candidate.sdpMid !== null
+    && (typeof candidate.sdpMid !== 'string' || candidate.sdpMid.length > 256)) {
+    return null;
+  }
+  if (candidate.sdpMLineIndex !== undefined && candidate.sdpMLineIndex !== null
+    && (!Number.isInteger(candidate.sdpMLineIndex) || candidate.sdpMLineIndex < 0)) {
+    return null;
+  }
+  if (candidate.usernameFragment !== undefined && candidate.usernameFragment !== null
+    && (typeof candidate.usernameFragment !== 'string' || candidate.usernameFragment.length > 256)) {
+    return null;
+  }
+  return {
+    candidate: candidate.candidate,
+    sdpMid: candidate.sdpMid ?? null,
+    sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+    usernameFragment: candidate.usernameFragment ?? null,
+  };
+}
+
+function forwardVoiceSignal(player, message) {
+  if (!player.joined) return;
+  if (message.type === 'voiceOffer' && player.role === 'spectator') return;
+
+  const targetId = normalizePlayerId(message.targetId ?? message.to);
+  const target = targetId ? players.get(targetId) : null;
+  if (!target || !isNearbyVoicePeer(player, target)) return;
+
+  if (message.type === 'voiceOffer' || message.type === 'voiceAnswer') {
+    const description = getVoiceDescription(message, message.type === 'voiceOffer' ? 'offer' : 'answer');
+    if (!description) return;
+    sendToPlayer(target, {
+      type: message.type,
+      channel: VOICE_CHANNEL,
+      from: player.id,
+      description,
+    });
+    return;
+  }
+
+  const candidate = getVoiceCandidate(message);
+  if (candidate === null && message.candidate !== null) return;
+  sendToPlayer(target, {
+    type: 'voiceIceCandidate',
+    channel: VOICE_CHANNEL,
+    from: player.id,
+    candidate,
+  });
+}
+
 // Game loop - update projectiles and check collisions
 let lastGameLoopAt = Date.now();
+let lastVoiceRosterRefreshAt = 0;
 function gameLoop() {
 
   // Advance world time (20 ticks/sec, 24000 ticks/day)
@@ -1247,6 +1470,11 @@ function gameLoop() {
   const loopDeltaSeconds = Math.min(0.1, Math.max(0, (now - lastGameLoopAt) / 1000));
   lastGameLoopAt = now;
   // No need to broadcast worldTime periodically; clients track it locally at 20 ticks/sec.
+
+  if (now - lastVoiceRosterRefreshAt >= VOICE_ROSTER_REFRESH_INTERVAL) {
+    refreshVoiceRosters();
+    lastVoiceRosterRefreshAt = now;
+  }
 
   // Update projectiles
   projectiles.forEach((proj, id) => {
@@ -1286,6 +1514,7 @@ function gameLoop() {
     // Check collision with players using extrapolated positions
     players.forEach((player) => {
       if (player.id === proj.playerId) return; // Can't hit yourself
+      if (player.role === 'spectator') return; // Spectators are non-combatants
       if (player.paused) return; // Can't hit paused players
       if (player.health <= 0) return; // Can't hit dead players
 
@@ -1481,6 +1710,7 @@ wss.on('connection', (ws, req) => {
     player: player.getState(),
     players: Array.from(players.values()).map(p => p.getState()),
     config: GAME_CONFIG,
+    voiceRtcConfig: { iceServers: VOICE_ICE_SERVERS },
     obstacles: OBSTACLES,
     worldTime,
     clouds: clouds,
@@ -1543,6 +1773,24 @@ wss.on('connection', (ws, req) => {
           // If targetId is invalid, ignore
           break;
         }
+        case 'voiceState': {
+          if (!player.joined) break;
+          if (message.channel && message.channel !== VOICE_CHANNEL) break;
+
+          // Spectators are receive-only, so the server never stores an enabled
+          // microphone state for them even if a client sends enabled: true.
+          player.voiceMicEnabled = player.role === 'active' && message.enabled === true;
+          sendNearbyVoiceState(player);
+          refreshVoiceRosters();
+          break;
+        }
+        case 'voiceOffer':
+        case 'voiceAnswer':
+        case 'voiceIceCandidate': {
+          if (message.channel && message.channel !== VOICE_CHANNEL) break;
+          forwardVoiceSignal(player, message);
+          break;
+        }
         case 'debug': {
           // Log debug messages from clients
           const payloadName = typeof message.name === 'string' ? message.name.trim() : '';
@@ -1551,6 +1799,8 @@ wss.on('connection', (ws, req) => {
           break;
         }
         case 'm': {
+          if (player.role === 'spectator') break;
+
           const now = Date.now();
           // Calculate deltaTime based on server's last update time
           const deltaTime = (now - player.lastUpdate) / 1000;
@@ -1704,6 +1954,7 @@ wss.on('connection', (ws, req) => {
 
         case 'shoot': {
           // message: { type: 'shot', x, y, z, dirX, dirZ }
+          if (player.role === 'spectator') break;
           if (player.health <= 0) break; // Dead players can't shoot
           if (!validateShot(player, message.x, message.y, message.z)) break;
           const shotSlot = getAvailableShotSlot(player.id);
@@ -1739,6 +1990,7 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'selfDestruct': {
+          if (player.role === 'spectator') break;
           if (player.health <= 0) break;
           player.health = 0;
           player.deaths++;
@@ -1769,10 +2021,17 @@ wss.on('connection', (ws, req) => {
           const requestedTankModel = typeof message.tankModel === 'string'
             ? normalizeTankModelId(message.tankModel)
             : 'bzflag';
+          const requestedRole = typeof message.role === 'string'
+            ? message.role.trim().toLowerCase()
+            : 'active';
           player.name = joinName;
           player.tankModel = isAllowedTankModel(requestedTankModel)
             ? requestedTankModel
             : 'bzflag';
+          player.role = requestedRole === 'spectator' ? 'spectator' : 'active';
+          player.voiceMicEnabled = false;
+          player.joined = true;
+          player.voiceRosterSignature = '';
           player.health = 100;
           const spawnPos = findValidSpawnPosition();
           player.x = spawnPos.x;
@@ -1785,9 +2044,9 @@ wss.on('connection', (ws, req) => {
           player.deaths = 0;
           player.kills = 0;
           if (message.isMobile) {
-            log(`Player ${player.id} joining game as "${joinName}" [MOBILE]`);
+            log(`Player ${player.id} joining game as "${joinName}" [${player.role.toUpperCase()}] [MOBILE]`);
           } else {
-            log(`Player ${player.id} joining game as "${joinName}"`);
+            log(`Player ${player.id} joining game as "${joinName}" [${player.role.toUpperCase()}]`);
           }
 
           // broadcast join to all (full player info)
@@ -1795,6 +2054,7 @@ wss.on('connection', (ws, req) => {
             type: 'playerJoined',
             player: player.getState(),
           });
+          refreshVoiceRosters(true);
           break;
         }
 
@@ -1818,6 +2078,7 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'pause':
+          if (player.role === 'spectator') break;
           if (!player.paused && player.pauseCountdownStart === 0) {
             // Start pause countdown
             player.pauseCountdownStart = Date.now();
@@ -1925,6 +2186,8 @@ wss.on('connection', (ws, req) => {
     const playerKills = player.kills
     const playerDeaths = player.deaths;
     const cheatWarnings = player.cheatWarnings.totalWarnings;
+    player.voiceMicEnabled = false;
+    player.joined = false;
     players.delete(player.id);
 
     let logMsg = `Player "${playerName}" (#${playerNum}) disconnected. ${playerKills} kills, ${playerDeaths} deaths.`;
@@ -1938,6 +2201,7 @@ wss.on('connection', (ws, req) => {
       type: 'playerLeft',
       id: player.id,
     });
+    refreshVoiceRosters(true);
   });
 });
 

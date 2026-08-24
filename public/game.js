@@ -45,6 +45,7 @@ import { renderManager } from './render.js';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { initXR, toggleXRSession, updateXRControllerInput, setNormalAnimationLoop, isXREnabled } from './webxr.js';
+import { createVoiceManager } from './voice.js';
 
 // FPS
 let fps = 0;
@@ -90,6 +91,290 @@ let renderReadyForJoin = false;
 let gameplayJoinConfirmed = false;
 let initSequence = 0;
 let activeInitSequence = 0;
+let playerRole = 'active';
+let selectedVoiceInputDeviceId = '';
+let voiceRtcConfig = { iceServers: [] };
+let voiceManager = null;
+let voiceManagerState = {
+  channel: 'nearby',
+  role: 'active',
+  microphonePermission: 'prompt',
+  microphoneEnabled: false,
+  transmitting: false,
+  hasLocalStream: false,
+  canTransmit: true,
+  lastError: null,
+};
+
+const VOICE_CHANNEL = 'nearby';
+
+function normalizePlayerRole(role) {
+  return String(role || '').toLowerCase() === 'spectator' ? 'spectator' : 'active';
+}
+
+function getSelectedPlayerRole() {
+  const selectedRole = document.querySelector('input[name="entryRole"]:checked');
+  return normalizePlayerRole(selectedRole ? selectedRole.value : playerRole);
+}
+
+function syncPlayerRoleSelector() {
+  const selector = document.querySelector(`input[name="entryRole"][value="${playerRole}"]`);
+  if (selector) selector.checked = true;
+}
+
+function updatePlayerRoleSelectorAvailability() {
+  document.querySelectorAll('input[name="entryRole"]').forEach((input) => {
+    input.disabled = gameplayJoinConfirmed;
+  });
+}
+
+function isSpectatorRole() {
+  return playerRole === 'spectator';
+}
+
+function callVoiceManager(method, ...args) {
+  if (!voiceManager || typeof voiceManager[method] !== 'function') {
+    return { called: false, value: undefined };
+  }
+  try {
+    return { called: true, value: voiceManager[method](...args) };
+  } catch (error) {
+    console.error(`[Voice] ${method} failed:`, error);
+    showMessage(`Voice error: ${error.message || 'operation failed'}`);
+    return { called: true, value: undefined };
+  }
+}
+
+function getVoiceAudioSettings() {
+  return {
+    echoCancellation: document.getElementById('voiceEchoCancellation')?.checked !== false,
+    noiseSuppression: document.getElementById('voiceNoiseSuppression')?.checked !== false,
+    autoGainControl: document.getElementById('voiceAutoGainControl')?.checked !== false,
+  };
+}
+
+function getVoiceState() {
+  if (voiceManager && typeof voiceManager.getState === 'function') {
+    try {
+      return { ...voiceManagerState, ...voiceManager.getState() };
+    } catch (error) {
+      console.error('[Voice] Could not read manager state:', error);
+    }
+  }
+  return { ...voiceManagerState };
+}
+
+function updateVoiceInputDevices(devices = []) {
+  const input = document.getElementById('voiceInputDevice');
+  if (!input) return;
+
+  const previousValue = selectedVoiceInputDeviceId || input.value || '';
+  input.replaceChildren();
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = 'Default microphone';
+  input.appendChild(defaultOption);
+
+  if (Array.isArray(devices)) {
+    devices.forEach((device) => {
+      if (!device || typeof device.deviceId !== 'string') return;
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = device.label || 'Microphone';
+      input.appendChild(option);
+    });
+  }
+
+  selectedVoiceInputDeviceId = previousValue;
+  input.value = previousValue;
+  if (input.value !== previousValue) {
+    selectedVoiceInputDeviceId = '';
+    input.value = '';
+  }
+}
+
+function updateVoiceHud(nextState = null) {
+  const state = nextState && typeof nextState === 'object'
+    ? { ...voiceManagerState, ...nextState }
+    : getVoiceState();
+  voiceManagerState = state;
+
+  const hud = document.getElementById('voiceChannelHud');
+  const label = hud?.querySelector('.voiceChannelHudLabel');
+  const statusElement = document.getElementById('voiceChannelHudStatus');
+  const permissionStatus = document.getElementById('voicePermissionStatus');
+  const permissionButton = document.getElementById('voiceRequestPermissionBtn');
+  const microphoneButton = document.getElementById('voiceMicToggle');
+  const inputDevice = document.getElementById('voiceInputDevice');
+  const channelSelect = document.getElementById('voiceChannelSelect');
+
+  const role = normalizePlayerRole(state.role || playerRole);
+  const transmitting = Boolean(state.transmitting);
+  const permission = state.microphonePermission || 'prompt';
+  let status = 'Microphone off';
+  if (role === 'spectator') {
+    status = 'Receive only';
+  } else if (transmitting) {
+    status = 'Microphone on';
+  } else if (permission === 'denied') {
+    status = 'Permission denied';
+  } else if (permission === 'unavailable') {
+    status = 'Microphone unavailable';
+  } else if (state.lastError && state.lastError.message) {
+    status = 'Microphone unavailable';
+  }
+
+  if (hud) {
+    hud.classList.toggle('voiceChannelHud--active', transmitting);
+    hud.classList.toggle('voiceChannelHud--muted', !transmitting);
+    hud.setAttribute('aria-label', `Nearby voice channel, ${status.toLowerCase()}`);
+  }
+  if (label) label.textContent = 'Nearby';
+  if (statusElement) statusElement.textContent = status;
+  if (channelSelect) {
+    channelSelect.value = VOICE_CHANNEL;
+    channelSelect.disabled = true;
+  }
+  if (permissionButton) {
+    permissionButton.disabled = role === 'spectator';
+    permissionButton.textContent = permission === 'granted' ? 'Microphone permission granted' : 'Enable microphone';
+  }
+  if (microphoneButton) {
+    const permissionGranted = permission === 'granted';
+    microphoneButton.disabled = role === 'spectator' || (!permissionGranted && !state.hasLocalStream);
+    microphoneButton.textContent = transmitting ? 'Microphone on' : 'Microphone off';
+    microphoneButton.setAttribute('aria-pressed', transmitting ? 'true' : 'false');
+  }
+  if (inputDevice) inputDevice.disabled = role === 'spectator';
+  if (permissionStatus) {
+    if (role === 'spectator') {
+      permissionStatus.textContent = 'Spectators can listen but cannot use a microphone.';
+    } else if (permission === 'granted') {
+      permissionStatus.textContent = transmitting ? 'Microphone is transmitting on the Nearby channel.' : 'Microphone permission granted; transmission is off.';
+    } else if (permission === 'denied') {
+      permissionStatus.textContent = 'Microphone permission was denied by the browser.';
+    } else if (permission === 'unavailable') {
+      permissionStatus.textContent = 'Microphone capture is unavailable in this browser or context.';
+    } else {
+      permissionStatus.textContent = 'Microphone permission has not been requested.';
+    }
+  }
+}
+
+function handleVoiceError(error) {
+  if (!error) return;
+  const message = error.message || 'Voice operation failed.';
+  updateVoiceHud(getVoiceState());
+  showMessage(message);
+}
+
+function initializeVoiceManager() {
+  if (voiceManager) return voiceManager;
+
+  voiceManager = createVoiceManager({
+    sendToServer,
+    localPlayerId: myPlayerId,
+    role: playerRole,
+    inputDeviceId: selectedVoiceInputDeviceId,
+    rtcConfig: voiceRtcConfig,
+    audioConstraints: getVoiceAudioSettings(),
+    startMuted: true,
+    callbacks: {
+      onStateChange: updateVoiceHud,
+      onError: handleVoiceError,
+      onInputDevices: updateVoiceInputDevices,
+    },
+  });
+  updateVoiceHud();
+  return voiceManager;
+}
+
+function updateVoiceIdentity() {
+  if (!voiceManager) return;
+  callVoiceManager('updateLocalIdentity', {
+    localPlayerId: myPlayerId,
+    role: playerRole,
+  });
+  updateVoiceHud();
+}
+
+async function resetVoiceManagerForReconnect() {
+  if (!voiceManager || typeof voiceManager.reset !== 'function') return;
+  try {
+    await voiceManager.reset();
+  } catch (error) {
+    console.error('[Voice] Could not reset voice state before reconnect:', error);
+  }
+  updateVoiceHud();
+}
+
+function requestVoicePermission() {
+  if (isSpectatorRole()) {
+    updateVoiceHud({ role: playerRole });
+    return;
+  }
+  const result = callVoiceManager('requestMicrophone', { enable: false });
+  if (result.value && typeof result.value.catch === 'function') {
+    result.value.catch(handleVoiceError);
+  }
+}
+
+function toggleVoiceMicrophone() {
+  if (isSpectatorRole()) {
+    updateVoiceHud({ role: playerRole });
+    return;
+  }
+  const result = callVoiceManager('toggleMicrophone');
+  if (result.value && typeof result.value.catch === 'function') {
+    result.value.catch(handleVoiceError);
+  }
+}
+
+function bindVoiceControls() {
+  const roleInputs = document.querySelectorAll('input[name="entryRole"]');
+  roleInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      if (gameplayJoinConfirmed) {
+        syncPlayerRoleSelector();
+        return;
+      }
+      playerRole = getSelectedPlayerRole();
+      if (voiceManager) updateVoiceIdentity();
+      updateVoiceHud({ role: playerRole });
+    });
+  });
+  syncPlayerRoleSelector();
+  updatePlayerRoleSelectorAvailability();
+
+  const inputDevice = document.getElementById('voiceInputDevice');
+  if (inputDevice) {
+    selectedVoiceInputDeviceId = inputDevice.value || '';
+    inputDevice.addEventListener('change', () => {
+      selectedVoiceInputDeviceId = inputDevice.value || '';
+      const result = callVoiceManager('setInputDevice', selectedVoiceInputDeviceId);
+      if (result.value && typeof result.value.catch === 'function') {
+        result.value.catch(handleVoiceError);
+      }
+    });
+  }
+
+  const processingInputs = [
+    'voiceEchoCancellation',
+    'voiceNoiseSuppression',
+    'voiceAutoGainControl',
+  ]
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
+  processingInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      const result = callVoiceManager('setAudioConstraints', getVoiceAudioSettings());
+      if (result.value && typeof result.value.catch === 'function') {
+        result.value.catch(handleVoiceError);
+      }
+    });
+  });
+}
 
 function waitForAnimationFrame() {
   return new Promise((resolve) => {
@@ -126,16 +411,19 @@ function setPendingJoinRequest(name) {
     name,
     isMobile,
     tankModel: selectedTankModelId,
+    role: getSelectedPlayerRole(),
   };
 }
 
 function maybeSendPendingJoinRequest() {
   if (!renderReadyForJoin || gameplayJoinConfirmed || !pendingJoinRequest) return;
+  pendingJoinRequest.role = getSelectedPlayerRole();
   sendToServer({
     type: 'joinGame',
     name: pendingJoinRequest.name,
     isMobile: pendingJoinRequest.isMobile,
     tankModel: pendingJoinRequest.tankModel,
+    role: pendingJoinRequest.role,
   });
 }
 
@@ -1380,6 +1668,8 @@ initHudControls({
   },
   updateChatWindow: () => updateChatWindow(),
   sendToServer: (payload) => sendToServer(payload),
+  requestVoicePermission,
+  toggleVoiceMicrophone,
   getScene: () => scene,
   getChatInput: () => chatInput,
   toggleEntryDialog,
@@ -1562,6 +1852,8 @@ function init() {
   }, { passive: false });
 
   setupInputHandlers();
+  bindVoiceControls();
+  initializeVoiceManager();
   collectClientCapabilities();
 
   // Chat UI
@@ -1918,6 +2210,7 @@ function connectToServer() {
   ws = new WebSocket(`${protocol}//${window.location.host}`);
 
   ws.onopen = () => {
+    callVoiceManager('start');
     showMessage('Connected to server!');
     debugLog(`ws.open host=${window.location.host} protocol=${window.location.protocol}`);
     flushDebugPacketQueue();
@@ -1945,6 +2238,7 @@ function connectToServer() {
   ws.onclose = (event) => {
     renderReadyForJoin = false;
     gameplayJoinConfirmed = false;
+    updatePlayerRoleSelectorAvailability();
     activeInitSequence = 0;
     hideLoadingOverlay();
     let kills = 0;
@@ -1954,14 +2248,19 @@ function connectToServer() {
       deaths = myTank.userData.playerState.deaths || 0;
     }
     console.log(`Disconnected from server (code: ${event.code}, reason: ${event.reason}) | Kills: ${kills} | Deaths: ${deaths}`);
+    const scheduleReconnect = (delay) => {
+      void resetVoiceManagerForReconnect().finally(() => {
+        setTimeout(connectToServer, delay);
+      });
+    };
     // Ignore 503 (Service Unavailable) and silently retry
     if (event.code === 1008 || event.reason === '503') {
       console.log('Server temporarily unavailable (503), retrying...');
-      setTimeout(connectToServer, 2000);
+      scheduleReconnect(2000);
       return;
     }
     showMessage(`Disconnected from server | Kills: ${kills} | Deaths: ${deaths}`, 'death');
-    setTimeout(connectToServer, 3000);
+    scheduleReconnect(3000);
   };
 
   ws.onerror = (error) => {
@@ -1972,12 +2271,22 @@ function connectToServer() {
 }
 
 function handleServerMessage(message) {
+  // Let the voice manager consume signaling and nearby voice state while the
+  // regular game switch continues to own player, render, and chat messages.
+  if (voiceManager) {
+    const voiceHandled = callVoiceManager('handleServerMessage', message);
+    if (typeof message.type === 'string' && message.type.startsWith('voice')) {
+      if (!voiceHandled.called || voiceHandled.value !== false) return;
+    }
+  }
+
   switch (message.type) {
     case 'init': {
       const sequenceId = ++initSequence;
       activeInitSequence = sequenceId;
       renderReadyForJoin = false;
       gameplayJoinConfirmed = false;
+      updatePlayerRoleSelectorAvailability();
       pendingJoinRequest = null;
 
       // Show server info in entryDialog
@@ -2016,6 +2325,13 @@ function handleServerMessage(message) {
 
       myPlayerId = message.player.id;
       gameConfig = message.config;
+      if (message.voiceRtcConfig && typeof message.voiceRtcConfig === 'object') {
+        voiceRtcConfig = message.voiceRtcConfig;
+        callVoiceManager('setRtcConfig', voiceRtcConfig);
+      }
+      // Keep the requested role until the server confirms the joined player.
+      // The initial handshake describes the temporary connection player.
+      updateVoiceIdentity();
       renderManager._applyFogConfig(gameConfig);
       refreshCollisionColliders();
       playerX = message.player.x;
@@ -2054,6 +2370,10 @@ function handleServerMessage(message) {
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
         gameplayJoinConfirmed = true;
+        updatePlayerRoleSelectorAvailability();
+        playerRole = normalizePlayerRole(message.player.role || playerRole);
+        syncPlayerRoleSelector();
+        updateVoiceIdentity();
         const wasAliveBefore = !!(myTank && myTank.userData?.playerState?.health > 0);
         addPlayer(message.player);
 
@@ -2146,6 +2466,11 @@ function handleServerMessage(message) {
         addPlayer(message.player);
         if (message.player.id === myPlayerId) {
           myTank = tanks.get(myPlayerId);
+          if (message.player.role !== undefined) {
+            playerRole = normalizePlayerRole(message.player.role);
+            syncPlayerRoleSelector();
+            updateVoiceIdentity();
+          }
         }
         callUpdateScoreboard();
       }
@@ -3914,6 +4239,7 @@ function handleInputEvents() {
   jumpTriggered = false;
 
   if (!myTank || !gameConfig) return;
+  if (isSpectatorRole()) return;
 
   // Keep the tank snapped to a valid support surface under its center. This
   // stabilizes step/pyramid support without loosening side-contact ontop tests.
@@ -4000,6 +4326,7 @@ function handleInputEvents() {
 
 function handleMotion(deltaTime) {
   if (!myTank || !gameConfig) return;
+  if (isSpectatorRole()) return;
   if (isPaused || pauseCountdownStart > 0) return;
 
   let forceMoveSend = false;
@@ -4389,6 +4716,7 @@ function handleMotion(deltaTime) {
 }
 
 function shoot() {
+  if (isSpectatorRole()) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
   const dirX = -Math.sin(playerRotation);
