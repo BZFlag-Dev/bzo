@@ -1911,6 +1911,15 @@ class RenderManager {
     // Create a semi-transparent ghost version of a tank for showing server-confirmed position
     const ghostTank = tank.clone(true); // Deep clone the tank
 
+    // Rebind name label after clone: Object3D clone serializes userData and can
+    // drop direct object references like userData.nameLabel.
+    ghostTank.userData.nameLabel = null;
+    ghostTank.traverse((child) => {
+      if (!ghostTank.userData.nameLabel && child.isSprite) {
+        ghostTank.userData.nameLabel = child;
+      }
+    });
+
     // Scale slightly larger to wrap around the tank (1.05x = 5% larger)
     ghostTank.scale.set(1.05, 1.05, 1.05);
 

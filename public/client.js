@@ -2551,7 +2551,7 @@ function handleServerMessage(message) {
             r: message.r,
             d: message.d,
             jumpDirection: tank.userData.jumpDirection
-          }, 'received', tank.userData.playerState?.name || '');
+          }, 'received');
         }
 
         if (tank.userData.jumpDirection !== null && tank.userData.jumpDirection !== undefined) {
@@ -2751,7 +2751,7 @@ function addPlayer(player) {
       r: player.rotation,
       d: player.slideDirection,
       jumpDirection: player.jumpDirection ?? null
-    }, 'received', player.name || '');
+    }, 'received');
   }
 
   if (player.jumpDirection !== null && player.jumpDirection !== undefined) {
@@ -4690,7 +4690,7 @@ function handleMotion(deltaTime) {
       r: movePacket.r,
       d: movePacket.d,
       jumpDirection
-      }, 'sent', 'me');
+      }, 'sent');
     }
 
     if (jumpDirection !== null && jumpDirection !== undefined) {
