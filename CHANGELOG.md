@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.17] - 2026-08-24
+
+### Added
+- Added clone-safe ghost label binding so ghost name labels stay connected after tank cloning.
+
+### Changed
+- Updated jump-path debug rendering to use a momentum-only airborne projection and always terminate on ground impact.
+
+### Fixed
+- Fixed stale ghost player names (for example showing "Player 1") by ensuring ghost labels receive the same name updates as tank labels.
+- Removed unnecessary per-update name prefix churn from packet-motion debug labels.
+
 ## [1.0.16] - 2026-08-24
 
 ### Added
