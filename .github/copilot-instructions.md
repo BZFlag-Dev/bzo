@@ -68,6 +68,7 @@
 - During development, it is intentional that any connected player may use operator controls such as map switching. OAuth or stronger authorization may come later, but it is not a current priority.
 - Client gameplay logic should be correct on its own; the server is a validation backstop, not the primary source of truth for normal packets. Do not rely on server correction packets unless a client is intentionally or maliciously sending invalid data.
 - When a rule affects movement, shooting, or other player actions, the unmodified client should obey it directly and the server should only reject or correct malformed packets.
+- Project distribution is public-by-default: source code (AGPL), Docker images, release downloads/artifacts, and install endpoints should remain publicly accessible unless the user explicitly requests a temporary exception.
 
 # Player Join/Entry/Scoreboard Flow (Persistent Project Memory)
 
