@@ -6,6 +6,6 @@ services:
       - "3000:3000"
     environment:
       PORT: "3000"
-      SERVER_CONFIG_PATH: /data/server-config.json
+      SERVER_CONFIG_PATH: /data/server.json
     volumes:
       - ./data:/data

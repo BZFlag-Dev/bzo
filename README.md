@@ -32,15 +32,18 @@ Runtime compatibility is validated in CI on Node.js `18.19.1` and `24.19.0`.
 
 ### Quick start with docker compose
 
-Use [docker-compose.yml](docker-compose.yml):
+Use [compose.yml](compose.yml):
 
 ```bash
 docker compose up -d
 ```
 
-This starts the server on port 3000 and stores runtime config in `./data/server-config.json`.
+This starts the server on port 3000 and stores runtime config in `./data/server.json`.
 
-On first start, the server copies [example-server-config.json](example-server-config.json) to the configured runtime path if no config exists.
+On first start, the server copies [example-server.json](example-server.json) to the configured runtime path if no config exists.
+
+Naming update: this project now uses `compose.yml`, `server.json`, and
+`example-server.json` only.
 
 Then open:
 
@@ -70,7 +73,7 @@ docker run -d \
   ghcr.io/timriker/bzo:latest
 ```
 
-The image defaults to `SERVER_CONFIG_PATH=/data/server-config.json`.
+The image defaults to `SERVER_CONFIG_PATH=/data/server.json`.
 
 To force a specific architecture when running directly:
 
@@ -88,8 +91,10 @@ Use `--platform linux/arm64` on ARM hosts if you want to pin that explicitly.
 ### Docker data persistence
 
 - Persist server settings and runtime config by mounting `/data` (already done in
-  `docker-compose.yml`).
-- `SERVER_CONFIG_PATH` defaults to `/data/server-config.json`.
+  `compose.yml`).
+- `SERVER_CONFIG_PATH` defaults to `/data/server.json`.
+- The container runs as UID/GID `1000:1000`; for bind mounts, ensure the host
+  `./data` directory is writable by that user (for example `chown -R 1000:1000 ./data`).
 
 ### Persisting custom maps (optional)
 
@@ -109,7 +114,7 @@ services:
   bzo:
     image: ghcr.io/timriker/bzo:latest
     environment:
-      SERVER_CONFIG_PATH: /data/server-config.json
+      SERVER_CONFIG_PATH: /data/server.json
       MAPS_PATH: /data/maps
     volumes:
       - ./data:/data
@@ -131,7 +136,7 @@ should go to the runtime directory.
 npm install
 ```
 
-If `server-config.json` does not exist, the server will create it from [example-server-config.json](example-server-config.json) on first start.
+If `server.json` does not exist, the server will create it from [example-server.json](example-server.json) on first start.
 
 ### Run
 
@@ -153,15 +158,15 @@ Then open:
 
 ## Configuration
 
-Runtime configuration lives in `server-config.json` by default.
+Runtime configuration lives in `server.json` by default.
 
 You can override the path with:
 
 ```bash
-SERVER_CONFIG_PATH=/path/to/server-config.json npm start
+SERVER_CONFIG_PATH=/path/to/server.json npm start
 ```
 
-See [example-server-config.json](example-server-config.json) for the supported shape.
+See [example-server.json](example-server.json) for the supported shape.
 
 ## Updating
 

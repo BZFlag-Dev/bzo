@@ -2,7 +2,7 @@
 .github
 node_modules
 server.log
-server-config.json
+server.json
 npm-debug.log*
 .DS_Store
 *.patch

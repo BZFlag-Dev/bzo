@@ -37,7 +37,7 @@
 - Game loop (`setInterval(gameLoop, 16)`) updates projectile travel and collision checks. The server only verifies player 'move' messages and does not create new playerMoved messages itself; movement updates are broadcast only in response to client 'move' messages.
 - Player lifecycle: connection emits `init`, `newPlayer`, and `playerJoined` messages; `joinGame`, `move`, `shoot`, `pause`, and `chat` requests are validated server-side before broadcasting.
 - Movement/shot validation relies on `GAME_CONFIG` thresholds and obstacle collision helpers; keep any new mechanics in sync with these checks.
-- Map loading: reads `server-config.json` to choose between procedural obstacles and `.bzw` files parsed by `parseBZWMap`. Add maps to `maps/` and update the config or admin panel message to switch.
+- Map loading: reads `server.json` to choose between procedural obstacles and `.bzw` files parsed by `parseBZWMap`. Add maps to `maps/` and update the config or admin panel message to switch.
 - Admin overlay messages share the WebSocket channel; reuse that pattern for additional operator tools.
 - `forceClientReload()` broadcasts a `reload` message and closes sockets; it is exposed globally and triggered on `SIGUSR1` or watched file changes.
 
@@ -50,7 +50,7 @@
 - Client connects back to the host that served it (`ws://<host>`); avoid hardcoding URLs so the same build runs locally and in production.
 
 ## Configuration & Data
-- Runtime settings (name, MOTD, default map) live in `server-config.json`; `example-server-config.json` documents the expected shape.
+- Runtime settings (name, MOTD, default map) live in `server.json`; `example-server.json` documents the expected shape.
 - Obstacles are generated/resolved server-side and sent in the `init` payload; client recreates meshes from that data, so keep the schema stable when extending obstacle properties.
 - Maps in `maps/*.bzw` use scaled BZFlag coordinates (X/Z halved); ensure new parsers respect the scaling so collisions remain accurate.
 - Maps in `maps/*.bzw` use standard BZFlag coordinates at 1:1 scale (box x/y in BZW are half-extents, multiplied ×2 by the parser to get full width/depth); 1 bzo unit = 1 BZFlag unit.

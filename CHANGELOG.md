@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-08-24
+
+### Added
+- Added an explicit naming migration note in the README for `compose.yml`, `server.json`, and `example-server.json`.
+
+### Changed
+- Renamed `docker-compose.yml` to `compose.yml`.
+- Renamed `example-server-config.json` to `example-server.json`.
+- Standardized default runtime config paths and examples to use `server.json` naming.
+
+### Fixed
+- Fixed Docker bind-mount ownership friction by pinning the container runtime user to UID/GID `1000:1000`.
+- Fixed dev watcher config to watch `server.json` after the naming migration.
+
 ## [1.0.21] - 2026-08-24
 
 ### Added
@@ -228,7 +242,7 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 ### Changed
 - Updated licensing headers across source files with copyright and source references.
 - Expanded documentation for releases, installation, configuration, and update strategy.
-- Server startup now bootstraps a runtime config from `example-server-config.json` when no config exists.
+- Server startup now bootstraps a runtime config from `example-server.json` when no config exists.
 
 ### Fixed
 - Cleaned up release metadata and project packaging details so shipped artifacts are consistent.

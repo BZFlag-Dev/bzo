@@ -41,8 +41,8 @@ app.use(express.urlencoded({ extended: true }));
 const PORT = process.env.PORT || 3000;
 const CONFIG_PATH = process.env.SERVER_CONFIG_PATH
   ? path.resolve(process.env.SERVER_CONFIG_PATH)
-  : path.join(__dirname, 'server-config.json');
-const EXAMPLE_CONFIG_PATH = path.join(__dirname, 'example-server-config.json');
+  : path.join(__dirname, 'server.json');
+const EXAMPLE_CONFIG_PATH = path.join(__dirname, 'example-server.json');
 
 // Serve static files
 app.use(express.static('public'));
@@ -159,6 +159,10 @@ function ensureServerConfig(configPath) {
 
   try {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    if (!fs.existsSync(EXAMPLE_CONFIG_PATH)) {
+      throw new Error(`No example config found at ${EXAMPLE_CONFIG_PATH}`);
+    }
+
     fs.copyFileSync(EXAMPLE_CONFIG_PATH, configPath);
     log(`Created default server config at ${configPath}`);
   } catch (error) {
@@ -231,7 +235,7 @@ ensureRuntimeMapsDir(RUNTIME_MAPS_DIR);
 try {
   serverConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 } catch (e) {
-  logError('Could not load server-config.json:', e);
+  logError(`Could not load server config at ${configPath}:`, e);
 }
 
 let MAP_SOURCE = serverConfig.mapFile || 'random';
@@ -245,7 +249,7 @@ const ANTICHEAT_CONFIG = {
   angularDriftThreshold: serverConfig.antiCheat?.angularDriftThreshold || 0.5,
 };
 
-// Optional gameplay overrides from server-config.json
+// Optional gameplay overrides from server config
 const configTankSpeed = Number(serverConfig.tankSpeed);
 if (Number.isFinite(configTankSpeed) && configTankSpeed > 0) {
   GAME_CONFIG.TANK_SPEED = configTankSpeed;

@@ -7,12 +7,14 @@ FROM ubuntu:26.04
 
 ENV NODE_ENV=production \
     PORT=3000 \
-    SERVER_CONFIG_PATH=/data/server-config.json \
+  SERVER_CONFIG_PATH=/data/server.json \
     DEBIAN_FRONTEND=noninteractive
 
 ARG NODE_VERSION=24.19.0
 ARG NODE_SHA256_AMD64=f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4
 ARG NODE_SHA256_ARM64=d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f
+ARG APP_UID=1000
+ARG APP_GID=1000
 
 RUN set -eu; \
     apt-get update; \
@@ -35,8 +37,6 @@ RUN set -eu; \
     apt-get purge -y --auto-remove curl; \
     rm -rf /var/lib/apt/lists/*
 
-RUN useradd --system --create-home --shell /bin/bash node
-
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -44,15 +44,15 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY public ./public
 COPY maps ./maps
-COPY example-server-config.json ./example-server-config.json
+COPY example-server.json ./example-server.json
 COPY server.js ./server.js
 COPY LICENSE ./LICENSE
 COPY README.md ./README.md
 COPY CHANGELOG.md ./CHANGELOG.md
 
-RUN mkdir -p /data && chown -R node:node /app /data
+RUN mkdir -p /data && chown -R "$APP_UID:$APP_GID" /app /data
 
-USER node
+USER ${APP_UID}:${APP_GID}
 
 EXPOSE 3000
 VOLUME ["/data"]
