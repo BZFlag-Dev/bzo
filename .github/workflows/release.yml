@@ -219,8 +219,7 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ matrix.ubuntu }}" in
-            24.04) expected_node="v18.19.1" ;;
-            26.04) expected_node="v24.19.0" ;;
+            24.04|26.04) expected_node="v24.19.0" ;;
             *) echo "Unsupported Ubuntu matrix value" >&2; exit 1 ;;
           esac
           for platform in linux/amd64 linux/arm64; do
