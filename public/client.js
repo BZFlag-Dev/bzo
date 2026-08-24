@@ -1048,7 +1048,6 @@ const CORNER_STICK_FRAMES = 3;
 const CORNER_ESCAPE_DISTANCE = 0.2;
 const JUMP_PATH_MAX_TIME = 4.0;
 const JUMP_PATH_STEP_TIME = 0.12;
-const JUMP_PATH_POINT_COUNT = 24;
 
 // Extrapolation state
 let myJumpDirection = null; // null when on ground, rotation when in air
@@ -1224,14 +1223,13 @@ function samplePredictedAirPath(state) {
   const points = [];
   const stepTime = JUMP_PATH_STEP_TIME;
   const maxSteps = Math.max(4, Math.floor(JUMP_PATH_MAX_TIME / stepTime));
-  const gravity = gameConfig.GRAVITY || 30;
+  const gravity = gameConfig.GRAVITY || 9.8;
   let landed = false;
   let landingPoint = null;
 
-  for (let step = 0; step <= maxSteps && points.length < JUMP_PATH_POINT_COUNT; step += 1) {
+  for (let step = 0; step <= maxSteps; step += 1) {
     const t = step * stepTime;
     const pos = extrapolatePosition(state, t);
-    const vvAtT = (state.verticalVelocity || 0) - gravity * t;
     let pointY = pos.y;
     let landedType = null;
 
@@ -1239,19 +1237,26 @@ function samplePredictedAirPath(state) {
       pointY = 0;
       landed = true;
       landedType = 'ground';
-    } else if (vvAtT <= 0) {
-      const support = findSupportSurface(pos.x, pos.y, pos.z);
-      if (support && pos.y <= support.surfaceY + ONTOP_TOLERANCE) {
-        pointY = support.surfaceY;
-        landed = true;
-        landedType = 'support';
-      }
     }
 
     points.push(new THREE.Vector3(pos.x, pointY, pos.z));
     if (landed) {
       landingPoint = { x: pos.x, y: pointY, z: pos.z, type: landedType };
       break;
+    }
+  }
+
+  if (!landed) {
+    const initialY = Number.isFinite(state.y) ? state.y : 0;
+    const initialVV = Number.isFinite(state.verticalVelocity) ? state.verticalVelocity : 0;
+    const discriminant = (initialVV * initialVV) + (2 * gravity * initialY);
+    if (gravity > 0 && discriminant >= 0) {
+      const landingTime = (initialVV + Math.sqrt(discriminant)) / gravity;
+      if (Number.isFinite(landingTime) && landingTime > 0) {
+        const landingPos = extrapolatePosition(state, landingTime);
+        points.push(new THREE.Vector3(landingPos.x, 0, landingPos.z));
+        landingPoint = { x: landingPos.x, y: 0, z: landingPos.z, type: 'ground' };
+      }
     }
   }
 
