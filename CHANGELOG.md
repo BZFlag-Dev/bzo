@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.19] - 2026-08-24
+
+### Added
+- Added a repository security policy in `SECURITY.md` covering reporting flow, support scope, and update guidance.
+
+### Changed
+- Added a controls documentation consistency check (`npm run check:controls-docs`) and integrated it into `npm run check`.
+
+### Fixed
+- Applied safe dependency security updates in the lockfile to address known advisories in `express`, `body-parser`, `qs`, `js-yaml`, and `brace-expansion`.
+- Aligned README and in-game Help controls so documented keybindings match the current implementation.
+
 ## [1.0.18] - 2026-08-24
 
 ### Added
