@@ -142,6 +142,23 @@ If you want automatic container updates, use your preferred container update man
 - `O` — operator panel
 - `/` or `T` — chat
 
+## WebXR
+
+The VR mode uses native WebXR and requires a browser and headset that support
+`immersive-vr`. For local validation, open the game at `http://localhost:3000`.
+For remote access, terminate TLS at the reverse proxy and open the game over
+`https://`; the client automatically uses `wss://` for its WebSocket connection
+when the page is served over HTTPS.
+
+If the deployment sets a restrictive `Permissions-Policy` header, allow
+`xr-spatial-tracking=(self)`. The Node.js server does not terminate TLS itself,
+so HTTPS and the corresponding WebSocket proxy configuration are deployment
+responsibilities.
+
+Use the [WebXR validation checklist](docs/webxr-validation.md) when checking a
+new browser, headset, or deployment. WebGPU rendering is outside the scope of
+this checklist.
+
 ## Development checks
 
 ```bash
