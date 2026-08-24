@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-08-24
+
+### Added
+- Added Nearby WebRTC voice chat with in-game microphone controls and per-player nearby peer routing.
+- Added a dedicated Voice settings dialog opened from the main Settings HUD.
+
+### Changed
+- Moved the main browser entrypoint from `game.js` to `client.js`.
+- Updated HUD panel behavior so opening Help, Voice, or Operator hides the Settings HUD.
+
+### Fixed
+- Fixed mobile/desktop firing cadence so holding fire respects `shotReloadTime` on the client and server.
+- Fixed Help panel usability by adding proper scrolling and a close button.
+- Fixed movement collision precedence so driving on top of one obstacle no longer allows moving through overlapping obstacles or world boundaries.
+
 ## [1.0.15] - 2026-08-23
 
 ### Added
