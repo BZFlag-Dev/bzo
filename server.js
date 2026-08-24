@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
  * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
- * Source: https://github.com/BZFlag-Dev/bzo
+ * Source: https://github.com/timriker/bzo
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
@@ -103,7 +103,7 @@ app.get('/api/tank-models', (req, res) => {
 
 // AGPL §13: provide source code access to network users
 app.get('/source', (req, res) => {
-  res.redirect(302, 'https://github.com/BZFlag-Dev/bzo');
+  res.redirect(302, 'https://github.com/timriker/bzo');
 });
 // --- Admin API Endpoints ---
 

@@ -1,6 +1,6 @@
 services:
   bzo:
-    image: ghcr.io/bzflag-dev/bzo:latest
+    image: ghcr.io/timriker/bzo:latest
     restart: unless-stopped
     ports:
       - "3000:3000"

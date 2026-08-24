@@ -17,9 +17,9 @@ Each tagged release publishes:
 
 - a GitHub release with notes generated from [CHANGELOG.md](CHANGELOG.md)
 - a source tarball
-- a versioned Ubuntu 26.04 image at `ghcr.io/bzflag-dev/bzo:<version>-ubuntu26.04`
+- a versioned Ubuntu 26.04 image at `ghcr.io/timriker/bzo:<version>-ubuntu26.04`
 - a moving `ubuntu26.04` tag
-- `ghcr.io/bzflag-dev/bzo:<version>` and `ghcr.io/bzflag-dev/bzo:latest`, both using Ubuntu 26.04
+- `ghcr.io/timriker/bzo:<version>` and `ghcr.io/timriker/bzo:latest`, both using Ubuntu 26.04
 
 Every published image contains `linux/amd64` and `linux/arm64` variants. Release
 tags use stable `vX.Y.Z` SemVer only; prerelease and build-metadata tags are not
@@ -54,7 +54,7 @@ If you need to force an architecture, set `platform` in compose:
 ```yaml
 services:
   bzo:
-    image: ghcr.io/bzflag-dev/bzo:latest
+    image: ghcr.io/timriker/bzo:latest
     platform: linux/amd64 # or linux/arm64
     volumes:
       - ./data:/data
@@ -67,7 +67,7 @@ docker run -d \
   --name bzo \
   -p 3000:3000 \
   -v bzo-data:/data \
-  ghcr.io/bzflag-dev/bzo:latest
+  ghcr.io/timriker/bzo:latest
 ```
 
 The image defaults to `SERVER_CONFIG_PATH=/data/server-config.json`.
@@ -80,7 +80,7 @@ docker run -d \
   --platform linux/amd64 \
   -p 3000:3000 \
   -v bzo-data:/data \
-  ghcr.io/bzflag-dev/bzo:latest
+  ghcr.io/timriker/bzo:latest
 ```
 
 Use `--platform linux/arm64` on ARM hosts if you want to pin that explicitly.
@@ -99,7 +99,7 @@ across image updates, mount a host directory to `/app/maps`:
 ```yaml
 services:
   bzo:
-    image: ghcr.io/bzflag-dev/bzo:latest
+    image: ghcr.io/timriker/bzo:latest
     volumes:
       - ./data:/data
       - ./maps:/app/maps:ro
@@ -178,7 +178,7 @@ docker compose up -d
 or:
 
 ```bash
-docker pull ghcr.io/bzflag-dev/bzo:latest
+docker pull ghcr.io/timriker/bzo:latest
 ```
 
 If you want automatic container updates, use your preferred container update manager. That is not built into the game itself.
@@ -284,4 +284,4 @@ This project is licensed under the GNU Affero General Public License v3.0.
 
 Network users can access the source code from the running app via `/source`, or directly at:
 
-- <https://github.com/BZFlag-Dev/bzo>
+- <https://github.com/timriker/bzo>
