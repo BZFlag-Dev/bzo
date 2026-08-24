@@ -58,55 +58,59 @@
         <button id="anaglyphBtn" class="settingsHudBtn" title="Anaglyph 3D">Anaglyph 3D</button>
         <button id="dynamicLightingBtn" class="settingsHudBtn" title="Dynamic Lighting">Dynamic Lighting</button>
         <button id="xrBtn" class="settingsHudBtn" title="Enter WebXR VR Mode">VR Mode</button>
+        <button id="voiceBtn" class="settingsHudBtn" title="Open Voice Settings">Voice</button>
         <button id="closeSettingsHud" class="settingsHudBtn">Close</button>
       </div>
-      <section id="voiceSettings" class="voiceSettings" aria-labelledby="voiceSettingsTitle">
-        <h2 id="voiceSettingsTitle">Voice Settings</h2>
-        <p id="voiceSettingsDescription" class="voiceSettingsDescription">
-          Nearby voice uses your microphone only after you grant permission. Use B to toggle your microphone.
-        </p>
-        <div class="voiceSettingRow">
-          <label for="voiceChannelSelect">Voice channel</label>
-          <select id="voiceChannelSelect" aria-describedby="voiceChannelDescription" disabled>
-            <option value="nearby">Nearby</option>
-          </select>
-          <span id="voiceChannelDescription" class="voiceSettingHint">The initial voice channel is Nearby.</span>
-        </div>
-        <div class="voiceSettingRow">
-          <label for="voiceInputDevice">Microphone input</label>
-          <select id="voiceInputDevice" aria-describedby="voiceInputDeviceDescription">
-            <option value="">Default microphone</option>
-          </select>
-          <span id="voiceInputDeviceDescription" class="voiceSettingHint">Choose the microphone used for voice chat.</span>
-        </div>
-        <div class="voiceSettingRow voiceProcessingOptions" role="group" aria-labelledby="voiceProcessingTitle">
-          <span id="voiceProcessingTitle" class="voiceSettingLabel">Native audio processing</span>
-          <label class="voiceCheckboxLabel" for="voiceEchoCancellation">
-            <input id="voiceEchoCancellation" type="checkbox" checked>
-            Echo cancellation
-          </label>
-          <label class="voiceCheckboxLabel" for="voiceNoiseSuppression">
-            <input id="voiceNoiseSuppression" type="checkbox" checked>
-            Noise suppression
-          </label>
-          <label class="voiceCheckboxLabel" for="voiceAutoGainControl">
-            <input id="voiceAutoGainControl" type="checkbox" checked>
-            Automatic gain control
-          </label>
-          <span id="voiceProcessingStatus" class="voiceSettingHint" role="status" aria-live="polite">
-            Native browser processing is enabled when supported.
-          </span>
-        </div>
-        <div class="voiceSettingActions">
-          <button id="voiceRequestPermissionBtn" class="settingsHudBtn" type="button">Enable microphone</button>
-          <button id="voiceMicToggle" class="settingsHudBtn voiceMicToggle" type="button" aria-pressed="false" disabled>
-            Microphone off
-          </button>
-        </div>
-        <p id="voicePermissionStatus" class="voicePermissionStatus" role="status" aria-live="polite">
-          Microphone permission has not been requested.
-        </p>
-      </section>
+    </div>
+  </div>
+
+  <div id="voiceOverlay" class="dialog">
+    <div class="dialogTitle">Voice Settings <button id="closeVoiceBtn" class="closeBtn">&times;</button></div>
+    <div class="dialogContent voiceSettings">
+      <p id="voiceSettingsDescription" class="voiceSettingsDescription">
+        Nearby voice uses your microphone only after you grant permission. Use B to toggle your microphone.
+      </p>
+      <div class="voiceSettingRow">
+        <label for="voiceChannelSelect">Voice channel</label>
+        <select id="voiceChannelSelect" aria-describedby="voiceChannelDescription" disabled>
+          <option value="nearby">Nearby</option>
+        </select>
+        <span id="voiceChannelDescription" class="voiceSettingHint">The initial voice channel is Nearby.</span>
+      </div>
+      <div class="voiceSettingRow">
+        <label for="voiceInputDevice">Microphone input</label>
+        <select id="voiceInputDevice" aria-describedby="voiceInputDeviceDescription">
+          <option value="">Default microphone</option>
+        </select>
+        <span id="voiceInputDeviceDescription" class="voiceSettingHint">Choose the microphone used for voice chat.</span>
+      </div>
+      <div class="voiceSettingRow voiceProcessingOptions" role="group" aria-labelledby="voiceProcessingTitle">
+        <span id="voiceProcessingTitle" class="voiceSettingLabel">Native audio processing</span>
+        <label class="voiceCheckboxLabel" for="voiceEchoCancellation">
+          <input id="voiceEchoCancellation" type="checkbox" checked>
+          Echo cancellation
+        </label>
+        <label class="voiceCheckboxLabel" for="voiceNoiseSuppression">
+          <input id="voiceNoiseSuppression" type="checkbox" checked>
+          Noise suppression
+        </label>
+        <label class="voiceCheckboxLabel" for="voiceAutoGainControl">
+          <input id="voiceAutoGainControl" type="checkbox" checked>
+          Automatic gain control
+        </label>
+        <span id="voiceProcessingStatus" class="voiceSettingHint" role="status" aria-live="polite">
+          Native browser processing is enabled when supported.
+        </span>
+      </div>
+      <div class="voiceSettingActions">
+        <button id="voiceRequestPermissionBtn" class="settingsHudBtn" type="button">Enable microphone</button>
+        <button id="voiceMicToggle" class="settingsHudBtn voiceMicToggle" type="button" aria-pressed="false" disabled>
+          Microphone off
+        </button>
+      </div>
+      <p id="voicePermissionStatus" class="voicePermissionStatus" role="status" aria-live="polite">
+        Microphone permission has not been requested.
+      </p>
     </div>
   </div>
 
@@ -175,8 +179,8 @@
   </div>
 
   <div id="helpPanel">
-    <h1>Battlezone Online</h1>
-    <div id="helpContent">
+    <div class="dialogTitle">Help <button id="closeHelpBtn" class="closeBtn" type="button">&times;</button></div>
+    <div id="helpContent" class="dialogContent">
       <h2>HUD Buttons</h2>
       <ul>
         <li><strong>F</strong> — <b>Fullscreen</b> (or click <b>F</b> button)</li>

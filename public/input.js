@@ -485,10 +485,14 @@ const domRefs = {
   helpBtn: null,
   settingsBtn: null,
   settingsHud: null,
+  voiceBtn: null,
+  voiceOverlay: null,
   helpPanel: null,
   closeSettingsBtn: null,
+  closeHelpBtn: null,
   operatorBtn: null,
   closeOperatorBtn: null,
+  closeVoiceBtn: null,
   wireframeBtn: null,
   playerNameEl: null,
   voicePermissionBtn: null,
@@ -652,6 +656,35 @@ function toggleSettingsHud() {
   updateSettingsBtn();
 }
 
+function hideSettingsHudSilently() {
+  if (!domRefs.settingsHud) return;
+  if (domRefs.settingsHud.style.display === 'block') {
+    domRefs.settingsHud.style.display = 'none';
+    updateSettingsBtn();
+  }
+}
+
+function updateVoiceBtn() {
+  if (!domRefs.voiceBtn || !domRefs.voiceOverlay) return;
+  const visible = domRefs.voiceOverlay.style.display === 'block';
+  domRefs.voiceBtn.classList.toggle('active', visible);
+  domRefs.voiceBtn.title = visible ? 'Hide Voice Settings' : 'Open Voice Settings';
+}
+
+function toggleVoiceOverlay() {
+  if (!domRefs.voiceOverlay) return;
+  const visible = domRefs.voiceOverlay.style.display === 'block';
+  if (visible) {
+    domRefs.voiceOverlay.style.display = 'none';
+    hudContext.showMessage('Voice Settings: Hidden');
+  } else {
+    hideSettingsHudSilently();
+    domRefs.voiceOverlay.style.display = 'block';
+    hudContext.showMessage('Voice Settings: Shown');
+  }
+  updateVoiceBtn();
+}
+
 function updateHelpBtn() {
   if (!domRefs.helpBtn || !domRefs.helpPanel) return;
   const visible = domRefs.helpPanel.style.display === 'block';
@@ -662,8 +695,14 @@ function updateHelpBtn() {
 function toggleHelpPanel() {
   if (!domRefs.helpPanel) return;
   const visible = domRefs.helpPanel.style.display === 'block';
-  domRefs.helpPanel.style.display = visible ? 'none' : 'block';
-  hudContext.showMessage(visible ? 'Help Panel: Hidden' : 'Help Panel: Shown');
+  if (visible) {
+    domRefs.helpPanel.style.display = 'none';
+    hudContext.showMessage('Help Panel: Hidden');
+  } else {
+    hideSettingsHudSilently();
+    domRefs.helpPanel.style.display = 'block';
+    hudContext.showMessage('Help Panel: Shown');
+  }
   updateHelpBtn();
 }
 
@@ -811,6 +850,7 @@ export function toggleOperatorPanel() {
     domRefs.operatorOverlay.style.setProperty('display', 'none');
     hudContext.showMessage('Operator Panel: Hidden');
   } else {
+    hideSettingsHudSilently();
     domRefs.operatorOverlay.style.setProperty('display', 'block');
     hudContext.showMessage('Operator Panel: Shown');
     const requestId = Math.floor(Math.random() * 1e9);
@@ -833,10 +873,14 @@ function bindHudElements() {
   domRefs.helpBtn = document.getElementById('helpBtn');
   domRefs.settingsBtn = document.getElementById('settingsBtn');
   domRefs.settingsHud = document.getElementById('settingsHud');
+  domRefs.voiceBtn = document.getElementById('voiceBtn');
+  domRefs.voiceOverlay = document.getElementById('voiceOverlay');
   domRefs.helpPanel = document.getElementById('helpPanel');
   domRefs.closeSettingsBtn = document.getElementById('closeSettingsHud');
+  domRefs.closeHelpBtn = document.getElementById('closeHelpBtn');
   domRefs.operatorBtn = document.getElementById('operatorBtn');
   domRefs.closeOperatorBtn = document.getElementById('closeOperatorBtn');
+  domRefs.closeVoiceBtn = document.getElementById('closeVoiceBtn');
   domRefs.wireframeBtn = document.getElementById('wireframeBtn');
   domRefs.playerNameEl = document.getElementById('playerName');
   domRefs.voicePermissionBtn = document.getElementById('voicePermissionBtn') ||
@@ -851,6 +895,7 @@ function bindHudElements() {
   // Settings controls include native selects and checkboxes. Stop gameplay
   // input from escaping the panel without cancelling their default behavior.
   stopPropagationForHud(['settingsHud'], false);
+  stopPropagationForHud(['voiceOverlay'], false);
   stopPropagationForHud(['operatorOverlay'], false);
 
   if (domRefs.wireframeBtn) {
@@ -924,11 +969,35 @@ function bindHudElements() {
     });
   }
 
+  if (domRefs.voiceBtn) {
+    domRefs.voiceBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleVoiceOverlay();
+    });
+  }
+
   if (domRefs.closeSettingsBtn) {
     domRefs.closeSettingsBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       toggleSettingsHud();
+    });
+  }
+
+  if (domRefs.closeHelpBtn) {
+    domRefs.closeHelpBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleHelpPanel();
+    });
+  }
+
+  if (domRefs.closeVoiceBtn) {
+    domRefs.closeVoiceBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleVoiceOverlay();
     });
   }
 

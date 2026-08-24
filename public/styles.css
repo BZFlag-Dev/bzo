@@ -50,7 +50,7 @@ html, body {
   white-space: nowrap;
   position: absolute;
 }
-#operatorOverlay, #operatorOverlay * {
+#operatorOverlay, #operatorOverlay *, #voiceOverlay, #voiceOverlay *, #helpPanel, #helpPanel * {
   pointer-events: auto !important;
 }
 
@@ -425,6 +425,21 @@ body {
   display: none;
 }
 
+#helpPanel .dialogTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 20px 0;
+  color: #4CAF50;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+#helpPanel .dialogContent {
+  display: flex;
+  flex-direction: column;
+}
+
 #helpPanel h1 {
   font-size: 28px;
   margin-bottom: 20px;
@@ -455,6 +470,28 @@ body {
   color: #fff;
 }
 
+.closeBtn {
+  border: 2px solid #4CAF50;
+  border-radius: 5px;
+  background: rgba(76, 175, 80, 0.2);
+  color: #4CAF50;
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 10px;
+  transition: all 0.2s;
+}
+
+.closeBtn:hover {
+  background: rgba(76, 175, 80, 0.4);
+  border-color: #66bb6a;
+}
+
+.closeBtn:active {
+  background: rgba(76, 175, 80, 0.6);
+}
+
 /* Operator Panel Styling */
 #operatorOverlay {
   position: absolute;
@@ -467,6 +504,35 @@ body {
   border-radius: 15px;
   border: 2px solid #4CAF50;
   display: none;
+}
+
+#voiceOverlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 310;
+  background: rgba(0, 0, 0, 0.95);
+  padding: 30px;
+  border-radius: 15px;
+  border: 2px solid #4CAF50;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(90vh, 760px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  display: none;
+}
+
+#voiceOverlay .dialogTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#voiceOverlay .dialogContent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 #motd {

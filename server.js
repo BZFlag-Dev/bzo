@@ -1207,30 +1207,20 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
   let collision = checkCollision(newX, newY, newZ, 2);
   if (collision) {
     if (collision === true) {
-      // Should not happen, but fallback
-      if (ANTICHEAT_CONFIG.mode === 'warning') {
-        log(`[ANTICHEAT:WARNING] Player "${player.name}" collided with unknown object but movement accepted in warning mode x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
-      } else {
-        log(`Player "${player.name}" collided with unknown object x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
-        return false;
-      }
-    } else if (collision.collisionKind === 'boundary') {
-      if (ANTICHEAT_CONFIG.mode === 'warning') {
-        log(`[ANTICHEAT:WARNING] Player "${player.name}" collided boundary but movement accepted in warning mode x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
-      } else {
-        log(`Player "${player.name}" collided boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
-        return false;
-      }
-    } else {
-      // Log obstacle details
-      const { x, z, w, d, h, baseY, rotation } = collision;
-      if (ANTICHEAT_CONFIG.mode === 'warning') {
-        log(`[ANTICHEAT:WARNING] Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} but movement accepted in warning mode (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
-      } else {
-        log(`Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
-        return false;
-      }
+      // Should not happen, but fallback to safe rejection.
+      log(`Player "${player.name}" collided with unknown object x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+      return false;
     }
+
+    if (collision.collisionKind === 'boundary') {
+      log(`Player "${player.name}" collided boundary x:${player.x.toFixed(2)}, y:${player.y.toFixed(2)}, z:${player.z.toFixed(2)}`);
+      return false;
+    }
+
+    // Log obstacle details and reject movement.
+    const { x, z, w, d, h, baseY, rotation } = collision;
+    log(`Player "${player.name}" collided obs:${collision.name} ${x.toFixed(2)},${baseY.toFixed(2)},${z.toFixed(2)}, w:${w.toFixed(2)}, d:${d.toFixed(2)}, h:${h.toFixed(2)}, rot:${rotation.toFixed(2)} (p ${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2) })`);
+    return false;
   }
 
   return true;

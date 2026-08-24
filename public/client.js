@@ -1849,7 +1849,7 @@ function init() {
   // Prevent iOS scrolling/bounce on fullscreen (web app mode)
   document.addEventListener('touchmove', (e) => {
     // Allow touch on specific elements (chat, controls overlay, etc.)
-    const allowedSelectors = ['#chatInput', '#chatWindow', '#controlsOverlay', '#settingsHud', '#helpPanel', '#entryDialog', '#operatorOverlay'];
+    const allowedSelectors = ['#chatInput', '#chatWindow', '#controlsOverlay', '#settingsHud', '#voiceOverlay', '#helpPanel', '#entryDialog', '#operatorOverlay'];
     const isAllowed = allowedSelectors.some(sel => {
       const el = document.querySelector(sel);
       return el && (e.target === el || (e.target && el.contains(e.target)));
@@ -3058,6 +3058,7 @@ function refreshCollisionColliders() {
 
 // Returns: null, { type: 'collision', obstacle }, or { type: 'ontop', obstacle }
 function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
+  let ontopCollision = null;
   for (const obs of getCollisionColliders()) {
     if (ignoredObstacles && ignoredObstacles.has(obs)) continue;
     const obstacleHeight = obs.h || 4;
@@ -3075,10 +3076,10 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
     // Check if we're "on top" of this obstacle (at its top height or a climbable slope)
     if (obs.type === 'pyramid') {
       if (pyramidSurface && pyramidSurface.supportable && Math.abs(y - pyramidSurface.supportSurfaceY) < ONTOP_TOLERANCE) {
-        return { type: 'ontop', obstacle: obs, obstacleTop: pyramidSurface.supportSurfaceY, surfaceNormal: pyramidSurface.normal };
+        ontopCollision = { type: 'ontop', obstacle: obs, obstacleTop: pyramidSurface.supportSurfaceY, surfaceNormal: pyramidSurface.normal };
       }
     } else if (Math.abs(y - obstacleTop) < ONTOP_TOLERANCE && distSquared < tankRadius * tankRadius) {
-      return { type: 'ontop', obstacle: obs, obstacleTop };
+      ontopCollision = { type: 'ontop', obstacle: obs, obstacleTop };
     }
 
     // Only check collision if tank top is below obstacle top and tank base is above obstacle base
@@ -3107,7 +3108,7 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
       }
     }
   }
-  return false;
+  return ontopCollision || false;
 }
 
 function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, tankRadius = 2) {
