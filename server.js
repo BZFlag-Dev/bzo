@@ -1242,6 +1242,15 @@ function validateShot(player, shotX, shotY, shotZ) {
   const barrelLength = 3.0;
   const now = Date.now();
 
+  if (player.lastShot > 0) {
+    const elapsedSinceLastShot = now - player.lastShot;
+    if (elapsedSinceLastShot < GAME_CONFIG.SHOT_RELOAD_TIME) {
+      const remaining = GAME_CONFIG.SHOT_RELOAD_TIME - elapsedSinceLastShot;
+      log(`Player "${player.name}" tried to fire too soon (${remaining}ms remaining)`);
+      return false;
+    }
+  }
+
   // Use extrapolated position, not stored position
   const extrapolated = player.getExtrapolatedPosition(now);
   const dist = distance(extrapolated.x, extrapolated.z, shotX, shotZ);
@@ -1962,6 +1971,7 @@ wss.on('connection', (ws, req) => {
             log(`Player "${player.name}" had no free shot slot despite passing validation`);
             break;
           }
+          player.lastShot = Date.now();
           const id = (++projectileIdCounter).toString();
           const proj = new Projectile(
             id,

@@ -24,7 +24,7 @@ export const xrState = {
   frameCounter: 0,
 };
 
-// Send debug message through app-wide logger in game.js
+// Send debug message through app-wide logger in client.js
 export function debugLog(message) {
   if (typeof window !== 'undefined' && typeof window.gameDebugLog === 'function') {
     window.gameDebugLog(message, 'WebXR');

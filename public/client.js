@@ -91,6 +91,7 @@ let renderReadyForJoin = false;
 let gameplayJoinConfirmed = false;
 let initSequence = 0;
 let activeInitSequence = 0;
+let nextAllowedShotAt = 0;
 let playerRole = 'active';
 let selectedVoiceInputDeviceId = '';
 let voiceRtcConfig = { iceServers: [] };
@@ -143,6 +144,14 @@ function callVoiceManager(method, ...args) {
     showMessage(`Voice error: ${error.message || 'operation failed'}`);
     return { called: true, value: undefined };
   }
+}
+
+function getShotReloadTimeMs() {
+  const configuredReload = Number(gameConfig?.SHOT_RELOAD_TIME);
+  if (Number.isFinite(configuredReload) && configuredReload > 0) {
+    return configuredReload;
+  }
+  return 1000;
 }
 
 function getVoiceAudioSettings() {
@@ -4707,17 +4716,21 @@ function handleMotion(deltaTime) {
 
   }
   // Fire button: keyboard Space, mobile/XR/gamepad virtualInput.fire
-  if ((!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire)) {
+  const firePressed = (!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
+  const fireNow = performance.now();
+  if (firePressed && fireNow >= nextAllowedShotAt) {
     const maxActiveShots = Number.isFinite(gameConfig?.SHOT_MAX_ACTIVE) ? gameConfig.SHOT_MAX_ACTIVE : 1;
     if (getActiveProjectileCountForPlayer(myPlayerId) < maxActiveShots) {
-      shoot();
+      if (shoot()) {
+        nextAllowedShotAt = fireNow + getShotReloadTimeMs();
+      }
     }
   }
 }
 
 function shoot() {
-  if (isSpectatorRole()) return;
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (isSpectatorRole()) return false;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
   const dirX = -Math.sin(playerRotation);
   const dirZ = -Math.cos(playerRotation);
@@ -4741,6 +4754,7 @@ function shoot() {
     dirX,
     dirZ,
   });
+  return true;
 }
 
 function updateProjectiles(deltaTime) {
