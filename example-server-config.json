@@ -24,6 +24,8 @@
   "shotRadius": 0.5,
   "shotTailLength": 4.0,
   "shotsKeepVerticalVelocity": false,
+  "voiceNearbyRadius": 60,
+  "voiceIceServers": [],
   "fogMode": "none",
   "fogDensity": 0.001,
   "fogStart": 50,

@@ -60,6 +60,53 @@
         <button id="xrBtn" class="settingsHudBtn" title="Enter WebXR VR Mode">VR Mode</button>
         <button id="closeSettingsHud" class="settingsHudBtn">Close</button>
       </div>
+      <section id="voiceSettings" class="voiceSettings" aria-labelledby="voiceSettingsTitle">
+        <h2 id="voiceSettingsTitle">Voice Settings</h2>
+        <p id="voiceSettingsDescription" class="voiceSettingsDescription">
+          Nearby voice uses your microphone only after you grant permission. Use B to toggle your microphone.
+        </p>
+        <div class="voiceSettingRow">
+          <label for="voiceChannelSelect">Voice channel</label>
+          <select id="voiceChannelSelect" aria-describedby="voiceChannelDescription" disabled>
+            <option value="nearby">Nearby</option>
+          </select>
+          <span id="voiceChannelDescription" class="voiceSettingHint">The initial voice channel is Nearby.</span>
+        </div>
+        <div class="voiceSettingRow">
+          <label for="voiceInputDevice">Microphone input</label>
+          <select id="voiceInputDevice" aria-describedby="voiceInputDeviceDescription">
+            <option value="">Default microphone</option>
+          </select>
+          <span id="voiceInputDeviceDescription" class="voiceSettingHint">Choose the microphone used for voice chat.</span>
+        </div>
+        <div class="voiceSettingRow voiceProcessingOptions" role="group" aria-labelledby="voiceProcessingTitle">
+          <span id="voiceProcessingTitle" class="voiceSettingLabel">Native audio processing</span>
+          <label class="voiceCheckboxLabel" for="voiceEchoCancellation">
+            <input id="voiceEchoCancellation" type="checkbox" checked>
+            Echo cancellation
+          </label>
+          <label class="voiceCheckboxLabel" for="voiceNoiseSuppression">
+            <input id="voiceNoiseSuppression" type="checkbox" checked>
+            Noise suppression
+          </label>
+          <label class="voiceCheckboxLabel" for="voiceAutoGainControl">
+            <input id="voiceAutoGainControl" type="checkbox" checked>
+            Automatic gain control
+          </label>
+          <span id="voiceProcessingStatus" class="voiceSettingHint" role="status" aria-live="polite">
+            Native browser processing is enabled when supported.
+          </span>
+        </div>
+        <div class="voiceSettingActions">
+          <button id="voiceRequestPermissionBtn" class="settingsHudBtn" type="button">Enable microphone</button>
+          <button id="voiceMicToggle" class="settingsHudBtn voiceMicToggle" type="button" aria-pressed="false" disabled>
+            Microphone off
+          </button>
+        </div>
+        <p id="voicePermissionStatus" class="voicePermissionStatus" role="status" aria-live="polite">
+          Microphone permission has not been requested.
+        </p>
+      </section>
     </div>
   </div>
 
@@ -98,6 +145,18 @@
       <span id="serverMotd"></span>
     </div>
     <input type="text" id="entryInput" maxlength="20" placeholder="Enter your name">
+    <fieldset id="entryRoleSelector" class="entryRoleSelector" aria-describedby="entryRoleDescription">
+      <legend>Play mode</legend>
+      <p id="entryRoleDescription">Active players can move and speak. Spectators can only watch and listen.</p>
+      <label for="entryRoleActive">
+        <input id="entryRoleActive" type="radio" name="entryRole" value="active" checked>
+        Active player
+      </label>
+      <label for="entryRoleSpectator">
+        <input id="entryRoleSpectator" type="radio" name="entryRole" value="spectator">
+        Spectator
+      </label>
+    </fieldset>
     <div id="tankSelector">
       <div id="tankSelectorTitle">Choose Tank</div>
       <div id="tankSelectorCarousel">
@@ -163,6 +222,13 @@
         <li><strong>Click Player Name</strong> — Change Name</li>
       </ul>
 
+      <h2>Nearby Voice</h2>
+      <ul>
+        <li><strong>B</strong> — <b>Toggle Microphone</b></li>
+        <li>Nearby voice is available to active players after microphone permission is granted.</li>
+        <li>Spectators can listen but cannot transmit.</li>
+      </ul>
+
       <h2>3D Viewing Modes</h2>
       <ul>
         <li><strong>Anaglyph 3D</strong> — Red/Cyan glasses for 3D effect</li>
@@ -182,6 +248,10 @@
   <div id="controlBox"></div>
   <canvas id="altimeter"></canvas>
   <canvas id="shotStatus"></canvas>
+  <div id="voiceChannelHud" class="voiceChannelHud voiceChannelHud--muted" role="status" aria-live="polite" aria-label="Nearby voice channel, microphone off">
+    <span class="voiceChannelHudLabel">Nearby</span>
+    <span id="voiceChannelHudStatus" class="voiceChannelHudStatus">Microphone off</span>
+  </div>
   <div id="crosshair">
     <div class="center"></div>
   </div>

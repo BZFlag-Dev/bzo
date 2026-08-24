@@ -396,22 +396,12 @@ export function setupInputHandlers() {
   // Keyboard
   document.addEventListener('keydown', (e) => {
     const activeElement = document.activeElement;
-    const isEditableElement = activeElement && (
-      activeElement.tagName === 'INPUT' ||
-      activeElement.tagName === 'TEXTAREA' ||
-      activeElement.isContentEditable
-    );
-    if (isEditableElement) return;
+    if (isEditableElement(activeElement)) return;
     keys[e.code] = true;
   });
   document.addEventListener('keyup', (e) => {
     const activeElement = document.activeElement;
-    const isEditableElement = activeElement && (
-      activeElement.tagName === 'INPUT' ||
-      activeElement.tagName === 'TEXTAREA' ||
-      activeElement.isContentEditable
-    );
-    if (isEditableElement) return;
+    if (isEditableElement(activeElement)) return;
     keys[e.code] = false;
   });
 }
@@ -501,6 +491,8 @@ const domRefs = {
   closeOperatorBtn: null,
   wireframeBtn: null,
   playerNameEl: null,
+  voicePermissionBtn: null,
+  voiceMicrophoneBtn: null,
 };
 
 let wireframeEnabled = false;
@@ -508,6 +500,24 @@ let orientationMode = null;
 let orientationListenersAttached = false;
 let keyboardListenerAttached = false;
 let orientationDebugInitialized = false;
+
+function isEditableElement(element) {
+  return Boolean(element && (
+    element.tagName === 'INPUT' ||
+    element.tagName === 'TEXTAREA' ||
+    element.tagName === 'SELECT' ||
+    element.isContentEditable
+  ));
+}
+
+function callOptionalHudCallback(names, ...args) {
+  for (const name of names) {
+    if (typeof hudContext[name] !== 'function') continue;
+    hudContext[name](...args);
+    return true;
+  }
+  return false;
+}
 
 function isMobileBrowser() {
   const ua = navigator.userAgent || navigator.vendor || window.opera;
@@ -829,8 +839,18 @@ function bindHudElements() {
   domRefs.closeOperatorBtn = document.getElementById('closeOperatorBtn');
   domRefs.wireframeBtn = document.getElementById('wireframeBtn');
   domRefs.playerNameEl = document.getElementById('playerName');
+  domRefs.voicePermissionBtn = document.getElementById('voicePermissionBtn') ||
+    document.getElementById('voiceRequestPermissionBtn') ||
+    document.getElementById('requestVoicePermissionBtn');
+  domRefs.voiceMicrophoneBtn = document.getElementById('voiceMicrophoneBtn') ||
+    document.getElementById('voiceMicBtn') ||
+    document.getElementById('voiceMicToggle') ||
+    document.getElementById('microphoneBtn');
 
-  stopPropagationForHud(['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'settingsHud', 'helpPanel']);
+  stopPropagationForHud(['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'helpPanel']);
+  // Settings controls include native selects and checkboxes. Stop gameplay
+  // input from escaping the panel without cancelling their default behavior.
+  stopPropagationForHud(['settingsHud'], false);
   stopPropagationForHud(['operatorOverlay'], false);
 
   if (domRefs.wireframeBtn) {
@@ -937,6 +957,26 @@ function bindHudElements() {
     });
   }
 
+  if (domRefs.voicePermissionBtn) {
+    domRefs.voicePermissionBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      callOptionalHudCallback([
+        'requestVoicePermission',
+        'requestVoiceMicrophonePermission',
+        'requestMicrophonePermission',
+      ]);
+    });
+  }
+
+  if (domRefs.voiceMicrophoneBtn) {
+    domRefs.voiceMicrophoneBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      callOptionalHudCallback(['toggleVoiceMicrophone', 'toggleMicrophone']);
+    });
+  }
+
   if (!keyboardListenerAttached) {
     document.addEventListener('keydown', (e) => {
       const activeElement = document.activeElement;
@@ -944,6 +984,7 @@ function bindHudElements() {
       if (activeElement === chatInput) return;
       const entryInput = document.getElementById('entryInput');
       if (activeElement === entryInput) return;
+      if (isEditableElement(activeElement)) return;
 
       if (e.key === 'm' || e.key === 'M') {
         toggleMouseMode();
@@ -962,6 +1003,10 @@ function bindHudElements() {
         cycleCameraMode();
       } else if (e.key === 'o' || e.key === 'O') {
         toggleOperatorPanel();
+      } else if ((e.key === 'b' || e.key === 'B') && !e.repeat) {
+        if (callOptionalHudCallback(['toggleVoiceMicrophone', 'toggleMicrophone'])) {
+          e.preventDefault();
+        }
       } else if (e.key === '?' || e.key === '/') {
         toggleHelpPanel();
       }

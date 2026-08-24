@@ -538,6 +538,10 @@ body {
   border-radius: 15px;
   border: 2px solid #4CAF50;
   display: none;
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(90vh, 760px);
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 #loadingOverlay {
@@ -631,6 +635,48 @@ body {
 #entryInput:focus {
   outline: none;
   border-color: #66bb6a;
+}
+
+.entryRoleSelector {
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.9rem 0.9rem;
+  border: 1px solid rgba(76, 175, 80, 0.65);
+  border-radius: 0.6rem;
+  color: var(--color-fg);
+}
+
+.entryRoleSelector legend {
+  padding: 0 0.35rem;
+  color: var(--color-accent-light);
+  font-weight: bold;
+}
+
+.entryRoleSelector p {
+  margin: 0 0 0.65rem;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.entryRoleSelector label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-right: 1rem;
+  color: var(--color-fg);
+  cursor: pointer;
+}
+
+.entryRoleSelector input {
+  accent-color: var(--color-accent);
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin: 0;
+}
+
+.entryRoleSelector input:focus-visible {
+  outline: 2px solid var(--color-btn-bg-focus);
+  outline-offset: 2px;
 }
 
 #tankSelector {
@@ -864,6 +910,57 @@ canvas {
   z-index: 50;
 }
 
+.voiceChannelHud {
+  position: fixed;
+  top: calc(50% + max(2.5rem, 5vmin));
+  left: calc(50% + 25vmin + max(16px, 2vw) + 16px);
+  z-index: 60;
+  min-width: 6.5rem;
+  max-width: min(12rem, 30vw);
+  padding: 0.45rem 0.75rem;
+  border: 2px solid #f44336;
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.78);
+  color: var(--color-fg);
+  font-size: 0.78rem;
+  font-weight: bold;
+  line-height: 1.2;
+  text-align: center;
+  pointer-events: auto;
+  box-sizing: border-box;
+  text-shadow: 0 1px 2px #000;
+}
+
+.voiceChannelHud--active {
+  border-color: var(--color-accent-light);
+  box-shadow: 0 0 0.55rem rgba(102, 187, 106, 0.55);
+}
+
+.voiceChannelHud--muted {
+  border-color: #f44336;
+  box-shadow: 0 0 0.55rem rgba(244, 67, 54, 0.4);
+}
+
+.voiceChannelHudLabel,
+.voiceChannelHudStatus {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voiceChannelHudLabel {
+  color: var(--color-fg);
+  font-size: 0.95rem;
+}
+
+.voiceChannelHudStatus {
+  margin-top: 0.15rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.7rem;
+  font-weight: normal;
+}
+
 #controlBox {
   position: fixed;
   top: 50%;
@@ -1021,6 +1118,139 @@ canvas {
   gap: 2vw;
   width: 100%;
 }
+
+.voiceSettings {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: 760px;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid rgba(76, 175, 80, 0.55);
+  border-radius: 0.75rem;
+  background: rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.voiceSettings h2 {
+  margin: 0 0 0.5rem;
+  color: var(--color-accent-light);
+  font-size: 1.25rem;
+}
+
+.voiceSettingsDescription,
+.voiceSettingHint,
+.voicePermissionStatus {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.voiceSettingsDescription {
+  margin: 0 0 1rem;
+}
+
+.voiceSettingRow {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.45fr) minmax(11rem, 1fr);
+  gap: 0.35rem 0.75rem;
+  align-items: center;
+  margin: 0 0 0.85rem;
+}
+
+.voiceSettingRow > label,
+.voiceSettingLabel {
+  color: var(--color-fg);
+  font-weight: bold;
+}
+
+.voiceSettingRow select {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(76, 175, 80, 0.7);
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.75);
+  color: var(--color-fg);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.voiceSettingRow select:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.voiceSettingRow select:focus,
+.voiceCheckboxLabel input:focus-visible,
+.voiceSettingActions button:focus-visible {
+  outline: 2px solid var(--color-btn-bg-focus);
+  outline-offset: 2px;
+}
+
+.voiceSettingHint {
+  grid-column: 2;
+  margin: 0;
+}
+
+.voiceProcessingOptions {
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  padding-top: 0.25rem;
+}
+
+.voiceProcessingOptions .voiceSettingHint {
+  grid-column: 1;
+}
+
+.voiceCheckboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.voiceCheckboxLabel input {
+  accent-color: var(--color-accent);
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin: 0;
+}
+
+.voiceSettingActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.voiceSettingActions .settingsHudBtn {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.9rem;
+  border: 2px solid var(--color-accent);
+  border-radius: 0.45rem;
+  background: var(--color-btn-bg);
+  color: var(--color-fg);
+}
+
+.voiceSettingActions .settingsHudBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.voiceSettingActions .voiceMicToggle[aria-pressed="true"] {
+  border-color: var(--color-accent-light);
+  background: var(--color-btn-bg-active);
+}
+
+.voicePermissionStatus {
+  min-height: 1.2em;
+  margin: 0.75rem 0 0;
+}
+
 .settingsHudBtn {
   font-size: 1.2em;
   border-radius: 2vw;
@@ -1060,4 +1290,54 @@ canvas {
   z-index: 51;
   pointer-events: none;
   background: transparent;
+}
+
+@media (max-width: 900px) {
+  .voiceChannelHud {
+    left: auto;
+    right: max(10px, env(safe-area-inset-right));
+    max-width: 9rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .voiceSettings {
+    padding: 0.75rem;
+  }
+
+  .voiceSettingRow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+
+  .voiceSettingHint,
+  .voiceProcessingOptions .voiceSettingHint {
+    align-self: stretch;
+  }
+
+  .voiceSettingActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .voiceSettingActions .settingsHudBtn {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+
+  .voiceChannelHud {
+    top: calc(50% + 2.25rem);
+    right: max(8px, env(safe-area-inset-right));
+    min-width: 5.75rem;
+    max-width: 8rem;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.72rem;
+  }
+
+  .entryRoleSelector label {
+    display: flex;
+    margin: 0.45rem 0 0;
+  }
 }
