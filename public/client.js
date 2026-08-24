@@ -2294,6 +2294,18 @@ function handleServerMessage(message) {
     }
   }
 
+  // Some admin/operator responses are sent without a message type.
+  if (typeof message?.error === 'string' && message.error.length > 0) {
+    console.error('Server error response:', message.error, message);
+    showMessage(`Server error: ${message.error}`);
+    return;
+  }
+
+  if (message?.success === true && typeof message.type !== 'string') {
+    showMessage('Server: action completed successfully');
+    return;
+  }
+
   switch (message.type) {
     case 'init': {
       const sequenceId = ++initSequence;

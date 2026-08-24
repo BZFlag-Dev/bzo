@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-08-24
+
+### Added
+- Added persistent runtime map storage for uploads and operator-managed maps via a runtime maps directory (defaulting to `/data/maps` in Docker).
+
+### Changed
+- Updated map discovery and selection to merge runtime-uploaded maps with bundled image maps.
+- Updated Docker documentation to explain where server config and uploaded maps persist by default.
+
+### Fixed
+- Fixed Docker map switching reload behavior by restarting the process after operator map changes when not running under nodemon.
+- Fixed silent operator failures by surfacing generic server success/error responses in the client and logging config write errors with paths server-side.
+
 ## [1.0.20] - 2026-08-24
 
 ### Added

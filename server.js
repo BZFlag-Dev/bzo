@@ -167,8 +167,67 @@ function ensureServerConfig(configPath) {
 }
 
 const configPath = CONFIG_PATH;
+const BUNDLED_MAPS_DIR = path.join(__dirname, 'maps');
+const RUNTIME_MAPS_DIR = process.env.MAPS_PATH
+  ? path.resolve(process.env.MAPS_PATH)
+  : path.join(path.dirname(configPath), 'maps');
+
+function ensureRuntimeMapsDir(dirPath) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+  } catch (error) {
+    logError(`Could not ensure runtime maps directory at ${dirPath}:`, error);
+  }
+}
+
+function listAvailableMapFiles() {
+  const mapFiles = new Set();
+  const mapDirs = [RUNTIME_MAPS_DIR, BUNDLED_MAPS_DIR];
+
+  for (const dirPath of mapDirs) {
+    try {
+      if (!fs.existsSync(dirPath)) {
+        continue;
+      }
+      for (const fileName of fs.readdirSync(dirPath)) {
+        if (fileName.endsWith('.bzw')) {
+          mapFiles.add(fileName);
+        }
+      }
+    } catch (error) {
+      logError(`Failed to read maps from ${dirPath}:`, error);
+    }
+  }
+
+  return ['random', ...Array.from(mapFiles).sort((left, right) => left.localeCompare(right))];
+}
+
+function resolveMapFilePath(mapFile) {
+  if (!mapFile || mapFile === 'random') {
+    return '';
+  }
+
+  const safeFileName = path.basename(mapFile);
+  if (safeFileName !== mapFile) {
+    return '';
+  }
+
+  const runtimePath = path.join(RUNTIME_MAPS_DIR, safeFileName);
+  if (fs.existsSync(runtimePath)) {
+    return runtimePath;
+  }
+
+  const bundledPath = path.join(BUNDLED_MAPS_DIR, safeFileName);
+  if (fs.existsSync(bundledPath)) {
+    return bundledPath;
+  }
+
+  return '';
+}
+
 let serverConfig = {};
 ensureServerConfig(configPath);
+ensureRuntimeMapsDir(RUNTIME_MAPS_DIR);
 try {
   serverConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 } catch (e) {
@@ -376,10 +435,11 @@ log(
 );
 log(`Voice config: nearbyRadius=${GAME_CONFIG.VOICE_NEARBY_RADIUS}`);
 log(`Voice ICE config: ${VOICE_ICE_SERVERS.length} server entr${VOICE_ICE_SERVERS.length === 1 ? 'y' : 'ies'}`);
+log(`Map directories: runtime=${RUNTIME_MAPS_DIR}, bundled=${BUNDLED_MAPS_DIR}`);
 if (MAP_SOURCE !== 'random') {
-  mapPath = path.join(__dirname, 'maps', MAP_SOURCE);
+  mapPath = resolveMapFilePath(MAP_SOURCE);
   if (!fs.existsSync(mapPath)) {
-    logError(`Map file not found: ${mapPath}. Reverting to random map.`);
+    logError(`Map file not found: ${MAP_SOURCE}. Reverting to random map.`);
     MAP_SOURCE = 'random';
   } else {
     // Watch the map file for changes and restart the server if it changes
@@ -568,10 +628,8 @@ if (MAP_SOURCE === 'random') {
   OBSTACLES = generateObstacles();
   log(`Generated ${OBSTACLES.length} random obstacles`);
 } else {
-  // Always look for maps in maps/ directory
-  const mapFilePath = path.join(__dirname, 'maps', MAP_SOURCE);
-  OBSTACLES = parseBZWMap(mapFilePath);
-  log(`Loaded ${OBSTACLES.length} obstacles from maps/${MAP_SOURCE}`);
+  OBSTACLES = parseBZWMap(mapPath);
+  log(`Loaded ${OBSTACLES.length} obstacles from ${mapPath}`);
 }
 log(OBSTACLES);
 
@@ -1625,6 +1683,19 @@ function requestServerRestart(reason) {
     return;
   }
 
+  const runningUnderNodemon = process.env.NODEMON === 'true' || process.env.npm_lifecycle_event === 'dev';
+
+  // In production (for example Docker running "node server.js"), there is no
+  // nodemon watcher to react to timestamp touches. Exit so restart policies
+  // relaunch the process and pick up the updated config.
+  if (!runningUnderNodemon) {
+    setTimeout(() => {
+      log('Restarting process to apply config change...');
+      process.exit(0);
+    }, 1000);
+    return;
+  }
+
   // Touch server.js to update its timestamp and trigger nodemon file watcher
   // This causes nodemon to detect the "change" and restart immediately
   // without the "waiting for changes" message
@@ -1651,18 +1722,11 @@ function approachNormalizedValue(currentValue, targetValue, maxStep) {
 
 // Helper to send the map list and current map to a given websocket
 function sendMapList(ws) {
-  fs.readdir(path.join(__dirname, 'maps'), (err, files) => {
-    let maps = [];
-    if (!err && files) {
-      maps = files.filter(f => f.endsWith('.bzw'));
-      maps = ['random', ...maps];
-    }
-    ws.send(JSON.stringify({
-      type: 'mapList',
-      maps,
-      currentMap: MAP_SOURCE
-    }));
-  });
+  ws.send(JSON.stringify({
+    type: 'mapList',
+    maps: listAvailableMapFiles(),
+    currentMap: MAP_SOURCE
+  }));
 }
 
 // WebSocket connection handler
@@ -2121,14 +2185,15 @@ wss.on('connection', (ws, req) => {
         }
         case 'setMap': {
           // Admin: set map
-          const mapFile = message.mapFile;
-          if (!mapFile || (mapFile !== 'random' && !mapFile.endsWith('.bzw'))) {
+          const mapFile = typeof message.mapFile === 'string' ? message.mapFile.trim() : '';
+          const safeMapFile = path.basename(mapFile);
+          if (!mapFile || mapFile !== safeMapFile || (mapFile !== 'random' && !mapFile.endsWith('.bzw'))) {
             ws.send(JSON.stringify({ error: 'Invalid map file' }));
             break;
           }
           if (mapFile !== 'random') {
-            const mapPath = path.join(__dirname, 'maps', mapFile);
-            if (!fs.existsSync(mapPath)) {
+            const selectedMapPath = resolveMapFilePath(mapFile);
+            if (!selectedMapPath) {
               ws.send(JSON.stringify({ error: 'Map file not found' }));
               break;
             }
@@ -2140,7 +2205,8 @@ wss.on('connection', (ws, req) => {
             ws.send(JSON.stringify({ success: true }));
             log(`Admin set map to ${mapFile}. Server restart required.`);
             requestServerRestart(`admin map change to ${mapFile}`);
-          } catch {
+          } catch (error) {
+            logError(`Failed to update config at ${configPath}:`, error);
             ws.send(JSON.stringify({ error: 'Failed to update config' }));
           }
           break;
@@ -2148,25 +2214,27 @@ wss.on('connection', (ws, req) => {
         case 'uploadMap': {
           // Admin: upload map
           const { mapName, mapContent } = message;
-          if (!mapName || !mapName.endsWith('.bzw') || !mapContent) {
+          const normalizedMapName = typeof mapName === 'string' ? mapName.trim() : '';
+          const safeMapName = path.basename(normalizedMapName);
+          if (!normalizedMapName || normalizedMapName !== safeMapName || !safeMapName.endsWith('.bzw') || !mapContent) {
             ws.send(JSON.stringify({ error: 'Invalid map upload' }));
             break;
           }
-          const mapPath = path.join(__dirname, 'maps', mapName);
-          fs.writeFile(mapPath, mapContent, err => {
+          const uploadMapPath = path.join(RUNTIME_MAPS_DIR, safeMapName);
+          fs.writeFile(uploadMapPath, mapContent, err => {
             if (err) {
               logError('Map upload failed:', err);
               ws.send(JSON.stringify({ error: 'Failed to save map' }));
               return;
             }
-            log(`Admin uploaded new map: ${mapName}`);
+            log(`Admin uploaded new map: ${safeMapName}`);
             ws.send(JSON.stringify({ success: true }));
             // Send direct chat message to uploader
             ws.send(JSON.stringify({
               type: 'chat',
               from: -1, // SERVER
               to: player.id,
-              text: `Upload ${mapName} with ${Buffer.byteLength(mapContent, 'utf8')} bytes`
+              text: `Upload ${safeMapName} with ${Buffer.byteLength(mapContent, 'utf8')} bytes`
             }));
             // Send updated map list (mapList reply)
             sendMapList(ws);

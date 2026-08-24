@@ -93,19 +93,30 @@ Use `--platform linux/arm64` on ARM hosts if you want to pin that explicitly.
 
 ### Persisting custom maps (optional)
 
-Built-in maps ship inside the image. If you want your own map files to persist
-across image updates, mount a host directory to `/app/maps`:
+Built-in maps ship inside the image at `/app/maps`.
+
+Runtime map uploads and operator-managed custom maps are stored in a writable
+runtime maps directory that defaults to `$(dirname $SERVER_CONFIG_PATH)/maps`.
+With the default Docker settings, this is `/data/maps`, which is already
+persisted by the existing `./data:/data` volume.
+
+No extra volume is required for operator uploads to persist across restarts.
+
+If you want to override the runtime map directory, set `MAPS_PATH`:
 
 ```yaml
 services:
   bzo:
     image: ghcr.io/timriker/bzo:latest
+    environment:
+      SERVER_CONFIG_PATH: /data/server-config.json
+      MAPS_PATH: /data/maps
     volumes:
       - ./data:/data
-      - ./maps:/app/maps:ro
 ```
 
-Then set `mapFile` in `./data/server-config.json` to one of the files in `./maps`.
+You can still provide static read-only maps in the image path, but uploaded maps
+should go to the runtime directory.
 
 ## Install from source
 
