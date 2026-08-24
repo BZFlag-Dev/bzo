@@ -58,7 +58,6 @@ jobs:
   node-compatibility:
     name: Node.js runtime compatibility
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.node-version == '18.19.1' }}
     strategy:
       fail-fast: false
       matrix:
@@ -116,14 +115,11 @@ jobs:
           fail-on-severity: high
 
   container-build:
-    name: Build and smoke-test Ubuntu ${{ matrix.ubuntu }} ${{ matrix.platform }}
+    name: Build and smoke-test Ubuntu 26.04 ${{ matrix.platform }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ubuntu:
-          - '24.04'
-          - '26.04'
         platform:
           - linux/amd64
           - linux/arm64
@@ -146,9 +142,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: false
           load: true
-          build-args: |
-            UBUNTU_VERSION=${{ matrix.ubuntu }}
-          tags: bzo:ci-${{ matrix.ubuntu }}-${{ strategy.job-index }}
+          tags: bzo:ci-ubuntu26.04-${{ strategy.job-index }}
           provenance: false
           sbom: false
 
@@ -156,12 +150,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image="bzo:ci-${{ matrix.ubuntu }}-${{ strategy.job-index }}"
-          case "${{ matrix.ubuntu }}" in
-            24.04) expected_node="v18.19.1" ;;
-            26.04) expected_node="v24.19.0" ;;
-            *) echo "Unsupported Ubuntu matrix value" >&2; exit 1 ;;
-          esac
+          image="bzo:ci-ubuntu26.04-${{ strategy.job-index }}"
           actual_node="$(docker run --rm --platform "${{ matrix.platform }}" "$image" node --version)"
-          test "$actual_node" = "$expected_node"
+          test "$actual_node" = "v24.19.0"
           docker run --rm --platform "${{ matrix.platform }}" "$image" node --check server.js

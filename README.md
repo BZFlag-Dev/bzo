@@ -17,17 +17,16 @@ Each tagged release publishes:
 
 - a GitHub release with notes generated from [CHANGELOG.md](CHANGELOG.md)
 - a source tarball
-- a versioned Ubuntu 24.04 image at `ghcr.io/bzflag-dev/bzo:<version>-ubuntu24.04`
 - a versioned Ubuntu 26.04 image at `ghcr.io/bzflag-dev/bzo:<version>-ubuntu26.04`
-- moving `ubuntu24.04` and `ubuntu26.04` tags for the two base images
+- a moving `ubuntu26.04` tag
 - `ghcr.io/bzflag-dev/bzo:<version>` and `ghcr.io/bzflag-dev/bzo:latest`, both using Ubuntu 26.04
 
 Every published image contains `linux/amd64` and `linux/arm64` variants. Release
 tags use stable `vX.Y.Z` SemVer only; prerelease and build-metadata tags are not
-published. The Ubuntu 24.04 image intentionally keeps the pinned Node.js
-`18.19.1` runtime for compatibility, while Ubuntu 26.04 uses the supported
-Node.js `24.19.0` runtime. Node.js 18 is EOL, so new deployments should prefer
-the Ubuntu 26.04 image.
+published. Ubuntu 26.04 images use the pinned Node.js `24.19.0` runtime.
+
+Docker images are built on Ubuntu 26.04 with pinned Node.js `24.19.0`.
+Runtime compatibility is validated in CI on Node.js `18.19.1` and `24.19.0`.
 
 ## Install with Docker
 
@@ -63,7 +62,7 @@ The image defaults to `SERVER_CONFIG_PATH=/data/server-config.json`.
 
 ### Prerequisites
 
-- Node.js 24 LTS or a newer supported LTS
+- Node.js 18.19.1 or Node.js 24.19.0
 - npm
 
 ### Setup
@@ -218,7 +217,7 @@ The release workflow will:
 2. install dependencies and run lint, validation, audit, and CodeQL checks
 3. fail if `package.json` does not match the pushed tag
 4. fail if [CHANGELOG.md](CHANGELOG.md) does not contain a matching non-placeholder section
-5. build and smoke-test both Ubuntu LTS images, including their pinned Node.js runtimes, for `linux/amd64` and `linux/arm64`
+5. build and smoke-test Ubuntu 26.04 images with pinned Node.js `24.19.0` for `linux/amd64` and `linux/arm64`
 6. promote the verified versioned and moving Docker tags to GHCR
 7. publish a GitHub release and attach a source tarball
 
