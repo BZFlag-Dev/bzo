@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-08-24
+
+### Added
+- Added release-time Node.js compatibility validation on both Node.js `18.19.1` and `24.19.0`.
+
+### Changed
+- Switched container publishing to a single Ubuntu `26.04` image lane while keeping multi-arch (`linux/amd64`, `linux/arm64`) manifests.
+- Updated the Docker runtime install path to pinned Node.js `24.19.0` binaries on Ubuntu `26.04`.
+
+### Fixed
+- Fixed release process drift by aligning CI, release workflow, Dockerfile, and README with the current Node compatibility and Docker publishing policy.
+
 ## [1.0.17] - 2026-08-24
 
 ### Added
