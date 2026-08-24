@@ -3,23 +3,44 @@
 # Source: https://github.com/BZFlag-Dev/bzo
 # See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
 
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 ENV NODE_ENV=production \
     PORT=3000 \
     SERVER_CONFIG_PATH=/data/server-config.json \
     DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends nodejs npm \
- && rm -rf /var/lib/apt/lists/*
+ARG NODE_VERSION=24.19.0
+ARG NODE_SHA256_AMD64=f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4
+ARG NODE_SHA256_ARM64=d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f
+
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl libstdc++6; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) node_arch="x64"; node_checksum="$NODE_SHA256_AMD64" ;; \
+      arm64) node_arch="arm64"; node_checksum="$NODE_SHA256_ARM64" ;; \
+      *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
+    esac; \
+    node_archive="node-v${NODE_VERSION}-linux-${node_arch}.tar.gz"; \
+    curl --fail --silent --show-error --location --retry 3 \
+      --output "/tmp/${node_archive}" \
+      "https://nodejs.org/dist/v${NODE_VERSION}/${node_archive}"; \
+    echo "${node_checksum}  /tmp/${node_archive}" | sha256sum --check --strict; \
+    tar --extract --gzip --file "/tmp/${node_archive}" \
+      --strip-components=1 --directory /usr/local; \
+    test "$(node --version)" = "v${NODE_VERSION}"; \
+    rm -f "/tmp/${node_archive}"; \
+    apt-get purge -y --auto-remove curl; \
+    rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --create-home --shell /bin/bash node
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY public ./public
 COPY maps ./maps

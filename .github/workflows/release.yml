@@ -5,13 +5,20 @@ on:
     tags:
       - 'v*'
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
-  release:
+  gate:
+    name: Validate release
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      version: ${{ steps.version.outputs.value }}
 
     steps:
       - name: Check out repository
@@ -19,27 +26,49 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify tag commit is on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --no-tags --quiet
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Release tags must point to a commit reachable from main." >&2
+            exit 1
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.19.0
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
 
       - name: Lint and validate
         run: npm run check
 
+      - name: Check production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Validate release metadata
         run: npm run release:check -- "${GITHUB_REF_NAME}"
+
+      - name: Validate tag increment
+        run: npm run release:check:increment -- "${GITHUB_REF_NAME}"
 
       - name: Extract release notes
         run: npm run changelog:extract -- "${GITHUB_REF_NAME}" > release-notes.md
 
       - name: Compute release version
         id: version
+        shell: bash
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Create release archive
         run: |
@@ -49,9 +78,94 @@ jobs:
             -o "bzo-${{ steps.version.outputs.value }}.tar.gz" \
             "$GITHUB_SHA"
 
-      - name: Compute image name
-        id: image
-        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            release-notes.md
+            bzo-${{ steps.version.outputs.value }}.tar.gz
+          retention-days: 7
+
+  codeql:
+    name: CodeQL release scan
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript
+
+  node-compatibility:
+    name: Release Node.js compatibility
+    needs: gate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '18.19.1'
+          - '24.19.0'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Check runtime compatibility
+        run: npm run check
+
+  build:
+    name: Build Ubuntu 26.04 images
+    needs:
+      - gate
+      - codeql
+      - node-compatibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: read
+      attestations: write
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -60,21 +174,141 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image
-        run: |
-          docker build --no-cache --progress=plain \
-            -t ${{ steps.image.outputs.name }}:${{ steps.version.outputs.value }} \
-            -t ${{ steps.image.outputs.name }}:latest \
-            .
+      - name: Build and push staging image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ needs.gate.outputs.image }}:ci-${{ needs.gate.outputs.version }}-ubuntu26.04-${{ github.run_id }}
+          labels: |
+            org.opencontainers.image.title=BZFlag Battlezone Online
+            org.opencontainers.image.version=${{ needs.gate.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=release-ubuntu-26.04
+          provenance: mode=max
+          sbom: true
 
-      - name: Push Docker image
+  verify:
+    name: Verify Ubuntu 26.04 manifest and smoke test
+    needs:
+      - gate
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify published manifest
+        shell: bash
+        env:
+          IMAGE: ${{ needs.gate.outputs.image }}
+          STAGING_TAG: ci-${{ needs.gate.outputs.version }}-ubuntu26.04-${{ github.run_id }}
         run: |
-          docker push ${{ steps.image.outputs.name }}:${{ steps.version.outputs.value }}
-          docker push ${{ steps.image.outputs.name }}:latest
+          set -euo pipefail
+          manifest="$(docker buildx imagetools inspect "${IMAGE}:${STAGING_TAG}")"
+          printf '%s\n' "$manifest"
+          grep -q 'linux/amd64' <<<"$manifest"
+          grep -q 'linux/arm64' <<<"$manifest"
+
+      - name: Smoke test both architectures
+        shell: bash
+        env:
+          IMAGE: ${{ needs.gate.outputs.image }}
+          STAGING_TAG: ci-${{ needs.gate.outputs.version }}-ubuntu26.04-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            actual_node="$(docker run --rm --pull=always --platform "$platform" "${IMAGE}:${STAGING_TAG}" node --version)"
+            test "$actual_node" = "v24.19.0"
+            docker run --rm --pull=always --platform "$platform" "${IMAGE}:${STAGING_TAG}" node --check server.js
+          done
+
+  promote:
+    name: Promote verified images
+    needs:
+      - gate
+      - codeql
+      - verify
+    if: ${{ needs.verify.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote verified tags
+        shell: bash
+        env:
+          IMAGE: ${{ needs.gate.outputs.image }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          source="${IMAGE}:ci-${VERSION}-ubuntu26.04-${RUN_ID}"
+          docker buildx imagetools create --tag "${IMAGE}:${VERSION}-ubuntu26.04" "$source"
+          docker buildx imagetools create --tag "${IMAGE}:ubuntu26.04" "$source"
+          docker buildx imagetools create --tag "${IMAGE}:${VERSION}" "${IMAGE}:${VERSION}-ubuntu26.04"
+          docker buildx imagetools create --tag "${IMAGE}:latest" "${IMAGE}:ubuntu26.04"
+
+      - name: Verify promoted default tag
+        shell: bash
+        env:
+          IMAGE: ${{ needs.gate.outputs.image }}
+        run: |
+          set -euo pipefail
+          manifest="$(docker buildx imagetools inspect "${IMAGE}:latest")"
+          printf '%s\n' "$manifest"
+          grep -q 'linux/amd64' <<<"$manifest"
+          grep -q 'linux/arm64' <<<"$manifest"
+
+  release:
+    name: Create GitHub release
+    needs:
+      - gate
+      - promote
+    if: ${{ needs.promote.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: .
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           body_path: release-notes.md
           files: |
-            bzo-${{ steps.version.outputs.value }}.tar.gz
+            bzo-${{ needs.gate.outputs.version }}.tar.gz

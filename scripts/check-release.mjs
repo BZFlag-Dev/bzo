@@ -55,8 +55,8 @@ if (!tagInput) {
 }
 
 const tagVersion = normalizeVersion(tagInput);
-if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(tagVersion)) {
-  fail(`tag "${tagInput}" is not a valid release version`);
+if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tagVersion)) {
+  fail(`tag "${tagInput}" must be a stable SemVer release version in the form X.Y.Z (prerelease and build metadata are not published)`);
 }
 
 const packageJson = readJson(packageJsonPath);

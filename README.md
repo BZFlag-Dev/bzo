@@ -17,8 +17,16 @@ Each tagged release publishes:
 
 - a GitHub release with notes generated from [CHANGELOG.md](CHANGELOG.md)
 - a source tarball
-- a versioned Docker image at `ghcr.io/bzflag-dev/bzo:<version>`
-- a moving Docker tag at `ghcr.io/bzflag-dev/bzo:latest`
+- a versioned Ubuntu 26.04 image at `ghcr.io/bzflag-dev/bzo:<version>-ubuntu26.04`
+- a moving `ubuntu26.04` tag
+- `ghcr.io/bzflag-dev/bzo:<version>` and `ghcr.io/bzflag-dev/bzo:latest`, both using Ubuntu 26.04
+
+Every published image contains `linux/amd64` and `linux/arm64` variants. Release
+tags use stable `vX.Y.Z` SemVer only; prerelease and build-metadata tags are not
+published. Ubuntu 26.04 images use the pinned Node.js `24.19.0` runtime.
+
+Docker images are built on Ubuntu 26.04 with pinned Node.js `24.19.0`.
+Runtime compatibility is validated in CI on Node.js `18.19.1` and `24.19.0`.
 
 ## Install with Docker
 
@@ -54,7 +62,7 @@ The image defaults to `SERVER_CONFIG_PATH=/data/server-config.json`.
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 18.19.1 or Node.js 24.19.0
 - npm
 
 ### Setup
@@ -190,6 +198,7 @@ Validate locally:
 ```bash
 npm run check
 npm run release:check -- v1.0.1
+npm run release:check:increment -- v1.0.1
 ```
 
 Then commit, tag, and push:
@@ -204,13 +213,13 @@ git push origin v1.0.1
 
 The release workflow will:
 
-1. install dependencies
-2. run lint and validation
+1. verify that the stable tag is newer than the previous release and points to `main`
+2. install dependencies and run lint, validation, audit, and CodeQL checks
 3. fail if `package.json` does not match the pushed tag
 4. fail if [CHANGELOG.md](CHANGELOG.md) does not contain a matching non-placeholder section
-5. publish a GitHub release
-6. attach a source tarball
-7. build and publish a multi-arch Docker image to GHCR
+5. build and smoke-test Ubuntu 26.04 images with pinned Node.js `24.19.0` for `linux/amd64` and `linux/arm64`
+6. promote the verified versioned and moving Docker tags to GHCR
+7. publish a GitHub release and attach a source tarball
 
 ## AGPL source availability
 
