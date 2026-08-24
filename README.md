@@ -24,7 +24,10 @@ Each tagged release publishes:
 
 Every published image contains `linux/amd64` and `linux/arm64` variants. Release
 tags use stable `vX.Y.Z` SemVer only; prerelease and build-metadata tags are not
-published. Both Ubuntu bases use the pinned supported Node.js `24.19.0` runtime.
+published. The Ubuntu 24.04 image intentionally keeps the pinned Node.js
+`18.19.1` runtime for compatibility, while Ubuntu 26.04 uses the supported
+Node.js `24.19.0` runtime. Node.js 18 is EOL, so new deployments should prefer
+the Ubuntu 26.04 image.
 
 ## Install with Docker
 

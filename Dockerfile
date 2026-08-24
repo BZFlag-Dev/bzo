@@ -3,12 +3,14 @@
 # Source: https://github.com/BZFlag-Dev/bzo
 # See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
 
-# Pin the supported Node.js runtime for each Ubuntu base and verify each architecture independently.
+# Pin the base-specific Node.js runtime and verify each architecture independently.
+# Ubuntu 24.04 intentionally keeps Node.js 18.19.1 for compatibility; Ubuntu
+# 26.04 uses the supported Node.js 24.19.0 runtime. Node.js 18 is EOL.
 ARG UBUNTU_VERSION=24.04
-ARG NODE_VERSION_UBUNTU24=24.19.0
+ARG NODE_VERSION_UBUNTU24=18.19.1
 ARG NODE_VERSION_UBUNTU26=24.19.0
-ARG NODE_SHA256_UBUNTU24_AMD64=f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4
-ARG NODE_SHA256_UBUNTU24_ARM64=d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f
+ARG NODE_SHA256_UBUNTU24_AMD64=724802c45237477dbe5777923743e6c77906830cae03a82b5653ebd75b301dda
+ARG NODE_SHA256_UBUNTU24_ARM64=2913e8544d95c8be9e6034c539ec0584014532166a088bf742629756c3ec42e2
 ARG NODE_SHA256_UBUNTU26_AMD64=f625d97cd707df4ff96254916fbc5ff014f09c09effe5a1e0ca8f6d41a8789d4
 ARG NODE_SHA256_UBUNTU26_ARM64=d28c8a5bf0a808f0ed434a1dce8c54ae98f0371c0bd86ac58abc613f73e6643f
 
