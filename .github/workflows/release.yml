@@ -288,6 +288,7 @@ jobs:
     if: ${{ needs.promote.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
 
     steps:
