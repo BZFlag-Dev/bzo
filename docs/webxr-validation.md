@@ -62,3 +62,22 @@ or deployment configuration.
 Record each check as pass, fail, or not applicable. Include the failing step,
 browser and headset details, page origin, and any relevant debug output so the
 result can be reproduced.
+
+## Deferred TODO: Hand Controls
+
+These are deferred options to revisit later. Do not change current physical
+controller mappings unless cross-device compatibility requires it.
+
+- Keep current controller bindings as primary where gamepad axes/buttons are
+  available.
+- Add visible hand/controller rendering with fallback order:
+  hand model -> controller model -> ray/pointer only.
+- Implement optional hand-driven actions when `inputSource.hand` is available:
+  pinch-to-fire, grab-or-double-pinch jump, and a reliable exit/settings
+  gesture.
+- For locomotion with hands only, prototype a non-dominant pinch-and-drag
+  virtual stick and compare to wrist-twist turn alternatives.
+- Require a guaranteed escape path that does not depend solely on gesture
+  recognition when controller buttons are present.
+- Validate portability across Quest and other WebXR runtimes before changing
+  defaults.

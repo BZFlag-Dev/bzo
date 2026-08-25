@@ -5100,6 +5100,17 @@ function updateRadar() {
   const py = myTank.position.y;
   const pz = myTank.position.z;
   const playerHeading = myTank.rotation ? myTank.rotation.y : 0;
+  const toRadarRelative = (worldX, worldZ) => {
+    const dx = worldX - px;
+    const dz = worldZ - pz;
+    return {
+      x: dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading),
+      y: dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading),
+    };
+  };
+  const isOutsideRadarSquare = (radarX, radarY, margin = 0) => (
+    Math.abs(radarX) > radarDistance + margin || Math.abs(radarY) > radarDistance + margin
+  );
   // No radarRotation; use playerHeading directly
   // Clear radar
   radarCtx.clearRect(0, 0, size, size);
@@ -5181,8 +5192,9 @@ function updateRadar() {
   // Draw projectiles (shots) within radar distance
   if (typeof projectiles !== 'undefined' && projectiles.forEach) {
     projectiles.forEach((proj) => {
+      const rel = toRadarRelative(proj.position.x, proj.position.z);
+      if (isOutsideRadarSquare(rel.x, rel.y)) return;
       const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, radarDistance);
-      if (pos.distance > radarDistance) return;
       const shotRadarColor = proj.userData?.radarColor || '#FFD700';
 
       radarCtx.save();
@@ -5246,12 +5258,39 @@ function updateRadar() {
       // Transform obstacle to radar coordinates (includes rotation)
       const result = world2Radar(obs.x, obs.z, px, pz, playerHeading, center, radius, radarDistance, obs.rotation || 0);
 
-      // For large objects, check if ANY part is within view, not just the center
-      // Calculate the maximum extent from center (half-diagonal of bounding box)
-      const maxExtent = Math.sqrt(obsWidth * obsWidth + obsDepth * obsDepth) / 2;
+      const halfW = obsWidth / 2;
+      const halfD = obsDepth / 2;
+      const obstacleRotation = obs.rotation || 0;
+      const cosR = Math.cos(obstacleRotation);
+      const sinR = Math.sin(obstacleRotation);
+      const corners = [
+        { x: -halfW, z: -halfD },
+        { x: halfW, z: -halfD },
+        { x: halfW, z: halfD },
+        { x: -halfW, z: halfD },
+      ];
+      let minRelX = Infinity;
+      let maxRelX = -Infinity;
+      let minRelY = Infinity;
+      let maxRelY = -Infinity;
 
-      // Cull only if the closest point on the object is outside radar distance
-      if (result.distance - maxExtent > radarDistance) return;
+      corners.forEach((corner) => {
+        const worldCornerX = obs.x + corner.x * cosR - corner.z * sinR;
+        const worldCornerZ = obs.z + corner.x * sinR + corner.z * cosR;
+        const relCorner = toRadarRelative(worldCornerX, worldCornerZ);
+        minRelX = Math.min(minRelX, relCorner.x);
+        maxRelX = Math.max(maxRelX, relCorner.x);
+        minRelY = Math.min(minRelY, relCorner.y);
+        maxRelY = Math.max(maxRelY, relCorner.y);
+      });
+
+      const outsideSquare = (
+        maxRelX < -radarDistance ||
+        minRelX > radarDistance ||
+        maxRelY < -radarDistance ||
+        minRelY > radarDistance
+      );
+      if (outsideSquare) return;
 
       // Calculate opacity based on player's vertical position relative to obstacle
       const baseY = obs.baseY || 0;
@@ -5291,10 +5330,10 @@ function updateRadar() {
     const dz = tank.position.z - pz;
     const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
     const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-    const isOutsideRadarSquare = Math.abs(rotX) > radarDistance || Math.abs(rotY) > radarDistance;
+    const tankOutsideRadarSquare = isOutsideRadarSquare(rotX, rotY);
     const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, radarDistance);
 
-    if (isOutsideRadarSquare) {
+    if (tankOutsideRadarSquare) {
       // Tank is outside radar range - draw as small dot against square edge.
       // Calculate direction in radar space (same rotation as world2Radar).
       // Project onto the radar square border (preserve direction and avoid mirroring).
