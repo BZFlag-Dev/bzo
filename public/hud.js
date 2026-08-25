@@ -7,6 +7,8 @@
 
 // hud.js - Handles HUD and debug display logic
 
+import { normalizeShotSlotCount } from './shot-limits.mjs';
+
 const degreeBarRenderState = {
   canvas: null,
   controlBox: null,
@@ -503,7 +505,7 @@ export function updateShotStatus({ myPlayerId, projectiles, gameConfig, now = Da
   const hud = getHudCanvasContext(shotStatusRenderState, 'shotStatus');
   if (!hud || !myPlayerId || !gameConfig) return;
   const { canvas: shotStatus, controlBox, ctx } = hud;
-  const maxSlots = Math.max(1, Math.floor(gameConfig.SHOT_MAX_ACTIVE || 1));
+  const maxSlots = normalizeShotSlotCount(gameConfig.SHOT_MAX_ACTIVE);
   const indicatorWidth = Math.max(18, Math.round(window.innerWidth / 50));
   const indicatorHeight = Math.max(8, Math.round(window.innerHeight / 80));
   const indicatorSpace = Math.max(2, Math.round(indicatorHeight / 10) + 2);
