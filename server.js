@@ -10,6 +10,7 @@ const logPath = require('path').join(__dirname, 'server.log');
 // Clear server.log on restart
 require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
+const { normalizeShotSlotCount } = require('./server/shot-limits.cjs');
 const path = require('path');
 const fs = require('fs');
 
@@ -332,7 +333,7 @@ if (Number.isFinite(configShotCooldown) && configShotCooldown > 0) {
 
 const configShotMaxActive = Number(serverConfig.shotMaxActive);
 if (Number.isInteger(configShotMaxActive) && configShotMaxActive > 0) {
-  GAME_CONFIG.SHOT_MAX_ACTIVE = configShotMaxActive;
+  GAME_CONFIG.SHOT_MAX_ACTIVE = normalizeShotSlotCount(configShotMaxActive);
 }
 
 const configShotRadius = Number(serverConfig.shotRadius);

@@ -22,7 +22,7 @@ module.exports = [
   },
   js.configs.recommended,
   {
-    files: ["server.js", "scripts/**/*.mjs"],
+    files: ["server.js", "server/**/*.cjs", "scripts/**/*.mjs"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "commonjs",
@@ -45,7 +45,7 @@ module.exports = [
     },
   },
   {
-    files: ["public/**/*.js"],
+    files: ["public/**/*.js", "public/**/*.mjs"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

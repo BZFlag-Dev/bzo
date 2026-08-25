@@ -46,6 +46,7 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { initXR, toggleXRSession, updateXRControllerInput, setNormalAnimationLoop, isXREnabled } from './webxr.js';
 import { createVoiceManager } from './voice.js';
+import { normalizeShotSlotCount } from './shot-limits.mjs';
 
 // FPS
 let fps = 0;
@@ -4808,7 +4809,7 @@ function handleMotion(deltaTime) {
   const firePressed = (!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
   const fireNow = performance.now();
   if (firePressed && fireNow >= nextAllowedShotAt) {
-    const maxActiveShots = Number.isFinite(gameConfig?.SHOT_MAX_ACTIVE) ? gameConfig.SHOT_MAX_ACTIVE : 1;
+    const maxActiveShots = normalizeShotSlotCount(gameConfig?.SHOT_MAX_ACTIVE);
     if (getActiveProjectileCountForPlayer(myPlayerId) < maxActiveShots) {
       if (shoot()) {
         nextAllowedShotAt = fireNow + getShotReloadTimeMs();
