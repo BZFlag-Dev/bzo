@@ -488,7 +488,7 @@ function parseBZWMap(filename) {
     } else if (line.startsWith('pyramid')) {
       current = { type: 'pyramid' };
     } else if (line.startsWith('base')) {
-      current = { type: 'box' };
+      current = { type: 'box', kind: 'base', team: 1 };
     } else if (line.startsWith('teleporter')) {
       current = { type: 'box', kind: 'teleporter' };
     } else if (current && line.startsWith('name')) {
@@ -522,6 +522,10 @@ function parseBZWMap(filename) {
     } else if (current && line.startsWith('border')) {
       const [, border] = line.split(/\s+/);
       current.border = Math.abs(parseFloat(border) || 0);
+    } else if (current && current.kind === 'base' && line.startsWith('color')) {
+      const [, color] = line.split(/\s+/);
+      const team = parseInt(color, 10);
+      current.team = Number.isInteger(team) ? Math.max(1, Math.min(4, team)) : 1;
     } else if (current && line === 'end') {
       // Use BZW name if present, otherwise assign a generated name
       if (!current.name) {

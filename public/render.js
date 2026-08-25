@@ -19,6 +19,8 @@ import {
 import {
   createBoundaryTexture,
   createBoxWallTexture,
+  createBaseTopTexture,
+  createBaseWallTexture,
   createPyramidTexture,
   createRoofTexture,
   createTeleporterBorderTexture,
@@ -703,6 +705,37 @@ class RenderManager {
     return materials;
   }
 
+  _createBaseFaceMaterials(width, height, depth, team = 1, showBottom = true) {
+    const sideTextureFactory = () => createBaseWallTexture(team);
+    const topTextureFactory = () => createBaseTopTexture(team);
+    const materials = [
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
+    ];
+
+    // Match BZFlag base UV behavior:
+    // - top and bottom are fixed UVs (exactly one texture repeat)
+    // - sides use size-based repeats
+    materials[0].map.repeat.set(depth, height);
+    materials[1].map.repeat.set(depth, height);
+    materials[4].map.repeat.set(width, height);
+    materials[5].map.repeat.set(width, height);
+    materials[2].map.repeat.set(1, 1);
+    materials[3].map.repeat.set(1, 1);
+
+    if (!showBottom) {
+      materials[3].transparent = true;
+      materials[3].opacity = 0;
+      materials[3].depthWrite = false;
+    }
+
+    return materials;
+  }
+
   _disposeObject3D(object3D) {
     if (!object3D) return;
 
@@ -1123,6 +1156,23 @@ class RenderManager {
         mesh.userData.teleporter = {
           border: Number(obs.border) || 0,
         };
+        this.worldGroup.add(mesh);
+        this._addDebugLabel(mesh, 'obstacle');
+      } else if (obs.kind === 'base') {
+        const materials = this._createBaseFaceMaterials(obs.w, h, obs.d, obs.team || 1, baseY > 0);
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(obs.w, h, obs.d),
+          materials,
+        );
+        mesh.position.set(obs.x, baseY + h / 2, obs.z);
+        mesh.rotation.y = obs.rotation || 0;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.name = obs.name || `Base ${i + 1}`;
+        mesh.userData.base = {
+          team: obs.team || 1,
+        };
+        if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
         this.worldGroup.add(mesh);
         this._addDebugLabel(mesh, 'obstacle');
       } else if (obs.type === 'pyramid') {

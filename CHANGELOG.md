@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.25] - 2026-08-25
+
+### Added
+- Added BZFlag teleporter textures (`caution.png`, `telelink.png`) and BZ-inspired teleporter frame/portal rendering with animated portal visuals.
+- Added base source textures (`base_top_source.png`, `base_wall_source.png`) and team-aware base rendering assets for map-defined bases.
+
+### Changed
+- Updated teleporter geometry and face rendering toward BZFlag parity, including border framing, portal face behavior, and map-driven placement/orientation.
+- Updated mountain rendering visibility on large maps by expanding view-distance handling so mountains remain visible at BZFlag-like perimeter placement.
+- Updated base texture mapping to match BZFlag behavior: top/bottom fixed UV mapping (single texture repeat) and side faces using size-based repeats.
+
+### Fixed
+- Fixed a client texture colorization TypeError in base tint generation (`drawImage` source type mismatch).
+- Fixed base team colorization so map teams render distinctly as red/green/blue/purple instead of all appearing red/gray.
+
 ## [1.0.24] - 2026-08-25
 
 ### Added

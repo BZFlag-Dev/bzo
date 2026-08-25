@@ -9,6 +9,13 @@ import * as THREE from 'three';
 
 const textureLoader = new THREE.TextureLoader();
 
+const BASE_TEAM_TINTS = {
+  1: [1.0, 0.4, 0.4],
+  2: [0.4, 1.0, 0.4],
+  3: [0.4, 0.4, 1.0],
+  4: [1.0, 0.4, 1.0],
+};
+
 function loadTexture(path) {
   const texture = textureLoader.load(path);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -39,6 +46,67 @@ export function createTeleporterBorderTexture() {
 
 export function createTeleporterPortalTexture() {
   return loadTexture('/textures/telelink.png');
+}
+
+function createTintedTexture(path, tint = [1, 1, 1]) {
+  const texture = new THREE.Texture();
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+
+  textureLoader.load(path, (loadedTexture) => {
+    const image = loadedTexture?.image;
+    if (!image) {
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      texture.image = image;
+      texture.needsUpdate = true;
+      return;
+    }
+
+    context.drawImage(image, 0, 0);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    const tr = Math.max(0, tint[0] ?? 1);
+    const tg = Math.max(0, tint[1] ?? 1);
+    const tb = Math.max(0, tint[2] ?? 1);
+
+    for (let i = 0; i < pixels.length; i += 4) {
+      const sr = pixels[i];
+      const sg = pixels[i + 1];
+      const sb = pixels[i + 2];
+      const luminance = (0.2126 * sr) + (0.7152 * sg) + (0.0722 * sb);
+
+      pixels[i] = Math.max(0, Math.min(255, Math.round(luminance * tr)));
+      pixels[i + 1] = Math.max(0, Math.min(255, Math.round(luminance * tg)));
+      pixels[i + 2] = Math.max(0, Math.min(255, Math.round(luminance * tb)));
+    }
+
+    context.putImageData(imageData, 0, 0);
+    texture.image = canvas;
+    texture.needsUpdate = true;
+  });
+
+  return texture;
+}
+
+function getBaseTint(team = 1) {
+  const normalizedTeam = Number.isInteger(team) ? Math.max(1, Math.min(4, team)) : 1;
+  return BASE_TEAM_TINTS[normalizedTeam] || BASE_TEAM_TINTS[1];
+}
+
+export function createBaseTopTexture(team = 1) {
+  return createTintedTexture('/textures/base_top_source.png', getBaseTint(team));
+}
+
+export function createBaseWallTexture(team = 1) {
+  return createTintedTexture('/textures/base_wall_source.png', getBaseTint(team));
 }
 
 export function createGroundTexture() {
