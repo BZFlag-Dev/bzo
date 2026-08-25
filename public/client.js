@@ -95,6 +95,13 @@ let localProjectileCounter = 0;
 let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
+const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
+const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
+const RADAR_ZOOM_STORAGE_KEY = 'radarZoomLevel';
+const RADAR_ZOOM_MIN = 0.005;
+const RADAR_ZOOM_MAX = 2.0;
+const RADAR_ZOOM_STEP = 1.05;
+let radarZoomLevel = 1.0;
 const pendingDebugPackets = [];
 let pendingJoinRequest = null;
 let renderReadyForJoin = false;
@@ -143,6 +150,61 @@ function updatePlayerRoleSelectorAvailability() {
 
 function isSpectatorRole() {
   return playerRole === 'spectator';
+}
+
+function normalizeRadarZoomLevel(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1.0;
+  return Math.max(RADAR_ZOOM_MIN, Math.min(RADAR_ZOOM_MAX, numeric));
+}
+
+function getRadarZoomLabel(level = radarZoomLevel) {
+  const index = RADAR_ZOOM_LEVELS.findIndex((preset) => Math.abs(level - preset) < 1e-4);
+  if (index >= 0) return RADAR_ZOOM_LABELS[index];
+  const rounded = Math.round(level * 1000) / 1000;
+  return `${rounded}x`;
+}
+
+function updateRadarZoomButton() {
+  const radarZoomBtn = document.getElementById('radarZoomBtn');
+  if (!radarZoomBtn) return;
+  const label = getRadarZoomLabel();
+  radarZoomBtn.textContent = `Radar: ${label}`;
+  radarZoomBtn.title = `Radar range preset: ${label}`;
+}
+
+function setRadarZoomLevel(level, { announce = true } = {}) {
+  const normalized = normalizeRadarZoomLevel(level);
+  if (normalized === radarZoomLevel) return false;
+  radarZoomLevel = normalized;
+  localStorage.setItem(RADAR_ZOOM_STORAGE_KEY, String(radarZoomLevel));
+  updateRadarZoomButton();
+  if (announce) {
+    showMessage(`Radar range: ${getRadarZoomLabel(radarZoomLevel)}`);
+  }
+  return true;
+}
+
+function cycleRadarZoomLevel() {
+  let nearestIndex = 0;
+  let nearestDelta = Math.abs(radarZoomLevel - RADAR_ZOOM_LEVELS[0]);
+  for (let i = 1; i < RADAR_ZOOM_LEVELS.length; i++) {
+    const delta = Math.abs(radarZoomLevel - RADAR_ZOOM_LEVELS[i]);
+    if (delta < nearestDelta) {
+      nearestDelta = delta;
+      nearestIndex = i;
+    }
+  }
+  const nextIndex = (nearestIndex + 1) % RADAR_ZOOM_LEVELS.length;
+  setRadarZoomLevel(RADAR_ZOOM_LEVELS[nextIndex]);
+}
+
+function adjustRadarZoom(direction) {
+  if (direction > 0) {
+    setRadarZoomLevel(radarZoomLevel * RADAR_ZOOM_STEP);
+  } else if (direction < 0) {
+    setRadarZoomLevel(radarZoomLevel / RADAR_ZOOM_STEP);
+  }
 }
 
 function callVoiceManager(method, ...args) {
@@ -1719,6 +1781,16 @@ function updateDebugLabelsButton() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+      setRadarZoomLevel(localStorage.getItem(RADAR_ZOOM_STORAGE_KEY), { announce: false });
+      updateRadarZoomButton();
+
+      const radarZoomBtn = document.getElementById('radarZoomBtn');
+      if (radarZoomBtn) {
+        radarZoomBtn.addEventListener('click', () => {
+          cycleRadarZoomLevel();
+        });
+      }
+
         // Dynamic Lighting toggle button
         const dynamicLightingBtn = document.getElementById('dynamicLightingBtn');
         // Default: enabled
@@ -2040,6 +2112,25 @@ function init() {
       e.preventDefault();
       return;
     }
+
+    if (!chatActive && !isentryDialogOpen) {
+      if ((e.code === 'Equal' && e.shiftKey) || e.code === 'NumpadAdd' || e.code === 'BracketRight') {
+        adjustRadarZoom(1);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'Minus' || e.code === 'NumpadSubtract' || e.code === 'BracketLeft') {
+        adjustRadarZoom(-1);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'Backslash') {
+        setRadarZoomLevel(1.0);
+        e.preventDefault();
+        return;
+      }
+    }
+
     if (chatActive || document.activeElement === chatInput) {
       // Disable all movement/game keys while chat is active
       e.preventDefault();
@@ -4904,7 +4995,7 @@ function onWindowResize() {
 function resizeRadar() {
   if (!radarCanvas) return;
   const smallerDimension = Math.min(window.innerWidth, window.innerHeight);
-  const size = smallerDimension * 0.25;
+  const size = Math.max(120, Math.min(390, Math.round(smallerDimension * 0.375)));
   radarCanvas.width = size;
   radarCanvas.height = size;
   radarCanvas.style.width = size + 'px';
@@ -5001,7 +5092,8 @@ function updateRadar() {
   const size = radarCanvas.width;
   const center = size / 2;
   const radius = center * 0.95;
-  const SHOT_DISTANCE = gameConfig.SHOT_DISTANCE || 50;
+  const baseRadarDistance = gameConfig.SHOT_DISTANCE || 50;
+  const radarDistance = baseRadarDistance * radarZoomLevel;
   const mapSize = gameConfig.MAP_SIZE || 100;
   // Player world position and heading
   const px = myTank.position.x;
@@ -5012,21 +5104,21 @@ function updateRadar() {
   // Clear radar
   radarCtx.clearRect(0, 0, size, size);
 
-  // Draw world border (clip to SHOT_DISTANCE area, rotated to player forward)
+  // Draw world border (clip to radar distance area, rotated to player forward)
   if (gameConfig && gameConfig.MAP_SIZE) {
     radarCtx.save();
     radarCtx.globalAlpha = 0.7;
-    // Calculate visible world border segment within SHOT_DISTANCE
+    // Calculate visible world border segment within radar distance
     const border = mapSize / 2;
-    const left = Math.max(px - SHOT_DISTANCE, -border);
-    const right = Math.min(px + SHOT_DISTANCE, border);
-    const top = Math.max(pz - SHOT_DISTANCE, -border);
-    const bottom = Math.min(pz + SHOT_DISTANCE, border);
+    const left = Math.max(px - radarDistance, -border);
+    const right = Math.min(px + radarDistance, border);
+    const top = Math.max(pz - radarDistance, -border);
+    const bottom = Math.min(pz + radarDistance, border);
 
     // Top edge (North, Z = -border)
     if (top === -border) {
-      const p1 = world2Radar(left, -border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-      const p2 = world2Radar(right, -border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p1 = world2Radar(left, -border, px, pz, playerHeading, center, radius, radarDistance);
+      const p2 = world2Radar(right, -border, px, pz, playerHeading, center, radius, radarDistance);
       radarCtx.save();
       radarCtx.strokeStyle = '#B20000'; // North - red
       radarCtx.lineWidth = 2.5;
@@ -5040,8 +5132,8 @@ function updateRadar() {
     }
     // Bottom edge (South, Z = +border)
     if (bottom === border) {
-      const p1 = world2Radar(left, border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-      const p2 = world2Radar(right, border, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p1 = world2Radar(left, border, px, pz, playerHeading, center, radius, radarDistance);
+      const p2 = world2Radar(right, border, px, pz, playerHeading, center, radius, radarDistance);
       radarCtx.save();
       radarCtx.strokeStyle = '#1976D2'; // South - blue
       radarCtx.lineWidth = 2.5;
@@ -5055,8 +5147,8 @@ function updateRadar() {
     }
     // Left edge (West, X = -border)
     if (left === -border) {
-      const p1 = world2Radar(-border, top, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-      const p2 = world2Radar(-border, bottom, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p1 = world2Radar(-border, top, px, pz, playerHeading, center, radius, radarDistance);
+      const p2 = world2Radar(-border, bottom, px, pz, playerHeading, center, radius, radarDistance);
       radarCtx.save();
       radarCtx.strokeStyle = '#9C27B0'; // West - purple
       radarCtx.lineWidth = 2.5;
@@ -5070,8 +5162,8 @@ function updateRadar() {
     }
     // Right edge (East, X = +border)
     if (right === border) {
-      const p1 = world2Radar(border, top, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-      const p2 = world2Radar(border, bottom, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+      const p1 = world2Radar(border, top, px, pz, playerHeading, center, radius, radarDistance);
+      const p2 = world2Radar(border, bottom, px, pz, playerHeading, center, radius, radarDistance);
       radarCtx.save();
       radarCtx.strokeStyle = '#388E3C'; // East - green
       radarCtx.lineWidth = 2.5;
@@ -5086,11 +5178,11 @@ function updateRadar() {
     radarCtx.restore();
   }
 
-  // Draw projectiles (shots) within SHOT_DISTANCE
+  // Draw projectiles (shots) within radar distance
   if (typeof projectiles !== 'undefined' && projectiles.forEach) {
     projectiles.forEach((proj) => {
-      const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
-      if (pos.distance > SHOT_DISTANCE) return;
+      const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, radarDistance);
+      if (pos.distance > radarDistance) return;
       const shotRadarColor = proj.userData?.radarColor || '#FFD700';
 
       radarCtx.save();
@@ -5105,17 +5197,17 @@ function updateRadar() {
     });
   }
 
-  // Draw radar background (keep as is)
+  // Draw radar background as a square, similar to BZFlag's panel-style radar.
   radarCtx.save();
   radarCtx.globalAlpha = 0.95;
-  radarCtx.beginPath();
-  radarCtx.arc(center, center, radius, 0, Math.PI * 2);
   radarCtx.fillStyle = 'rgba(0,0,0,0.5)';
-  radarCtx.fill();
+  radarCtx.fillRect(0, 0, size, size);
+  radarCtx.strokeStyle = 'rgba(76, 175, 80, 0.65)';
+  radarCtx.lineWidth = Math.max(2, Math.round(size * 0.01));
+  radarCtx.strokeRect(0, 0, size, size);
   radarCtx.restore();
 
   // Draw cardinal direction letters (N/E/S/W) at border, facing outward, rotating with the map
-  const borderWidth = 3;
   const cardinalLabels = [
     { angle: Math.PI / 2, label: 'N', color: '#B20000' },
     { angle: Math.PI, label: 'E', color: '#388E3C' },
@@ -5133,8 +5225,8 @@ function updateRadar() {
     radarCtx.fillStyle = dir.color;
     radarCtx.strokeStyle = '#222';
     radarCtx.lineWidth = 3;
-    // Place letter just inside the border
-    const labelRadius = radius - borderWidth - 8;
+    // Place letter on a slightly larger circle so cardinal letters clip at square edges.
+    const labelRadius = radius + Math.max(2, Math.round(size * 0.015));
     radarCtx.save();
     radarCtx.translate(0, -labelRadius);
     // Keep letters upright (vertical) at top
@@ -5145,21 +5237,21 @@ function updateRadar() {
     radarCtx.restore();
   });
 
-  // Draw obstacles within SHOT_DISTANCE, rotated to match map orientation
+  // Draw obstacles within radar distance, rotated to match map orientation
   if (typeof OBSTACLES !== 'undefined' && Array.isArray(OBSTACLES)) {
     OBSTACLES.forEach(obs => {
       const obsWidth = obs.w || 8;
       const obsDepth = obs.d || 8;
 
       // Transform obstacle to radar coordinates (includes rotation)
-      const result = world2Radar(obs.x, obs.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE, obs.rotation || 0);
+      const result = world2Radar(obs.x, obs.z, px, pz, playerHeading, center, radius, radarDistance, obs.rotation || 0);
 
       // For large objects, check if ANY part is within view, not just the center
       // Calculate the maximum extent from center (half-diagonal of bounding box)
       const maxExtent = Math.sqrt(obsWidth * obsWidth + obsDepth * obsDepth) / 2;
 
-      // Cull only if the closest point on the object is outside SHOT_DISTANCE
-      if (result.distance - maxExtent > SHOT_DISTANCE) return;
+      // Cull only if the closest point on the object is outside radar distance
+      if (result.distance - maxExtent > radarDistance) return;
 
       // Calculate opacity based on player's vertical position relative to obstacle
       const baseY = obs.baseY || 0;
@@ -5167,7 +5259,7 @@ function updateRadar() {
       const opacity = getRadarOpacity(py, baseY, height);
 
       // Obstacle size scaling
-      const scale = (radius - 16) / SHOT_DISTANCE;
+      const scale = (radius - 16) / radarDistance;
       const w = obsWidth * scale;
       const d = obsDepth * scale;
 
@@ -5182,7 +5274,7 @@ function updateRadar() {
     });
   }
 
-  // Draw tanks within SHOT_DISTANCE, or as edge dots if beyond
+  // Draw tanks within radar distance, or as edge dots if beyond
   tanks.forEach((tank, playerId) => {
     if (!tank.position) return;
     // Only show on radar if alive and visible
@@ -5195,20 +5287,26 @@ function updateRadar() {
       playerColor = '#' + state.color.toString(16).padStart(6, '0');
     }
 
-    const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
+    const dx = tank.position.x - px;
+    const dz = tank.position.z - pz;
+    const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
+    const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+    const isOutsideRadarSquare = Math.abs(rotX) > radarDistance || Math.abs(rotY) > radarDistance;
+    const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, radarDistance);
 
-    if (pos.distance > SHOT_DISTANCE) {
-      // Tank is outside radar range - draw as small dot at edge
-      // Calculate angle in radar space (same rotation as world2Radar)
-      const dx = tank.position.x - px;
-      const dz = tank.position.z - pz;
-      const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-      const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-      const angle = Math.atan2(rotY, rotX);
-
-      // Position dot at edge of radar circle
-      const edgeX = center + Math.cos(angle) * (radius - 8);
-      const edgeY = center + Math.sin(angle) * (radius - 8);
+    if (isOutsideRadarSquare) {
+      // Tank is outside radar range - draw as small dot against square edge.
+      // Calculate direction in radar space (same rotation as world2Radar).
+      // Project onto the radar square border (preserve direction and avoid mirroring).
+      const len = Math.hypot(rotX, rotY);
+      if (len < 1e-6) return;
+      const nx = rotX / len;
+      const ny = rotY / len;
+      const squareInset = 8;
+      const halfExtent = Math.max(1, (size / 2) - squareInset);
+      const denom = Math.max(Math.abs(nx), Math.abs(ny), 1e-6);
+      const edgeX = center + (nx / denom) * halfExtent;
+      const edgeY = center + (ny / denom) * halfExtent;
 
       radarCtx.save();
       radarCtx.beginPath();

@@ -220,6 +220,10 @@ If you want automatic container updates, use your preferred container update man
 - `O` — toggle operator panel
 - `F` — toggle fullscreen
 - `I` — toggle debug HUD
+- `]` or `+` or `Numpad +` — zoom radar out (increase range)
+- `[` or `-` or `Numpad -` — zoom radar in (decrease range)
+- `\` — reset radar zoom to baseline range (1.0x shot-distance)
+- `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets
 - `B` — toggle nearby voice microphone
 - `/` or `?` — show/hide help panel
 

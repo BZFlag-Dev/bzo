@@ -146,7 +146,7 @@ canvas {
 @media (orientation: landscape) and (min-width: 801px) {
   body.virtual-controls-active #chatWindow {
     left: calc(2vw + 120px + 10px);
-    right: calc(max(2vw, env(safe-area-inset-right)) + 80px + 10px);
+    right: calc(max(2vw, env(safe-area-inset-right)) + 120px + 10px);
     width: auto;
     transform: none;
   }
@@ -1097,16 +1097,16 @@ canvas {
   right: max(10px, env(safe-area-inset-right));
   z-index: 120;
   border: none;
-  border-radius: 50%;
+  border-radius: 6px;
   box-shadow: 0 0 16px #222b, 0 0 0 4px rgba(0,0,0,0.5);
   background: none;
   opacity: 1;
-  width: min(35vw, 35vh);
-  height: min(35vw, 35vh);
-  min-width: 60px;
-  min-height: 60px;
-  max-width: 240px;
-  max-height: 240px;
+  width: min(52.5vw, 52.5vh);
+  height: min(52.5vw, 52.5vh);
+  min-width: 90px;
+  min-height: 90px;
+  max-width: 360px;
+  max-height: 360px;
   aspect-ratio: 1 / 1;
   box-sizing: border-box;
   pointer-events: none;
@@ -1114,13 +1114,13 @@ canvas {
 
 @media (max-width: 600px) {
   #radar {
-    width: 32vw;
-    height: 32vh;
+    width: 48vw;
+    height: 48vw;
     max-width: calc(100vw - 8vw);
-    max-height: calc(100vh - 8vh);
+    max-height: calc(100vw - 8vw);
     right: max(2vw, env(safe-area-inset-right));
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 60px;
+    min-height: 60px;
   }
 }
 
