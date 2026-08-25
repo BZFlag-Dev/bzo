@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.28] - 2026-08-25
+
+### Added
+- Added radar zoom controls with keyboard bindings and a settings-panel preset toggle.
+
+### Changed
+- Updated the radar to a square-style panel layout with square-consistent world scaling.
+- Updated radar culling for tanks, shots, and obstacles to use rectangular visibility rules that match the square display.
+- Updated off-range tank indicators to sit closer to the panel edge while preserving stable edge projection.
+
+### Fixed
+- Fixed near-edge radar transitions so tanks remain rendered as arrows (including partial clipping) before switching to edge dots.
+
 ## [1.0.27] - 2026-08-25
 
 ### Added

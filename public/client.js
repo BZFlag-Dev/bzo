@@ -5002,6 +5002,20 @@ function resizeRadar() {
   radarCanvas.style.height = size + 'px';
 }
 
+const RADAR_WORLD_INSET_PX = 10;
+const RADAR_EDGE_DOT_INSET_PX = 4;
+const RADAR_TANK_ARROW_EXTENT_PX = 10;
+
+function getRadarWorldHalfExtent(radius) {
+  return Math.max(1, radius - RADAR_WORLD_INSET_PX);
+}
+
+function radarPixelsToWorldDistance(pixelDistance, radarDistance, radarWorldHalfExtent) {
+  if (pixelDistance <= 0) return 0;
+  const pixelsPerWorldUnit = radarWorldHalfExtent / Math.max(radarDistance, 1e-6);
+  return pixelDistance / Math.max(pixelsPerWorldUnit, 1e-6);
+}
+
 /**
  * Convert 3D world coordinates to 2D radar coordinates
  * @param {number} worldX - World X position
@@ -5023,10 +5037,11 @@ function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shot
   // Rotate to player-relative coordinates (forward = up on radar)
   const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
   const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+  const worldHalfExtent = getRadarWorldHalfExtent(radius);
 
   // Scale to radar size
-  const x = center + (rotX / shotDistance) * (radius - 16);
-  const y = center + (rotY / shotDistance) * (radius - 16);
+  const x = center + (rotX / shotDistance) * worldHalfExtent;
+  const y = center + (rotY / shotDistance) * worldHalfExtent;
 
   // Rotation transform:
   // - Negate worldRotation to account for Z-axis direction difference (Three.js vs canvas)
@@ -5092,8 +5107,14 @@ function updateRadar() {
   const size = radarCanvas.width;
   const center = size / 2;
   const radius = center * 0.95;
+  const radarWorldHalfExtent = getRadarWorldHalfExtent(radius);
   const baseRadarDistance = gameConfig.SHOT_DISTANCE || 50;
   const radarDistance = baseRadarDistance * radarZoomLevel;
+  const tankArrowWorldMargin = radarPixelsToWorldDistance(
+    RADAR_TANK_ARROW_EXTENT_PX,
+    radarDistance,
+    radarWorldHalfExtent
+  );
   const mapSize = gameConfig.MAP_SIZE || 100;
   // Player world position and heading
   const px = myTank.position.x;
@@ -5298,7 +5319,7 @@ function updateRadar() {
       const opacity = getRadarOpacity(py, baseY, height);
 
       // Obstacle size scaling
-      const scale = (radius - 16) / radarDistance;
+      const scale = radarWorldHalfExtent / radarDistance;
       const w = obsWidth * scale;
       const d = obsDepth * scale;
 
@@ -5326,11 +5347,10 @@ function updateRadar() {
       playerColor = '#' + state.color.toString(16).padStart(6, '0');
     }
 
-    const dx = tank.position.x - px;
-    const dz = tank.position.z - pz;
-    const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
-    const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
-    const tankOutsideRadarSquare = isOutsideRadarSquare(rotX, rotY);
+    const rel = toRadarRelative(tank.position.x, tank.position.z);
+    const rotX = rel.x;
+    const rotY = rel.y;
+    const tankOutsideRadarSquare = isOutsideRadarSquare(rotX, rotY, tankArrowWorldMargin);
     const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, radarDistance);
 
     if (tankOutsideRadarSquare) {
@@ -5341,8 +5361,7 @@ function updateRadar() {
       if (len < 1e-6) return;
       const nx = rotX / len;
       const ny = rotY / len;
-      const squareInset = 8;
-      const halfExtent = Math.max(1, (size / 2) - squareInset);
+      const halfExtent = Math.max(1, (size / 2) - RADAR_EDGE_DOT_INSET_PX);
       const denom = Math.max(Math.abs(nx), Math.abs(ny), 1e-6);
       const edgeX = center + (nx / denom) * halfExtent;
       const edgeY = center + (ny / denom) * halfExtent;
