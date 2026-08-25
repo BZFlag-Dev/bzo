@@ -82,6 +82,8 @@ let myPlayerName = '';
 let myTank = null;
 let tanks = new Map();
 let projectiles = new Map();
+let pendingLocalProjectiles = [];
+let localProjectileCounter = 0;
 let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
@@ -449,6 +451,8 @@ async function prepareInitialRender(message, sequenceId) {
     '/textures/green_tank.png',
     '/textures/green_bolt.png',
     '/textures/shot_tail.png',
+    '/textures/explode1.png',
+    '/textures/explode2.png',
     '/textures/treads.png',
     '/textures/mountain1.png',
     '/textures/mountain2.png',
@@ -2336,9 +2340,10 @@ function handleServerMessage(message) {
 
       // Clear any existing projectiles
       projectiles.forEach((projectile) => {
-        renderManager.getWorldGroup().remove(projectile.mesh);
+        renderManager.removeProjectile(projectile);
       });
       projectiles.clear();
+      pendingLocalProjectiles = [];
 
       // Clear any existing shields
       playerShields.forEach((shield) => {
@@ -2618,7 +2623,7 @@ function handleServerMessage(message) {
       break;
 
     case 'projectileRemoved':
-      removeProjectile(message.id);
+      removeProjectile(message.id, message.reason);
       break;
 
     case 'playerHit':
@@ -2824,14 +2829,33 @@ function removeShield(playerId) {
 }
 
 function createProjectile(data) {
+  if (data.playerId === myPlayerId) {
+    while (pendingLocalProjectiles.length > 0) {
+      const pending = pendingLocalProjectiles.shift();
+      const localProjectile = projectiles.get(pending.id);
+      if (!localProjectile) continue;
+
+      projectiles.delete(pending.id);
+      localProjectile.userData.dirX = data.dirX;
+      localProjectile.userData.dirZ = data.dirZ;
+      localProjectile.userData.createdAt = data.createdAt;
+      localProjectile.userData.shotSlot = Number.isInteger(data.shotSlot) ? data.shotSlot : 0;
+      localProjectile.userData.pendingServerAck = false;
+      projectiles.set(data.id, localProjectile);
+      return;
+    }
+  }
+
   const shotColor = getPlayerShotColor(data.playerId);
   const shotSpeed = Number.isFinite(gameConfig?.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
   const shotRange = Number.isFinite(gameConfig?.SHOT_RANGE)
     ? gameConfig.SHOT_RANGE
     : (Number.isFinite(gameConfig?.SHOT_DISTANCE) ? gameConfig.SHOT_DISTANCE : 350);
-  const networkLeadSeconds = Number.isFinite(data.createdAt)
-    ? Math.max(0, (Date.now() - data.createdAt) / 1000)
-    : 0;
+  const networkLeadSeconds = data.playerId === myPlayerId
+    ? 0
+    : (Number.isFinite(data.createdAt)
+      ? Math.max(0, (Date.now() - data.createdAt) / 1000)
+      : 0);
   const leadDistance = Math.min(shotRange, shotSpeed * networkLeadSeconds);
   const projectile = renderManager.createProjectile({
     ...data,
@@ -2847,10 +2871,36 @@ function createProjectile(data) {
   projectiles.set(data.id, projectile);
 }
 
-function removeProjectile(id) {
+function createLocalProjectile({ x, y, z, dirX, dirZ }) {
+  if (!Number.isInteger(myPlayerId)) return;
+
+  const shotColor = getPlayerShotColor(myPlayerId);
+  const localId = `local-${myPlayerId}-${Date.now()}-${localProjectileCounter++}`;
+  const projectile = renderManager.createProjectile({
+    id: localId,
+    playerId: myPlayerId,
+    x,
+    y,
+    z,
+    dirX,
+    dirZ,
+    color: shotColor.getHex(),
+  });
+  if (!projectile) return;
+
+  projectile.userData.playerId = myPlayerId;
+  projectile.userData.createdAt = Date.now();
+  projectile.userData.shotSlot = null;
+  projectile.userData.radarColor = `#${shotColor.getHexString()}`;
+  projectile.userData.pendingServerAck = true;
+  projectiles.set(localId, projectile);
+  pendingLocalProjectiles.push({ id: localId, sentAt: Date.now() });
+}
+
+function removeProjectile(id, reason = 1) {
   const projectile = projectiles.get(id);
   if (projectile) {
-    renderManager.removeProjectile(projectile);
+    renderManager.removeProjectile(projectile, reason);
     projectiles.delete(id);
   }
 }
@@ -2909,7 +2959,7 @@ function handlePlayerHit(message) {
   callUpdateScoreboard();
 
   // Remove the projectile
-  removeProjectile(message.projectileId);
+  removeProjectile(message.projectileId, 0);
 
   // Get victim tank and create explosion effect
   if (victimTank) {
@@ -4772,6 +4822,7 @@ function shoot() {
     dirX,
     dirZ,
   });
+  createLocalProjectile({ x: shotX, y: shotY, z: shotZ, dirX, dirZ });
   return true;
 }
 
@@ -4781,6 +4832,20 @@ function updateProjectiles(deltaTime) {
     projectile.position.x += projectile.userData.dirX * projectileSpeed * deltaTime;
     projectile.position.z += projectile.userData.dirZ * projectileSpeed * deltaTime;
   });
+
+  if (pendingLocalProjectiles.length > 0) {
+    const now = Date.now();
+    const timeoutMs = 2000;
+    pendingLocalProjectiles = pendingLocalProjectiles.filter((pending) => {
+      if (now - pending.sentAt <= timeoutMs) return true;
+      const projectile = projectiles.get(pending.id);
+      if (projectile?.userData?.pendingServerAck) {
+        renderManager.removeProjectile(projectile);
+        projectiles.delete(pending.id);
+      }
+      return false;
+    });
+  }
 }
 
 function updateShields() {

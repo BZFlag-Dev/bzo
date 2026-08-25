@@ -1551,9 +1551,12 @@ function gameLoop() {
     const dx = proj.x - proj.originX;
     const dz = proj.z - proj.originZ;
     const distTraveled = Math.sqrt(dx * dx + dz * dz);
-    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap || deltaTime > maxShotLifetime || distTraveled > GAME_CONFIG.SHOT_RANGE) {
+    const outOfBounds = Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap;
+    const timedOut = deltaTime > maxShotLifetime || distTraveled > GAME_CONFIG.SHOT_RANGE;
+    if (outOfBounds || timedOut) {
       projectiles.delete(id);
-      broadcastAll({ type: 'projectileRemoved', id });
+      const reason = outOfBounds ? 0 : 1;
+      broadcastAll({ type: 'projectileRemoved', id, reason, x: proj.x, y: proj.y, z: proj.z });
       log(`Projectile ${id} removed (out of bounds ${distTraveled} or expired)`);
       return;
     }
@@ -1568,7 +1571,7 @@ function gameLoop() {
         log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
       }
       projectiles.delete(id);
-      broadcastAll({ type: 'projectileRemoved', id });
+      broadcastAll({ type: 'projectileRemoved', id, reason: 0, x: proj.x, y: proj.y, z: proj.z });
       return;
     }
 

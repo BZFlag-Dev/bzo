@@ -58,6 +58,14 @@ const BZFLAG_DUSK_ELEVATION = -0.17;
 const BZFLAG_TWILIGHT_ELEVATION = -0.087;
 const BZFLAG_DAWN_ELEVATION = 0.0;
 const BZFLAG_DAY_ELEVATION = 0.087;
+const SHOT_EXPLOSION_TEXTURES = [
+  '/textures/explode1.png',
+  '/textures/explode2.png',
+];
+const BZFLAG_TANK_LENGTH = 6.0;
+const BZFLAG_SHOT_EXPLOSION_SIZE = 1.2 * BZFLAG_TANK_LENGTH;
+const BZFLAG_SHOT_EXPLOSION_DURATION = 0.8;
+const BZFLAG_SHOT_EXPLOSION_LIGHT_FADE_START_RATIO = 0.7;
 
 class RenderManager {
   _getVerticalFovForAspect(aspect) {
@@ -318,6 +326,7 @@ class RenderManager {
     this.activeExplosions = [];
     this.activeLandingEffects = [];
     this.activeSpawnEffects = [];
+    this.activeShotExplosions = [];
 
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
@@ -2224,6 +2233,90 @@ class RenderManager {
     return texture;
   }
 
+  _createShotExplosionTexture() {
+    const sourcePath = SHOT_EXPLOSION_TEXTURES[Math.floor(Math.random() * SHOT_EXPLOSION_TEXTURES.length)];
+    const source = this._getSharedImage(sourcePath);
+    const { texture, redraw } = this._createCanvasBackedImageTexture(512, 512, (ctx, canvas) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (source.loaded) {
+        ctx.drawImage(source.image, 0, 0, canvas.width, canvas.height);
+      } else {
+        const gradient = ctx.createRadialGradient(
+          canvas.width * 0.5,
+          canvas.height * 0.5,
+          canvas.width * 0.06,
+          canvas.width * 0.5,
+          canvas.height * 0.5,
+          canvas.width * 0.45
+        );
+        gradient.addColorStop(0, 'rgba(255, 255, 220, 1)');
+        gradient.addColorStop(0.45, 'rgba(255, 180, 90, 0.9)');
+        gradient.addColorStop(1, 'rgba(255, 80, 20, 0)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    });
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.repeat.set(1 / 8, 1 / 8);
+    texture.offset.set(0, 0);
+
+    if (!source.loaded) {
+      source.listeners.push(redraw);
+    }
+
+    return texture;
+  }
+
+  _setSpriteAtlasFrame(texture, frameIndex, columns, rows) {
+    if (!texture) return;
+    const totalFrames = Math.max(1, columns * rows);
+    const clamped = Math.max(0, Math.min(totalFrames - 1, frameIndex));
+    const column = clamped % columns;
+    const row = Math.floor(clamped / columns);
+    texture.repeat.set(1 / columns, 1 / rows);
+    texture.offset.set(column / columns, row / rows);
+    texture.needsUpdate = true;
+  }
+
+  createShotImpact(position) {
+    if (!this.scene || !position) return;
+
+    const texture = this._createShotExplosionTexture();
+    this._setSpriteAtlasFrame(texture, 0, 8, 8);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    material.rotation = Math.random() * Math.PI * 2;
+
+    const sprite = new THREE.Sprite(material);
+    sprite.position.copy(position);
+    sprite.scale.set(BZFLAG_SHOT_EXPLOSION_SIZE, BZFLAG_SHOT_EXPLOSION_SIZE, 1);
+    this.worldGroup.add(sprite);
+
+    let light = null;
+    if (this.dynamicLightingEnabled) {
+      light = new THREE.PointLight(0xffcc80, 1.2, 28, 2.2);
+      light.position.copy(position);
+      this.worldGroup.add(light);
+    }
+
+    this.activeShotExplosions.push({
+      sprite,
+      material,
+      texture,
+      duration: BZFLAG_SHOT_EXPLOSION_DURATION,
+      age: 0,
+      light,
+      lightFadeStart: BZFLAG_SHOT_EXPLOSION_DURATION * BZFLAG_SHOT_EXPLOSION_LIGHT_FADE_START_RATIO,
+      lightBaseIntensity: light ? light.intensity : 0,
+    });
+  }
+
   _createTreadTexture() {
     const source = this._getSharedImage('/textures/treads.png');
     const { texture, redraw } = this._createCanvasBackedImageTexture(128, 128, (ctx, canvas) => {
@@ -2652,8 +2745,11 @@ class RenderManager {
     return projectile;
   }
 
-  removeProjectile(projectile) {
+  removeProjectile(projectile, reason = 1) {
     if (!projectile || !this.scene) return;
+    if (reason === 0) {
+      this.createShotImpact(projectile.position);
+    }
     // Play pop sound at projectile's last position
     if (this.audioListener && this.projectilePopBuffer && projectile.position) {
       const popSound = new THREE.PositionalAudio(this.audioListener);
@@ -2878,9 +2974,8 @@ class RenderManager {
       }
     }
 
-    if (!this.activeExplosions.length) return;
-
-    for (let index = this.activeExplosions.length - 1; index >= 0; index -= 1) {
+    if (this.activeExplosions.length) {
+      for (let index = this.activeExplosions.length - 1; index >= 0; index -= 1) {
       const explosion = this.activeExplosions[index];
 
       if (explosion.sphere && explosion.sphereMaterial) {
@@ -2982,8 +3077,39 @@ class RenderManager {
       }
 
       const done = !explosion.sphere && !explosion.light && !explosion.shockwave && explosion.debrisPieces.length === 0;
-      if (done) {
-        this.activeExplosions.splice(index, 1);
+        if (done) {
+          this.activeExplosions.splice(index, 1);
+        }
+      }
+    }
+
+    for (let index = this.activeShotExplosions.length - 1; index >= 0; index -= 1) {
+      const effect = this.activeShotExplosions[index];
+      effect.age += dt;
+      const progress = Math.min(1, effect.age / effect.duration);
+      const frame = Math.min(63, Math.floor(progress * 64));
+      this._setSpriteAtlasFrame(effect.texture, frame, 8, 8);
+      effect.material.opacity = Math.max(0, 1 - progress);
+
+      if (effect.light) {
+        if (effect.age < effect.lightFadeStart) {
+          effect.light.intensity = effect.lightBaseIntensity;
+        } else {
+          const fadeRange = Math.max(0.001, effect.duration - effect.lightFadeStart);
+          const fadeProgress = Math.min(1, (effect.age - effect.lightFadeStart) / fadeRange);
+          effect.light.intensity = effect.lightBaseIntensity * (1 - fadeProgress);
+        }
+      }
+
+      if (progress >= 1) {
+        this.worldGroup.remove(effect.sprite);
+        if (effect.material) effect.material.dispose();
+        if (effect.texture) effect.texture.dispose();
+        if (effect.light) {
+          this.worldGroup.remove(effect.light);
+          effect.light.dispose && effect.light.dispose();
+        }
+        this.activeShotExplosions.splice(index, 1);
       }
     }
   }

@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.23] - 2026-08-25
+
+### Added
+- Added BZFlag explosion atlas assets (`explode1.png`, `explode2.png`) and a billboarded shot-impact animation path for projectile termination effects.
+
+### Changed
+- Updated local firing visuals so your own shots render immediately on send, then reconcile to the server projectile ID when the authoritative echo arrives.
+- Updated shot-impact protocol handling to carry an explicit projectile end reason code and impact position data.
+
+### Fixed
+- Fixed delayed local shot visibility that previously made shots appear far from the barrel under network latency.
+- Fixed shot-end visuals to only trigger explosion billboards for BZFlag-style explode reason (`reason === 0`).
+
 ## [1.0.22] - 2026-08-24
 
 ### Added
