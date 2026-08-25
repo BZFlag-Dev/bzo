@@ -21,6 +21,8 @@ import {
   createBoxWallTexture,
   createPyramidTexture,
   createRoofTexture,
+  createTeleporterBorderTexture,
+  createTeleporterPortalTexture,
   createGroundTexture,
 } from './texture.js';
 
@@ -613,6 +615,8 @@ class RenderManager {
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
 
+    this._updateTeleporterVisuals(performance.now() * 0.001);
+
     // Debug XR rendering (log rarely to avoid spam)
     if (xrState.enabled) {
       if (!this.xrFrameCount) this.xrFrameCount = 0;
@@ -697,6 +701,221 @@ class RenderManager {
     materials[3].map.repeat.set(width / topTextureScale, depth / topTextureScale);
 
     return materials;
+  }
+
+  _disposeObject3D(object3D) {
+    if (!object3D) return;
+
+    object3D.traverse((child) => {
+      if (child.userData && child.userData.shadowMesh) {
+        this.worldGroup.remove(child.userData.shadowMesh);
+        child.userData.shadowMesh.geometry?.dispose();
+        child.userData.shadowMesh.material?.dispose();
+        child.userData.shadowMesh = null;
+      }
+
+      if (child.geometry) {
+        child.geometry.dispose();
+      }
+
+      if (Array.isArray(child.material)) {
+        child.material.forEach((material) => material.dispose());
+      } else if (child.material) {
+        child.material.dispose();
+      }
+    });
+  }
+
+  _createTeleporterMesh(obs, nameSuffix = '') {
+    const halfWidth = Math.max(0.25, Number(obs.w) / 2 || 0.56);
+    const sourceHalfBreadth = Math.max(0.25, Number(obs.d) / 2 || 2.24);
+    const sourceHeight = Math.max(1.0, Number(obs.h) || 10.0);
+    const border = Math.max(0.12, Number(obs.border) || 1.12);
+
+    // Match BZFlag Teleporter::finalize() for non-horizontal teleporters:
+    // size[1] = origBreadth + 2*border, size[2] = origHeight + border.
+    const halfBreadth = sourceHalfBreadth + (border * 2.0);
+    const height = sourceHeight + border;
+
+    // Scene generator then uses:
+    // h = getBreadth() - border, z = getHeight() - border.
+    const innerBreadth = Math.max(0.1, halfBreadth - border);
+    const halfBorder = border * 0.5;
+    const portalHeight = Math.max(0.2, height - border);
+
+    const teleporter = new THREE.Group();
+    teleporter.name = obs.name || `Teleporter ${nameSuffix}`;
+    teleporter.userData.isTeleporter = true;
+
+    const borderTexture = createTeleporterBorderTexture();
+    const baseFrameMaterial = new THREE.MeshLambertMaterial({
+      color: 0xffffff,
+      map: borderTexture,
+      emissive: 0x221900,
+      emissiveIntensity: 0.18,
+      side: THREE.DoubleSide,
+    });
+    const outerFrameMaterial = baseFrameMaterial.clone();
+    outerFrameMaterial.color.setRGB(1.0, 0.875, 0.0);
+    const innerFrameMaterial = baseFrameMaterial.clone();
+    innerFrameMaterial.color.setRGB(0.9, 0.8, 0.0);
+
+    const portalTextureFront = createTeleporterPortalTexture();
+    const portalTextureBack = portalTextureFront.clone();
+    portalTextureBack.needsUpdate = true;
+
+    const centerMaterialFront = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      map: portalTextureFront,
+      transparent: true,
+      opacity: 0.56,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+    });
+    const centerMaterialBack = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      map: portalTextureBack,
+      transparent: true,
+      opacity: 0.56,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false,
+      side: THREE.DoubleSide,
+    });
+
+    const texCoords = [
+      [[0.0, 0.0], [0.5, 0.0], [0.5, 9.5], [0.0, 9.5]],
+      [[0.5, 0.0], [1.0, 0.0], [1.0, 9.5], [0.5, 9.5]],
+      [[0.0, 0.0], [0.5, 0.0], [0.5, 9.0], [0.0, 9.0]],
+      [[0.5, 0.0], [1.0, 0.0], [1.0, 9.0], [0.5, 9.0]],
+      [[0.5, 0.0], [1.0, 0.0], [1.0, 9.0], [0.5, 9.0]],
+      [[0.0, 0.0], [0.5, 0.0], [0.5, 9.0], [0.0, 9.0]],
+      [[0.5, 0.0], [1.0, 0.0], [1.0, 9.0], [0.5, 9.0]],
+      [[0.0, 0.0], [0.5, 0.0], [0.5, 9.0], [0.0, 9.0]],
+      [[0.0, 0.0], [0.0, 0.0], [0.5, 5.0], [0.5, 5.0]],
+      [[0.0, 0.0], [0.0, 0.0], [0.5, 4.0], [0.5, 4.0]],
+      [[0.0, 0.0], [5.0, 0.0], [5.0, 0.5], [0.0, 0.5]],
+      [[0.0, 0.5], [5.0, 0.5], [5.0, 1.0], [0.0, 1.0]],
+    ];
+
+    const addQuad = (base, sEdge, tEdge, uvCoords, material, renderOrder = 5) => {
+      const p0 = new THREE.Vector3(base[0], base[2], base[1]);
+      const p1 = new THREE.Vector3(base[0] + sEdge[0], base[2] + sEdge[2], base[1] + sEdge[1]);
+      const p2 = new THREE.Vector3(base[0] + sEdge[0] + tEdge[0], base[2] + sEdge[2] + tEdge[2], base[1] + sEdge[1] + tEdge[1]);
+      const p3 = new THREE.Vector3(base[0] + tEdge[0], base[2] + tEdge[2], base[1] + tEdge[1]);
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+        p0.x, p0.y, p0.z,
+        p1.x, p1.y, p1.z,
+        p2.x, p2.y, p2.z,
+        p3.x, p3.y, p3.z,
+      ], 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+        uvCoords[0][0], uvCoords[0][1],
+        uvCoords[1][0], uvCoords[1][1],
+        uvCoords[2][0], uvCoords[2][1],
+        uvCoords[3][0], uvCoords[3][1],
+      ], 2));
+      geometry.setIndex([0, 1, 2, 0, 2, 3]);
+      geometry.computeVertexNormals();
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = renderOrder;
+      teleporter.add(mesh);
+    };
+
+    const x = [1.0, 0.0];
+    const y = [0.0, 1.0];
+    const h = innerBreadth;
+    const b = halfBorder;
+    const d = h + b;
+    const z = portalHeight;
+
+    const quads = [
+      { base: [d * y[0] + b * x[0] + b * y[0], d * y[1] + b * x[1] + b * y[1], 0.0], s: [-2.0 * b * x[0], -2.0 * b * x[1], 0.0], t: [0.0, 0.0, z + 2.0 * b] },
+      { base: [-d * y[0] - b * x[0] - b * y[0], -d * y[1] - b * x[1] - b * y[1], 0.0], s: [2.0 * b * x[0], 2.0 * b * x[1], 0.0], t: [0.0, 0.0, z + 2.0 * b] },
+      { base: [d * y[0] - b * x[0] - b * y[0], d * y[1] - b * x[1] - b * y[1], 0.0], s: [2.0 * b * x[0], 2.0 * b * x[1], 0.0], t: [0.0, 0.0, z] },
+      { base: [-d * y[0] + b * x[0] + b * y[0], -d * y[1] + b * x[1] + b * y[1], 0.0], s: [-2.0 * b * x[0], -2.0 * b * x[1], 0.0], t: [0.0, 0.0, z] },
+      { base: [d * y[0] + b * x[0] - b * y[0], d * y[1] + b * x[1] - b * y[1], 0.0], s: [2.0 * b * y[0], 2.0 * b * y[1], 0.0], t: [0.0, 0.0, z] },
+      { base: [-d * y[0] - b * x[0] + b * y[0], -d * y[1] - b * x[1] + b * y[1], 0.0], s: [-2.0 * b * y[0], -2.0 * b * y[1], 0.0], t: [0.0, 0.0, z] },
+      { base: [d * y[0] - b * x[0] + b * y[0], d * y[1] - b * x[1] + b * y[1], 0.0], s: [-2.0 * b * y[0], -2.0 * b * y[1], 0.0], t: [0.0, 0.0, z] },
+      { base: [-d * y[0] + b * x[0] - b * y[0], -d * y[1] + b * x[1] - b * y[1], 0.0], s: [2.0 * b * y[0], 2.0 * b * y[1], 0.0], t: [0.0, 0.0, z] },
+      { base: [-d * y[0] - b * x[0] - b * y[0], -d * y[1] - b * x[1] - b * y[1], z + 2.0 * b], s: [2.0 * b * x[0], 2.0 * b * x[1], 0.0], t: [2.0 * (d + b) * y[0], 2.0 * (d + b) * y[1], 0.0] },
+      { base: [-d * y[0] + b * x[0] + b * y[0], -d * y[1] + b * x[1] + b * y[1], z], s: [-2.0 * b * x[0], -2.0 * b * x[1], 0.0], t: [2.0 * (d - b) * y[0], 2.0 * (d - b) * y[1], 0.0] },
+      { base: [-d * y[0] + b * x[0] - b * y[0], -d * y[1] + b * x[1] - b * y[1], z], s: [2.0 * (d + b) * y[0], 2.0 * (d + b) * y[1], 0.0], t: [0.0, 0.0, 2.0 * b] },
+      { base: [d * y[0] - b * x[0] + b * y[0], d * y[1] - b * x[1] + b * y[1], z], s: [-2.0 * (d + b) * y[0], -2.0 * (d + b) * y[1], 0.0], t: [0.0, 0.0, 2.0 * b] },
+    ];
+
+    quads.forEach((quad, index) => {
+      const material = index <= 1 ? outerFrameMaterial : innerFrameMaterial;
+      addQuad(quad.base, quad.s, quad.t, texCoords[index], material);
+    });
+
+    const addPortalFace = (xPos, material) => {
+      const portalRepeatV = (height) / Math.max(0.1, 2.0 * innerBreadth);
+      addQuad(
+        [xPos, -innerBreadth, 0.0],
+        [0.0, 2.0 * innerBreadth, 0.0],
+        [0.0, 0.0, portalHeight],
+        [[0.0, 0.0], [1.0, 0.0], [1.0, portalRepeatV], [0.0, portalRepeatV]],
+        material,
+        6,
+      );
+    };
+
+    addPortalFace(halfWidth, centerMaterialFront);
+    addPortalFace(-halfWidth, centerMaterialBack);
+
+    teleporter.userData.portalMaterials = [centerMaterialFront, centerMaterialBack];
+    teleporter.userData.portalTextures = [portalTextureFront, portalTextureBack];
+    teleporter.userData.portalPhase = (obs.x * 0.031) + (obs.z * 0.017);
+
+    return teleporter;
+  }
+
+  _updateTeleporterVisuals(timeSeconds = 0) {
+    for (const obstacle of this.obstacleMeshes) {
+      if (!obstacle?.userData?.isTeleporter) continue;
+      const portalMaterials = obstacle.userData.portalMaterials;
+      const portalTextures = obstacle.userData.portalTextures;
+      const phase = obstacle.userData.portalPhase || 0;
+      if (!Array.isArray(portalMaterials) || !Array.isArray(portalTextures)) continue;
+
+      const cycle = ((timeSeconds + phase) / 2.0) * (Math.PI * 2.0);
+      const red = 0.125 + (0.125 * Math.sin(cycle));
+      const green = 0.125 + (0.125 * Math.sin(cycle + ((Math.PI * 2.0) / 3.0)));
+      const blue = 0.125 + (0.125 * Math.sin(cycle + ((Math.PI * 4.0) / 3.0)));
+      const opacity = 0.75;
+      portalMaterials.forEach((material) => {
+        if (!material) return;
+        material.color.setRGB(red, green, blue);
+        material.opacity = opacity;
+      });
+
+      const frontTexture = portalTextures[0];
+      const backTexture = portalTextures[1];
+      if (frontTexture) {
+        frontTexture.offset.y = -((timeSeconds * 0.05) % 1);
+      }
+      if (backTexture) {
+        backTexture.offset.y = -((timeSeconds * 0.05) % 1);
+      }
+    }
+  }
+
+  _clearObjectForRemoval(object3D) {
+    if (!object3D) return;
+    if (object3D.userData && object3D.userData.shadowMesh) {
+      this.worldGroup.remove(object3D.userData.shadowMesh);
+      object3D.userData.shadowMesh.geometry?.dispose();
+      object3D.userData.shadowMesh.material?.dispose();
+      object3D.userData.shadowMesh = null;
+    }
+    this._disposeObject3D(object3D);
+    this.worldGroup.remove(object3D);
   }
 
   buildGround(mapSize) {
@@ -868,20 +1087,7 @@ class RenderManager {
   clearObstacles() {
     if (!this.scene) return;
     this.obstacleMeshes.forEach((mesh) => {
-      // Remove and dispose shadow mesh if present
-      if (mesh.userData && mesh.userData.shadowMesh) {
-        this.worldGroup.remove(mesh.userData.shadowMesh);
-        mesh.userData.shadowMesh.geometry?.dispose();
-        mesh.userData.shadowMesh.material?.dispose();
-        mesh.userData.shadowMesh = null;
-      }
-      this.worldGroup.remove(mesh);
-      if (mesh.geometry) mesh.geometry.dispose();
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach((mat) => mat.dispose());
-      } else if (mesh.material) {
-        mesh.material.dispose();
-      }
+      this._clearObjectForRemoval(mesh);
     });
     this.obstacleMeshes = [];
     this._clearDebugLabels('obstacle');
@@ -907,7 +1113,17 @@ class RenderManager {
       const baseY = obs.baseY || 0;
       let mesh = null;
 
-      if (obs.type === 'pyramid') {
+      if (obs.kind === 'teleporter') {
+        mesh = this._createTeleporterMesh(obs, i + 1);
+        mesh.position.set(obs.x, baseY, obs.z);
+        mesh.rotation.y = obs.rotation || 0;
+        mesh.name = obs.name || `Teleporter ${i + 1}`;
+        mesh.userData.teleporter = {
+          border: Number(obs.border) || 0,
+        };
+        this.worldGroup.add(mesh);
+        this._addDebugLabel(mesh, 'obstacle');
+      } else if (obs.type === 'pyramid') {
         const geometry = new THREE.ConeGeometry(0.5 / Math.SQRT2, h, 4, 1);
         geometry.clearGroups();
         geometry.addGroup(0, geometry.index.count - 12, 0);

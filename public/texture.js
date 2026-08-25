@@ -33,6 +33,14 @@ export function createPyramidTexture() {
   return loadTexture('/textures/pyrwall.png');
 }
 
+export function createTeleporterBorderTexture() {
+  return loadTexture('/textures/caution.png');
+}
+
+export function createTeleporterPortalTexture() {
+  return loadTexture('/textures/telelink.png');
+}
+
 export function createGroundTexture() {
   return loadTexture('/textures/std_ground.png');
 }

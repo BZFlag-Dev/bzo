@@ -490,7 +490,7 @@ function parseBZWMap(filename) {
     } else if (line.startsWith('base')) {
       current = { type: 'box' };
     } else if (line.startsWith('teleporter')) {
-      current = { type: 'box' };
+      current = { type: 'box', kind: 'teleporter' };
     } else if (current && line.startsWith('name')) {
       // name <string>
       const [, ...nameParts] = line.split(/\s+/);
@@ -519,6 +519,9 @@ function parseBZWMap(filename) {
       // which flips the depth axis. The correct conversion is +deg + π.
       const [, deg] = line.split(/\s+/);
       current.rotation = (parseFloat(deg) || 0) * Math.PI / 180 + Math.PI;
+    } else if (current && line.startsWith('border')) {
+      const [, border] = line.split(/\s+/);
+      current.border = Math.abs(parseFloat(border) || 0);
     } else if (current && line === 'end') {
       // Use BZW name if present, otherwise assign a generated name
       if (!current.name) {
