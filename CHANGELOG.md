@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.24] - 2026-08-25
+
+### Added
+- Added deterministic projectile impact-point refinement on the server for obstacle and map-edge hits, so impact billboards render at stable contact points.
+
+### Changed
+- Updated remote projectile spawn handling to use authoritative server coordinates instead of wall-clock lead compensation.
+- Updated remote extrapolation stop handling to clamp only when the replicated remote state is an explicit full stop.
+
+### Fixed
+- Fixed missing shot-end billboard effects for other players by always honoring authoritative projectile removal coordinates.
+- Fixed impact visuals landing inside geometry by backtracking projectile/map-edge collision points before broadcast.
+- Fixed delayed remote stop visibility by forcing a dead-stick move update at local inertial stop (`fs=0`, `rs=0`) and replicating that stop state immediately.
+
 ## [1.0.23] - 2026-08-25
 
 ### Added

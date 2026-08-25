@@ -1036,6 +1036,8 @@ const VELOCITY_THRESHOLD = 0.15; // Send if forward/rotation speed changes by 15
 const VERTICAL_VELOCITY_THRESHOLD = 1.0; // Send if vertical velocity changes significantly
 const AIR_VELOCITY_THRESHOLD = 0.35; // Send if airborne horizontal velocity changes significantly
 const MAX_UPDATE_INTERVAL = 5000; // Force update every 5 seconds
+const DEAD_STICK_STOP_THRESHOLD = 0.03; // Force an update when ground motion settles to near-zero
+const MAX_REMOTE_EXTRAPOLATION_STOP_SECONDS = 0.3; // Short horizon only when replicated state is fully stopped
 const BOX_SLIDE_EPSILON = 0.01;
 const BOX_SLIDE_AXIS_EPSILON = 1e-5;
 const BOX_SLIDE_TIE_EPSILON = 1e-4;
@@ -2623,7 +2625,7 @@ function handleServerMessage(message) {
       break;
 
     case 'projectileRemoved':
-      removeProjectile(message.id, message.reason);
+      removeProjectile(message.id, message.reason, message.x, message.y, message.z);
       break;
 
     case 'playerHit':
@@ -2847,20 +2849,12 @@ function createProjectile(data) {
   }
 
   const shotColor = getPlayerShotColor(data.playerId);
-  const shotSpeed = Number.isFinite(gameConfig?.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
-  const shotRange = Number.isFinite(gameConfig?.SHOT_RANGE)
-    ? gameConfig.SHOT_RANGE
-    : (Number.isFinite(gameConfig?.SHOT_DISTANCE) ? gameConfig.SHOT_DISTANCE : 350);
-  const networkLeadSeconds = data.playerId === myPlayerId
-    ? 0
-    : (Number.isFinite(data.createdAt)
-      ? Math.max(0, (Date.now() - data.createdAt) / 1000)
-      : 0);
-  const leadDistance = Math.min(shotRange, shotSpeed * networkLeadSeconds);
+  // Keep remote shot starts authoritative to avoid cross-machine clock skew.
+  // BZFlag does not rely on sender wall-clock deltas to place remote shots.
   const projectile = renderManager.createProjectile({
     ...data,
-    x: data.x + (data.dirX * leadDistance),
-    z: data.z + (data.dirZ * leadDistance),
+    x: data.x,
+    z: data.z,
     color: shotColor.getHex(),
   });
   if (!projectile) return;
@@ -2872,7 +2866,7 @@ function createProjectile(data) {
 }
 
 function createLocalProjectile({ x, y, z, dirX, dirZ }) {
-  if (!Number.isInteger(myPlayerId)) return;
+  if (myPlayerId === null || myPlayerId === undefined) return;
 
   const shotColor = getPlayerShotColor(myPlayerId);
   const localId = `local-${myPlayerId}-${Date.now()}-${localProjectileCounter++}`;
@@ -2897,11 +2891,24 @@ function createLocalProjectile({ x, y, z, dirX, dirZ }) {
   pendingLocalProjectiles.push({ id: localId, sentAt: Date.now() });
 }
 
-function removeProjectile(id, reason = 1) {
+function removeProjectile(id, reason = 1, x = null, y = null, z = null) {
+  const numericReason = Number(reason);
+  const hasServerImpactPosition = Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z);
   const projectile = projectiles.get(id);
   if (projectile) {
-    renderManager.removeProjectile(projectile, reason);
+    // Use authoritative server coordinates for end-of-shot effects.
+    if (hasServerImpactPosition) {
+      projectile.position.set(x, y, z);
+    }
+    renderManager.removeProjectile(projectile, numericReason);
     projectiles.delete(id);
+    return;
+  }
+
+  // If we don't have the projectile object (rare race/id mismatch), still
+  // render the authoritative impact effect so players always see shot ends.
+  if (numericReason === 0 && hasServerImpactPosition) {
+    renderManager.createShotImpact(new THREE.Vector3(x, y, z));
   }
 }
 
@@ -4679,8 +4686,20 @@ function handleMotion(deltaTime) {
     ? Math.hypot(airVelocityX - lastSentAirVelocityX, airVelocityZ - lastSentAirVelocityZ)
     : 0;
 
+  const deadStickStopUpdate =
+    !airborneState &&
+    Math.abs(forwardSpeed) <= DEAD_STICK_STOP_THRESHOLD &&
+    Math.abs(rotationSpeed) <= DEAD_STICK_STOP_THRESHOLD &&
+    (Math.abs(lastSentForwardSpeed) > DEAD_STICK_STOP_THRESHOLD ||
+      Math.abs(lastSentRotationSpeed) > DEAD_STICK_STOP_THRESHOLD);
+
+  if (deadStickStopUpdate) {
+    forceMoveSend = true;
+  }
+
   const reasons = [];
   if (forceMoveSend) reasons.push('force');
+  if (deadStickStopUpdate) reasons.push('dead-stick-stop');
   if (forwardSpeedDelta > VELOCITY_THRESHOLD) reasons.push(`fs:${forwardSpeedDelta.toFixed(3)}`);
   if (rotationSpeedDelta > VELOCITY_THRESHOLD) reasons.push(`rs:${rotationSpeedDelta.toFixed(3)}`);
   if (verticalVelocityDelta > VERTICAL_VELOCITY_THRESHOLD) reasons.push(`vv:${verticalVelocityDelta.toFixed(3)}`);
@@ -4706,8 +4725,10 @@ function handleMotion(deltaTime) {
 
     // Round velocities to the precision we send to match server expectations
     // For jump packets, send the intendedForward value used for movement, not calculated forwardSpeed
-    const sentFS = jumpStarted ? Number((myTank.userData.jumpForwardSpeed || 0).toFixed(2)) : Number(forwardSpeed.toFixed(2));
-    const sentRS = Number(rotationSpeed.toFixed(2));
+    const sentFS = deadStickStopUpdate
+      ? 0
+      : (jumpStarted ? Number((myTank.userData.jumpForwardSpeed || 0).toFixed(2)) : Number(forwardSpeed.toFixed(2)));
+    const sentRS = deadStickStopUpdate ? 0 : Number(rotationSpeed.toFixed(2));
     const sentVV = Number(verticalVelocity.toFixed(2));
 
     const movePacket = {
@@ -5363,6 +5384,23 @@ function animate() {
 
       const lastUpdate = tank.userData.lastUpdateTime || now;
       const timeSinceUpdate = (now - lastUpdate) / 1000; // Convert to seconds
+      const remoteFS = tank.userData.forwardSpeed;
+      const remoteRS = tank.userData.rotationSpeed;
+      const remoteVV = tank.userData.verticalVelocity;
+      const remoteJumpDirection = tank.userData.jumpDirection;
+      const remoteAirVx = tank.userData.airVelocityX;
+      const remoteAirVz = tank.userData.airVelocityZ;
+      const remoteAirborne = remoteJumpDirection !== null && remoteJumpDirection !== undefined;
+      const remoteStopped =
+        !remoteAirborne &&
+        remoteFS === 0 &&
+        remoteRS === 0 &&
+        remoteVV === 0 &&
+        remoteAirVx === 0 &&
+        remoteAirVz === 0;
+      const clampedTimeSinceUpdate = remoteStopped
+        ? Math.max(0, Math.min(timeSinceUpdate, MAX_REMOTE_EXTRAPOLATION_STOP_SECONDS))
+        : Math.max(0, timeSinceUpdate);
 
       // Extrapolate position from last server-confirmed state
       const extrapolated = extrapolatePosition({
@@ -5370,14 +5408,14 @@ function animate() {
         y: tank.userData.serverPosition.y,
         z: tank.userData.serverPosition.z,
         r: tank.userData.serverPosition.r,
-        forwardSpeed: tank.userData.forwardSpeed || 0,
-        rotationSpeed: tank.userData.rotationSpeed || 0,
-        verticalVelocity: tank.userData.verticalVelocity || 0,
-        jumpDirection: tank.userData.jumpDirection,
+        forwardSpeed: remoteFS,
+        rotationSpeed: remoteRS,
+        verticalVelocity: remoteVV,
+        jumpDirection: remoteJumpDirection,
         slideDirection: tank.userData.slideDirection,
-        airVelocityX: tank.userData.airVelocityX || 0,
-        airVelocityZ: tank.userData.airVelocityZ || 0
-      }, timeSinceUpdate);
+        airVelocityX: remoteAirVx,
+        airVelocityZ: remoteAirVz
+      }, clampedTimeSinceUpdate);
 
       // Update tank's rendered position smoothly
       if (extrapolated) {

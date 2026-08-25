@@ -1180,6 +1180,74 @@ function checkCollision(x, y, z, tankRadius = 2) {
   return false;
 }
 
+function findProjectileImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, projectileRadius = 0.1) {
+  const prevHit = !!checkCollision(prevX, prevY, prevZ, projectileRadius);
+  const nextHit = !!checkCollision(nextX, nextY, nextZ, projectileRadius);
+
+  // Expected case: clear -> colliding. If not, fall back to the reported position.
+  if (prevHit || !nextHit) {
+    return { x: nextX, y: nextY, z: nextZ };
+  }
+
+  let lo = 0;
+  let hi = 1;
+
+  // Binary search first-contact on the segment. A tiny fixed iteration count
+  // keeps this inexpensive while producing stable impact points.
+  for (let i = 0; i < 8; i++) {
+    const mid = (lo + hi) * 0.5;
+    const mx = prevX + (nextX - prevX) * mid;
+    const my = prevY + (nextY - prevY) * mid;
+    const mz = prevZ + (nextZ - prevZ) * mid;
+    const midHit = !!checkCollision(mx, my, mz, projectileRadius);
+    if (midHit) {
+      hi = mid;
+    } else {
+      lo = mid;
+    }
+  }
+
+  // Return the last non-colliding point so the visual impact renders just
+  // outside obstacle geometry.
+  const t = lo;
+  return {
+    x: prevX + (nextX - prevX) * t,
+    y: prevY + (nextY - prevY) * t,
+    z: prevZ + (nextZ - prevZ) * t,
+  };
+}
+
+function findMapEdgeImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, halfMap) {
+  const prevInside = Math.abs(prevX) <= halfMap && Math.abs(prevZ) <= halfMap;
+  const nextInside = Math.abs(nextX) <= halfMap && Math.abs(nextZ) <= halfMap;
+
+  // Expected case: inside -> outside. Fall back to current position otherwise.
+  if (!prevInside || nextInside) {
+    return { x: nextX, y: nextY, z: nextZ };
+  }
+
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 8; i++) {
+    const mid = (lo + hi) * 0.5;
+    const mx = prevX + (nextX - prevX) * mid;
+    const mz = prevZ + (nextZ - prevZ) * mid;
+    const inside = Math.abs(mx) <= halfMap && Math.abs(mz) <= halfMap;
+    if (inside) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  const t = lo;
+  return {
+    x: prevX + (nextX - prevX) * t,
+    y: prevY + (nextY - prevY) * t,
+    z: prevZ + (nextZ - prevZ) * t,
+  };
+}
+
 function findValidSpawnPosition(tankRadius = 2) {
   //return { x: 0, y: 0, z: 0, rotation: 0 };
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
@@ -1540,6 +1608,9 @@ function gameLoop() {
   // Update projectiles
   projectiles.forEach((proj, id) => {
     const deltaTime = (now - proj.createdAt) / 1000;
+    const prevX = proj.x;
+    const prevY = proj.y;
+    const prevZ = proj.z;
     proj.x += proj.dirX * GAME_CONFIG.SHOT_SPEED * loopDeltaSeconds;
     proj.z += proj.dirZ * GAME_CONFIG.SHOT_SPEED * loopDeltaSeconds;
 
@@ -1556,7 +1627,10 @@ function gameLoop() {
     if (outOfBounds || timedOut) {
       projectiles.delete(id);
       const reason = outOfBounds ? 0 : 1;
-      broadcastAll({ type: 'projectileRemoved', id, reason, x: proj.x, y: proj.y, z: proj.z });
+      const removalPoint = outOfBounds
+        ? findMapEdgeImpactPoint(prevX, prevY, prevZ, proj.x, proj.y, proj.z, halfMap)
+        : { x: proj.x, y: proj.y, z: proj.z };
+      broadcastAll({ type: 'projectileRemoved', id, reason, x: removalPoint.x, y: removalPoint.y, z: removalPoint.z });
       log(`Projectile ${id} removed (out of bounds ${distTraveled} or expired)`);
       return;
     }
@@ -1565,13 +1639,22 @@ function gameLoop() {
     const projectileRadius = 0.1;
     const obstacleHit = checkCollision(proj.x, proj.y, proj.z, projectileRadius);
     if (obstacleHit) {
+      const impact = findProjectileImpactPoint(
+        prevX,
+        prevY,
+        prevZ,
+        proj.x,
+        proj.y,
+        proj.z,
+        projectileRadius,
+      );
       if (obstacleHit.collisionKind === 'boundary') {
-        log(`Projectile ${id} hit boundary at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
+        log(`Projectile ${id} hit boundary at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
       } else {
-        log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}, ${proj.z.toFixed(2)})`);
+        log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
       }
       projectiles.delete(id);
-      broadcastAll({ type: 'projectileRemoved', id, reason: 0, x: proj.x, y: proj.y, z: proj.z });
+      broadcastAll({ type: 'projectileRemoved', id, reason: 0, x: impact.x, y: impact.y, z: impact.z });
       return;
     }
 
@@ -1898,8 +1981,12 @@ wss.on('connection', (ws, req) => {
                         ? GAME_CONFIG.TURN_DECEL
                         : GAME_CONFIG.TURN_ACCEL;
 
-                      fs = approachNormalizedValue(player.forwardSpeed || 0, requestedFS, forwardRate * deltaTime);
-                      rs = approachNormalizedValue(player.rotationSpeed || 0, requestedRS, turnRate * deltaTime);
+                      fs = requestedFS === 0
+                        ? 0
+                        : approachNormalizedValue(player.forwardSpeed || 0, requestedFS, forwardRate * deltaTime);
+                      rs = requestedRS === 0
+                        ? 0
+                        : approachNormalizedValue(player.rotationSpeed || 0, requestedRS, turnRate * deltaTime);
 
                       fs = Math.max(-reverseSpeedRatio, Math.min(1, fs));
                       rs = Math.max(-1, Math.min(1, rs));
