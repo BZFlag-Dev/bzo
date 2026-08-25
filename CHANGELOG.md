@@ -6,11 +6,25 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.26] - 2026-08-25
+
+### Added
+- Added subtle team-color shading for base tiles on the radar while preserving vertical opacity tracking.
+
+### Changed
+- Updated cardinal indicator colors to fixed team-color mapping independent of map layout: north=red, east=green, south=blue, west=purple in both 3D markers and radar.
+- Increased radar base tint strength so team ownership is easier to read at a glance.
+- Updated `hix.bzw` object naming to use directional prefixes consistently and keep team names on bases only.
+- Renamed base source texture assets to shorter filenames: `base_top_source.png` -> `base_top.png`, `base_wall_source.png` -> `base_wall.png`.
+
+### Fixed
+- Fixed inconsistent directional naming in `hix.bzw`, including mixed prefix/suffix patterns and duplicate platform direction labels.
+
 ## [1.0.25] - 2026-08-25
 
 ### Added
 - Added BZFlag teleporter textures (`caution.png`, `telelink.png`) and BZ-inspired teleporter frame/portal rendering with animated portal visuals.
-- Added base source textures (`base_top_source.png`, `base_wall_source.png`) and team-aware base rendering assets for map-defined bases.
+- Added base source textures (`base_top.png`, `base_wall.png`) and team-aware base rendering assets for map-defined bases.
 
 ### Changed
 - Updated teleporter geometry and face rendering toward BZFlag parity, including border framing, portal face behavior, and map-driven placement/orientation.

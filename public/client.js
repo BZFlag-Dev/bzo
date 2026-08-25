@@ -4960,6 +4960,31 @@ function getRadarOpacity(playerY, baseY = 0, height = 0) {
   return opacity;
 }
 
+function getObstacleRadarFillStyle(obs) {
+  const neutral = [180, 180, 180];
+  if (!obs || obs.kind !== 'base') {
+    return `rgb(${neutral[0]},${neutral[1]},${neutral[2]})`;
+  }
+
+  const teamValue = Number(obs.team);
+  const team = Number.isFinite(teamValue)
+    ? Math.max(1, Math.min(4, Math.round(teamValue)))
+    : 1;
+  const teamColors = {
+    1: [178, 64, 64],
+    2: [64, 153, 64],
+    3: [64, 96, 192],
+    4: [144, 64, 176],
+  };
+  const [tr, tg, tb] = teamColors[team] || teamColors[1];
+  const tintStrength = 0.65;
+
+  const r = Math.round(neutral[0] * (1 - tintStrength) + tr * tintStrength);
+  const g = Math.round(neutral[1] * (1 - tintStrength) + tg * tintStrength);
+  const b = Math.round(neutral[2] * (1 - tintStrength) + tb * tintStrength);
+  return `rgb(${r},${g},${b})`;
+}
+
 function updateRadar() {
   if (!radarCtx || !myTank || !gameConfig) return;
   // Declare radar variables only once
@@ -5023,7 +5048,7 @@ function updateRadar() {
       const p1 = world2Radar(-border, top, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       const p2 = world2Radar(-border, bottom, px, pz, playerHeading, center, radius, SHOT_DISTANCE);
       radarCtx.save();
-      radarCtx.strokeStyle = '#FBC02D'; // West - yellow
+      radarCtx.strokeStyle = '#9C27B0'; // West - purple
       radarCtx.lineWidth = 2.5;
       radarCtx.setLineDash([6, 6]);
       radarCtx.lineDashOffset = top * 2; // Anchor dashes to world coordinates
@@ -5085,7 +5110,7 @@ function updateRadar() {
     { angle: Math.PI / 2, label: 'N', color: '#B20000' },
     { angle: Math.PI, label: 'E', color: '#388E3C' },
     { angle: -Math.PI / 2, label: 'S', color: '#1976D2' },
-    { angle: 0, label: 'W', color: '#FBC02D' },
+    { angle: 0, label: 'W', color: '#9C27B0' },
   ];
   cardinalLabels.forEach(dir => {
     radarCtx.save();
@@ -5140,7 +5165,7 @@ function updateRadar() {
       radarCtx.translate(result.x, result.y);
       radarCtx.rotate(result.rotation);
       radarCtx.globalAlpha = opacity;
-      radarCtx.fillStyle = 'rgba(180,180,180,0.8)';
+      radarCtx.fillStyle = getObstacleRadarFillStyle(obs);
       // Map Three.js dimensions: w (X-axis) → canvas width, d (Z-axis) → canvas height
       radarCtx.fillRect(-w/2, -d/2, w, d);
       radarCtx.restore();

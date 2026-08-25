@@ -1070,7 +1070,7 @@ class RenderManager {
     this.worldGroup.add(westWall);
     westWall.name = 'West Wall';
     boundaryMeshes.push(westWall);
-    this._addCompassMarker('W', 0xFBC02D, new THREE.Vector3(-mapSize / 2, markerHeight, 0));
+    this._addCompassMarker('W', 0x9C27B0, new THREE.Vector3(-mapSize / 2, markerHeight, 0));
     this._addDebugLabel(westWall, 'boundary');
 
     this.boundaryMeshes = boundaryMeshes;

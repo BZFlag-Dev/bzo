@@ -102,11 +102,11 @@ function getBaseTint(team = 1) {
 }
 
 export function createBaseTopTexture(team = 1) {
-  return createTintedTexture('/textures/base_top_source.png', getBaseTint(team));
+  return createTintedTexture('/textures/base_top.png', getBaseTint(team));
 }
 
 export function createBaseWallTexture(team = 1) {
-  return createTintedTexture('/textures/base_wall_source.png', getBaseTint(team));
+  return createTintedTexture('/textures/base_wall.png', getBaseTint(team));
 }
 
 export function createGroundTexture() {
