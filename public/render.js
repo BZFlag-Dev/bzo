@@ -769,20 +769,20 @@ class RenderManager {
       map: portalTextureFront,
       transparent: true,
       opacity: 0.56,
-      depthWrite: false,
+      depthWrite: true,
       fog: false,
       toneMapped: false,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     });
     const centerMaterialBack = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       map: portalTextureBack,
       transparent: true,
       opacity: 0.56,
-      depthWrite: false,
+      depthWrite: true,
       fog: false,
       toneMapped: false,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     });
 
     const texCoords = [
@@ -854,11 +854,13 @@ class RenderManager {
       addQuad(quad.base, quad.s, quad.t, texCoords[index], material);
     });
 
-    const addPortalFace = (xPos, material) => {
+    const addPortalFace = (xPos, material, facingNegativeX = false) => {
       const portalRepeatV = (height) / Math.max(0.1, 2.0 * innerBreadth);
+      const baseY = facingNegativeX ? innerBreadth : -innerBreadth;
+      const spanY = facingNegativeX ? -2.0 * innerBreadth : 2.0 * innerBreadth;
       addQuad(
-        [xPos, -innerBreadth, 0.0],
-        [0.0, 2.0 * innerBreadth, 0.0],
+        [xPos, baseY, 0.0],
+        [0.0, spanY, 0.0],
         [0.0, 0.0, portalHeight],
         [[0.0, 0.0], [1.0, 0.0], [1.0, portalRepeatV], [0.0, portalRepeatV]],
         material,
@@ -866,8 +868,8 @@ class RenderManager {
       );
     };
 
-    addPortalFace(halfWidth, centerMaterialFront);
-    addPortalFace(-halfWidth, centerMaterialBack);
+    addPortalFace(halfWidth, centerMaterialFront, true);
+    addPortalFace(-halfWidth, centerMaterialBack, false);
 
     teleporter.userData.portalMaterials = [centerMaterialFront, centerMaterialBack];
     teleporter.userData.portalTextures = [portalTextureFront, portalTextureBack];
@@ -1323,9 +1325,21 @@ class RenderManager {
     return geometry;
   }
 
+  _ensureMountainViewDistance(mapSize) {
+    if (!this.camera || !Number.isFinite(mapSize) || mapSize <= 0) return;
+    const mountainRadius = 2.25 * mapSize;
+    const desiredFar = mountainRadius + (0.75 * mapSize) + 200;
+    if (this.camera.far < desiredFar) {
+      this.camera.far = desiredFar;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
   createMountains(mapSize) {
     if (!this.scene) return;
     this.clearMountains();
+
+    this._ensureMountainViewDistance(mapSize);
 
     const mountainDistance = 2.25 * mapSize;
     const mountainHeight = 0.9 * mapSize;
