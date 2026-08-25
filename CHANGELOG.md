@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.27] - 2026-08-25
+
+### Added
+- Added a Quest-friendly XR shortcut: pressing either controller thumbstick button exits XR and opens the browser settings HUD.
+
+### Changed
+- Updated XR locomotion to be right-stick-primary for forward/back movement, with left-stick fallback, so turning and movement can be handled with one thumb.
+- Updated XR session toggle UX messaging so intentional XR exits do not display a false "request failed" error.
+
+### Fixed
+- Fixed XR controller axis handling robustness across WebXR gamepad layouts by adding stick-axis fallback support for both `[0,1]` and `[2,3]` axis pairs.
+
 ## [1.0.26] - 2026-08-25
 
 ### Added

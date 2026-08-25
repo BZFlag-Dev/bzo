@@ -192,7 +192,7 @@ export function updateVirtualInputFromGamepad() {
     // Left stick Y-axis: forward/backward (inverted because -1 is up)
     const axisY = axes[1];
     const axisX = axes[0];
-    
+
     gamepadInput.forward = -applyDeadzone(axisY);
     gamepadInput.turn = -applyDeadzone(axisX);
   } else {
@@ -419,12 +419,25 @@ export function updateVirtualInputFromXR() {
   const leftThumbstick = controllerInput.leftThumbstick || { x: 0, y: 0 };
   const rightThumbstick = controllerInput.rightThumbstick || { x: 0, y: 0 };
 
-  // Use the left controller for movement and the right controller for turning.
-  const newForward = -leftThumbstick.y;
+  const deadzone = 0.15;
+  const applyDeadzone = (value) => {
+    if (!Number.isFinite(value) || Math.abs(value) < deadzone) return 0;
+    const sign = value > 0 ? 1 : -1;
+    return sign * ((Math.abs(value) - deadzone) / (1 - deadzone));
+  };
+
+  const leftX = applyDeadzone(leftThumbstick.x || 0);
+  const leftY = applyDeadzone(leftThumbstick.y || 0);
+  const rightX = applyDeadzone(rightThumbstick.x || 0);
+  const rightY = applyDeadzone(rightThumbstick.y || 0);
+
+  // Right-stick-primary locomotion for Quest ergonomics.
+  const forwardAxis = Math.abs(rightY) > 0 ? rightY : leftY;
+  const newForward = -forwardAxis;
   xrInputState.forward = newForward;
 
-  // Right controller thumbstick left/right: tank rotation.
-  xrInputState.turn = -rightThumbstick.x;
+  // Prefer right-stick X for turning, with left-stick X fallback.
+  xrInputState.turn = -(Math.abs(rightX) > 0 ? rightX : leftX);
 
   // Right trigger OR A button: fire
   xrInputState.fire = controllerInput.rightTrigger > 0.5 || controllerInput.buttonA;

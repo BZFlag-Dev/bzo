@@ -44,7 +44,14 @@ import {
 import { renderManager } from './render.js';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-import { initXR, toggleXRSession, updateXRControllerInput, setNormalAnimationLoop, isXREnabled } from './webxr.js';
+import {
+  initXR,
+  toggleXRSession,
+  updateXRControllerInput,
+  getXRControllerInput,
+  setNormalAnimationLoop,
+  isXREnabled,
+} from './webxr.js';
 import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shot-limits.mjs';
 
@@ -94,6 +101,8 @@ let renderReadyForJoin = false;
 let gameplayJoinConfirmed = false;
 let initSequence = 0;
 let activeInitSequence = 0;
+let xrSettingsShortcutLatched = false;
+let xrSettingsShortcutInFlight = false;
 let nextAllowedShotAt = 0;
 let playerRole = 'active';
 let selectedVoiceInputDeviceId = '';
@@ -1837,17 +1846,18 @@ window.addEventListener('DOMContentLoaded', () => {
             return;
           }
 
+          const wasEnabled = isXREnabled();
           const result = await toggleXRSession(renderer, animate);
-          if (result) {
-            xrBtn.classList.add('active');
-            xrBtn.title = 'Exit WebXR VR Mode';
+          if (result || isXREnabled()) {
+            setXRButtonState(true);
             // Force first-person camera when entering VR
             cameraMode = 'first-person';
             showMessage('✓ WebXR VR Mode: ON');
           } else {
-            showMessage('✗ VR request failed - check server.log');
-            xrBtn.classList.remove('active');
-            xrBtn.title = 'Enter WebXR VR Mode';
+            setXRButtonState(false);
+            if (!wasEnabled) {
+              showMessage('✗ VR request failed - check server.log');
+            }
             showMessage('WebXR VR Mode: OFF');
           }
         });
@@ -5240,6 +5250,63 @@ function updateRadar() {
 
 let lastTime = performance.now();
 
+function setXRButtonState(enabled) {
+  const xrBtn = document.getElementById('xrBtn');
+  if (!xrBtn) return;
+  if (enabled) {
+    xrBtn.classList.add('active');
+    xrBtn.title = 'Exit WebXR VR Mode';
+  } else {
+    xrBtn.classList.remove('active');
+    xrBtn.title = 'Enter WebXR VR Mode';
+  }
+}
+
+function openSettingsHud() {
+  const settingsHud = document.getElementById('settingsHud');
+  if (settingsHud && settingsHud.style.display === 'block') return;
+
+  const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) {
+    settingsBtn.click();
+  } else if (settingsHud) {
+    settingsHud.style.display = 'block';
+  }
+}
+
+async function exitXRAndOpenSettings() {
+  if (xrSettingsShortcutInFlight) return;
+  xrSettingsShortcutInFlight = true;
+  try {
+    const renderer = renderManager.getRenderer();
+    if (!renderer) return;
+
+    await toggleXRSession(renderer, animate);
+    setXRButtonState(false);
+    showMessage('WebXR VR Mode: OFF');
+    openSettingsHud();
+    showMessage('Settings: Shown');
+  } finally {
+    xrSettingsShortcutInFlight = false;
+  }
+}
+
+function handleXRSettingsShortcut() {
+  if (!isXREnabled()) {
+    xrSettingsShortcutLatched = false;
+    return;
+  }
+
+  const xrInput = getXRControllerInput();
+  const pressed = Boolean(xrInput.leftThumbstickPressed || xrInput.rightThumbstickPressed);
+  if (pressed && !xrSettingsShortcutLatched) {
+    xrSettingsShortcutLatched = true;
+    void exitXRAndOpenSettings();
+  } else if (!pressed) {
+    xrSettingsShortcutLatched = false;
+  }
+}
+
 function updateChatWindow() {
   if (!chatWindowDirty) return;
   const chatMessagesDiv = document.getElementById('chatMessages');
@@ -5381,6 +5448,7 @@ function animate() {
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
 
   updateXRControllerInput();
+  handleXRSettingsShortcut();
   handleInputEvents();
   handleMotion(deltaTime);
 

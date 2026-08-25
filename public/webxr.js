@@ -313,6 +313,7 @@ function createXRControllerState(inputSource) {
     buttonA: false,
     buttonB: false,
     buttonGrip: false,
+    buttonThumbstick: false,
   };
 }
 
@@ -350,11 +351,30 @@ function resetXRControllerState(controller) {
   controller.buttonA = false;
   controller.buttonB = false;
   controller.buttonGrip = false;
+  controller.buttonThumbstick = false;
 }
 
 function resetXRControllerStates() {
   xrInputSources.forEach(resetXRControllerState);
   xrState.controllers.forEach(resetXRControllerState);
+}
+
+function readThumbstickAxes(axes = [], preferredPair = [0, 1]) {
+  const pairs = [preferredPair, [0, 1], [2, 3]];
+  for (const [xIndex, yIndex] of pairs) {
+    const xValue = axes[xIndex];
+    const yValue = axes[yIndex];
+    const hasX = Number.isFinite(xValue);
+    const hasY = Number.isFinite(yValue);
+    if (hasX || hasY) {
+      return {
+        x: hasX ? xValue : 0,
+        y: hasY ? yValue : 0,
+      };
+    }
+  }
+
+  return { x: 0, y: 0 };
 }
 
 // Setup XR input (controllers)
@@ -408,8 +428,12 @@ export function updateXRControllerInput() {
 
       // Left controller: thumbstick for movement (axes 0, 1)
       if (handedness === 'left') {
-        controller.thumbstick.x = axes[0] || 0; // left/right
-        controller.thumbstick.y = axes[1] || 0; // up/down (forward/back)
+        const stick = readThumbstickAxes(axes, [0, 1]);
+        controller.thumbstick.x = stick.x;
+        controller.thumbstick.y = stick.y;
+        if (buttons[3]) {
+          controller.buttonThumbstick = buttons[3].pressed || false;
+        }
         if (frameCounter % 60 === 0) {
           debugLog(`Left: axes.length=${axes.length}, [0]=${axes[0]?.toFixed(2)}, [1]=${axes[1]?.toFixed(2)}`);
         }
@@ -417,8 +441,9 @@ export function updateXRControllerInput() {
 
       // Right controller: thumbstick for rotation (axes 2, 3) and buttons for actions
       if (handedness === 'right') {
-        controller.thumbstick.x = axes[2] || 0; // left/right (turn)
-        controller.thumbstick.y = axes[3] || 0; // up/down (unused in phase 1)
+        const stick = readThumbstickAxes(axes, [2, 3]);
+        controller.thumbstick.x = stick.x;
+        controller.thumbstick.y = stick.y;
 
         // Trigger button (index 0) for shooting
         if (buttons[0]) {
@@ -440,6 +465,9 @@ export function updateXRControllerInput() {
         // B button (index 5) for jumping
         if (buttons[5]) {
           controller.buttonB = buttons[5].pressed || false;
+        }
+        if (buttons[3]) {
+          controller.buttonThumbstick = buttons[3].pressed || false;
         }
         if (frameCounter % 60 === 0) {
           debugLog(`Right: axes[2]=${axes[2]?.toFixed(2)}, axes[3]=${axes[3]?.toFixed(2)}, A=${controller.buttonA}, B=${controller.buttonB}, btnCount=${buttons.length}`);
@@ -463,6 +491,8 @@ export function getXRControllerInput() {
   const input = {
     leftThumbstick: { x: 0, y: 0 },
     rightThumbstick: { x: 0, y: 0 },
+    leftThumbstickPressed: false,
+    rightThumbstickPressed: false,
     rightTrigger: 0,
     rightGrip: 0,
     buttonA: false,
@@ -471,7 +501,9 @@ export function getXRControllerInput() {
   };
 
   if (xrState.controllers.get('left')) {
-    input.leftThumbstick = { ...xrState.controllers.get('left').thumbstick };
+    const leftController = xrState.controllers.get('left');
+    input.leftThumbstick = { ...leftController.thumbstick };
+    input.leftThumbstickPressed = leftController.buttonThumbstick || false;
   }
 
   if (xrState.controllers.get('right')) {
@@ -482,6 +514,7 @@ export function getXRControllerInput() {
     input.buttonA = rightController.buttonA || false;
     input.buttonB = rightController.buttonB || false;
     input.buttonGrip = rightController.buttonGrip || false;
+    input.rightThumbstickPressed = rightController.buttonThumbstick || false;
   }
 
   return input;
