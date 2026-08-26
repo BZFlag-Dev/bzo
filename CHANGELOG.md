@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.29] - 2026-08-26
+
+### Fixed
+- Fixed Docker image missing the `server/` directory, causing a crash on startup with `Cannot find module './server/shot-limits.cjs'`.
+
 ## [1.0.28] - 2026-08-25
 
 ### Added
