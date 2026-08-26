@@ -1,5 +1,5 @@
-# HiX2 experimental world
-# Copyright (c) 1993-2023 Tim Riker
+# HiX3 experimental world
+# Copyright (c) 1993-2026 Tim Riker
 # by Tim Riker <Tim@Rikers.org>
 #
 # This is a team play world
@@ -7,7 +7,7 @@
 # Typical World definition
 #
 #world
-#name HiX 2.0
+#name HiX 3.0
 #size 400.0
 #flagHeight 10.0
 #end
@@ -66,32 +66,32 @@
 # Typical World definition
 #
 world
-name HiX 2.0
+name HiX 3.0
 size 400.0
 flagHeight 0.0
 end
 
 # top of the world
 box
-name totw1
+name totw_0
 position 0.0 0.0 29.0
 rotation 0.0
 size     9.6568542495 4.0 16.0
 end
 box
-name totw2
+name totw_45
 position 0.0 0.0 29.0
 rotation 45.0
 size     9.6568542495 4.0 16.0
 end
 box
-name totw3
+name totw_90
 position 0.0 0.0 29.0
 rotation 90.0
 size     9.6568542495 4.0 16.0
 end
 box
-name totw4
+name totw_135
 position 0.0 0.0 29.0
 rotation 135.0
 size     9.6568542495 4.0 16.0
@@ -99,25 +99,25 @@ end
 
 # roof
 pyramid
-name totwr1
+name totwr_0
 position 0.0 0.0 52.0
 rotation 0.0
 size     9.6568542495 4.0 5.0
 end
 pyramid
-name totwr2
+name totwr_45
 position 0.0 0.0 52.0
 rotation 45.0
 size     9.6568542495 4.0 5.0
 end
 pyramid
-name totwr3
+name totwr_90
 position 0.0 0.0 52.0
 rotation 90.0
 size     9.6568542495 4.0 5.0
 end
 pyramid
-name totwr4
+name totwr_135
 position 0.0 0.0 52.0
 rotation 135.0
 size     9.6568542495 4.0 5.0
@@ -125,13 +125,13 @@ end
 
 # cross bars
 box
-name xbar1
+name xbar_45
 position 0.0 0.0 29.0
 rotation 45.0
 size     4 550.0 1.0
 end
 box
-name xbar2
+name xbar_135
 position 0.0 0.0 29.0
 rotation 135.0
 size     4 550.0 1.0
