@@ -92,6 +92,9 @@ let tanks = new Map();
 let projectiles = new Map();
 let pendingLocalProjectiles = [];
 let localProjectileCounter = 0;
+const SHOT_SIM_STEP_SECONDS = 1 / 60;
+const SHOT_SIM_MAX_STEPS_PER_FRAME = 8;
+let projectileSimAccumulator = 0;
 let ws = null;
 let gameConfig = null;
 let radarCanvas, radarCtx;
@@ -562,6 +565,14 @@ async function prepareInitialRender(message, sequenceId) {
     renderManager.setObstacles([]);
   }
 
+  if (message.teleporterGraph && typeof message.teleporterGraph === 'object') {
+    TELEPORTER_GRAPH = message.teleporterGraph;
+  } else {
+    TELEPORTER_GRAPH = { teleporters: [], links: [] };
+  }
+  rebuildTeleporterRuntimeState();
+  debugLog(`world.teleporters count=${TELEPORTER_GRAPH.teleporters.length} links=${TELEPORTER_GRAPH.links.length}`);
+
   renderManager.createMountains(gameConfig.MAP_SIZE);
   if (renderManager.dynamicLightingEnabled) {
     renderManager.setWorldTime(message.worldTime || 0);
@@ -760,6 +771,9 @@ function toggleEntryDialog(name = '') {
 
 // Obstacle definitions (received from server)
 let OBSTACLES = [];
+let TELEPORTER_GRAPH = { teleporters: [], links: [] };
+let TELEPORTER_OBSTACLES_BY_INDEX = new Map();
+let TELEPORTER_LINKS_BY_SOURCE_FACE = new Map();
 
 // Camera mode
 let cameraMode = 'first-person'; // 'first-person', 'third-person', or 'overview'
@@ -2722,11 +2736,11 @@ function handleServerMessage(message) {
       }
       break;
 
-    case 'projectileCreated':
+    case 'shotBegin':
       createProjectile(message);
       break;
 
-    case 'projectileRemoved':
+    case 'shotEnd':
       removeProjectile(message.id, message.reason, message.x, message.y, message.z);
       break;
 
@@ -2940,11 +2954,17 @@ function createProjectile(data) {
       if (!localProjectile) continue;
 
       projectiles.delete(pending.id);
+      // Re-anchor to authoritative spawn so replayed local shots follow
+      // exactly the same path regardless of transient local frame timing.
+      localProjectile.position.set(data.x, data.y, data.z);
       localProjectile.userData.dirX = data.dirX;
+      localProjectile.userData.dirY = Number.isFinite(data.dirY) ? data.dirY : 0;
       localProjectile.userData.dirZ = data.dirZ;
       localProjectile.userData.createdAt = data.createdAt;
       localProjectile.userData.shotSlot = Number.isInteger(data.shotSlot) ? data.shotSlot : 0;
       localProjectile.userData.pendingServerAck = false;
+      localProjectile.userData.teleportReentryBlockTeleporterIndex = null;
+      localProjectile.userData.teleportReentryBlockDistance = 0;
       projectiles.set(data.id, localProjectile);
       return;
     }
@@ -2962,12 +2982,15 @@ function createProjectile(data) {
   if (!projectile) return;
   projectile.userData.playerId = data.playerId;
   projectile.userData.createdAt = data.createdAt;
+  projectile.userData.dirY = Number.isFinite(data.dirY) ? data.dirY : 0;
   projectile.userData.shotSlot = Number.isInteger(data.shotSlot) ? data.shotSlot : 0;
   projectile.userData.radarColor = `#${shotColor.getHexString()}`;
+  projectile.userData.teleportReentryBlockTeleporterIndex = null;
+  projectile.userData.teleportReentryBlockDistance = 0;
   projectiles.set(data.id, projectile);
 }
 
-function createLocalProjectile({ x, y, z, dirX, dirZ }) {
+function createLocalProjectile({ x, y, z, dirX, dirZ, dirY = 0 }) {
   if (myPlayerId === null || myPlayerId === undefined) return;
 
   const shotColor = getPlayerShotColor(myPlayerId);
@@ -2979,6 +3002,7 @@ function createLocalProjectile({ x, y, z, dirX, dirZ }) {
     y,
     z,
     dirX,
+    dirY,
     dirZ,
     color: shotColor.getHex(),
   });
@@ -2986,9 +3010,12 @@ function createLocalProjectile({ x, y, z, dirX, dirZ }) {
 
   projectile.userData.playerId = myPlayerId;
   projectile.userData.createdAt = Date.now();
+  projectile.userData.dirY = Number.isFinite(dirY) ? dirY : 0;
   projectile.userData.shotSlot = null;
   projectile.userData.radarColor = `#${shotColor.getHexString()}`;
   projectile.userData.pendingServerAck = true;
+  projectile.userData.teleportReentryBlockTeleporterIndex = null;
+  projectile.userData.teleportReentryBlockDistance = 0;
   projectiles.set(localId, projectile);
   pendingLocalProjectiles.push({ id: localId, sentAt: Date.now() });
 }
@@ -3230,6 +3257,32 @@ function getCollisionColliders() {
 function refreshCollisionColliders() {
   cachedWorldBorderColliders = [];
   cachedCollisionColliders = [];
+}
+
+function rebuildTeleporterRuntimeState() {
+  TELEPORTER_OBSTACLES_BY_INDEX = new Map();
+  TELEPORTER_LINKS_BY_SOURCE_FACE = new Map();
+
+  for (const obs of OBSTACLES) {
+    if (obs?.kind !== 'teleporter') continue;
+    if (!Number.isInteger(obs.teleporterIndex)) continue;
+    TELEPORTER_OBSTACLES_BY_INDEX.set(obs.teleporterIndex, obs);
+  }
+
+  const links = Array.isArray(TELEPORTER_GRAPH?.links) ? TELEPORTER_GRAPH.links : [];
+  for (const link of links) {
+    if (!Number.isInteger(link?.sourceFaceId) || !Number.isInteger(link?.destFaceId)) continue;
+    if (!TELEPORTER_LINKS_BY_SOURCE_FACE.has(link.sourceFaceId)) {
+      TELEPORTER_LINKS_BY_SOURCE_FACE.set(link.sourceFaceId, []);
+    }
+    TELEPORTER_LINKS_BY_SOURCE_FACE.get(link.sourceFaceId).push(link.destFaceId);
+  }
+
+  for (const [sourceFaceId, destinations] of TELEPORTER_LINKS_BY_SOURCE_FACE.entries()) {
+    const unique = Array.from(new Set(destinations));
+    unique.sort((a, b) => a - b);
+    TELEPORTER_LINKS_BY_SOURCE_FACE.set(sourceFaceId, unique);
+  }
 }
 
 // Returns: null, { type: 'collision', obstacle }, or { type: 'ontop', obstacle }
@@ -4943,18 +4996,300 @@ function shoot() {
     y: shotY,
     z: shotZ,
     dirX,
+    dirY: 0,
     dirZ,
   });
-  createLocalProjectile({ x: shotX, y: shotY, z: shotZ, dirX, dirZ });
+  createLocalProjectile({ x: shotX, y: shotY, z: shotZ, dirX, dirY: 0, dirZ });
   return true;
+}
+
+function getShotTeleporterDims(obs) {
+  const halfW = Math.max(0.25, Number(obs.w) / 2 || 0.56);
+  const sourceHalfBreadth = Math.max(0.25, Number(obs.d) / 2 || 2.24);
+  const sourceHeight = Math.max(1.0, Number(obs.h) || 10.0);
+  const border = Math.max(0.12, Number(obs.border) || 1.12);
+
+  // Match render teleporter geometry so visual frame and shot frame tests align.
+  const halfD = sourceHalfBreadth + (border * 2.0);
+  const h = sourceHeight + border;
+  const activeHalfD = Math.max(0.1, halfD - border);
+  const activeH = Math.max(0.2, h - border);
+  return { halfW, halfD, h, border, activeHalfD, activeH };
+}
+
+const BZFLAG_TELEPORT_TOLERANCE = 1e-6;
+
+function getSegmentBoxEntryTime(localStart, localEnd, bounds) {
+  const delta = {
+    x: localEnd.x - localStart.x,
+    y: localEnd.y - localStart.y,
+    z: localEnd.z - localStart.z,
+  };
+
+  let tMin = 0;
+  let tMax = 1;
+  const axes = ['x', 'y', 'z'];
+
+  for (const axis of axes) {
+    const start = localStart[axis];
+    const d = delta[axis];
+    const min = bounds.min[axis];
+    const max = bounds.max[axis];
+
+    if (Math.abs(d) < 1e-9) {
+      if (start < min || start > max) return null;
+      continue;
+    }
+
+    let t1 = (min - start) / d;
+    let t2 = (max - start) / d;
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
+
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return null;
+  }
+
+  if (tMax < 0 || tMin > 1) return null;
+  return Math.max(0, tMin);
+}
+
+function getShotTeleporterCrossing(start, end, obs) {
+  const dims = getShotTeleporterDims(obs);
+  const startLocalXZ = getColliderLocalPoint(start.x, start.z, obs);
+  const endLocalXZ = getColliderLocalPoint(end.x, end.z, obs);
+
+  const localStart = {
+    x: startLocalXZ.x,
+    y: start.y - (obs.baseY || 0),
+    z: startLocalXZ.z,
+  };
+  const localEnd = {
+    x: endLocalXZ.x,
+    y: end.y - (obs.baseY || 0),
+    z: endLocalXZ.z,
+  };
+
+  const outerBounds = {
+    min: { x: -dims.halfW, y: 0, z: -dims.halfD },
+    max: { x: dims.halfW, y: dims.h, z: dims.halfD },
+  };
+  const innerBounds = {
+    min: { x: -dims.halfW, y: 0, z: -dims.activeHalfD },
+    max: { x: dims.halfW, y: dims.activeH, z: dims.activeHalfD },
+  };
+
+  const tOuter = getSegmentBoxEntryTime(localStart, localEnd, outerBounds);
+  const tInner = getSegmentBoxEntryTime(localStart, localEnd, innerBounds);
+  if (tInner === null || tInner < 0 || tInner > 1) return null;
+  if (tOuter !== null && (tInner - tOuter) > BZFLAG_TELEPORT_TOLERANCE) return null;
+
+  const hitLocalX = localStart.x + (localEnd.x - localStart.x) * tInner;
+  const face = hitLocalX > 0 ? 0 : 1;
+  const sourceFaceId = obs.teleporterIndex * 2 + face;
+
+  return {
+    t: tInner,
+    sourceFaceId,
+    face,
+    point: {
+      x: start.x + (end.x - start.x) * tInner,
+      y: start.y + (end.y - start.y) * tInner,
+      z: start.z + (end.z - start.z) * tInner,
+    },
+  };
+}
+
+function rotateXZ(x, z, angle) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return {
+    x: cos * x - sin * z,
+    z: sin * x + cos * z,
+  };
+}
+
+function transformShotThroughTeleporter(pointIn, dirIn, sourceObs, sourceFace, destObs, destFace) {
+  const srcDims = getShotTeleporterDims(sourceObs);
+  const dstDims = getShotTeleporterDims(destObs);
+
+  const radians1 = (sourceObs.rotation || 0) + (sourceFace === 0 ? 0 : Math.PI);
+  const radians2 = (destObs.rotation || 0) + (destFace === 1 ? 0 : Math.PI);
+
+  const relativeX = pointIn.x - sourceObs.x;
+  const relativeZ = pointIn.z - sourceObs.z;
+  const relativeY = pointIn.y - (sourceObs.baseY || 0);
+  const local = rotateXZ(relativeX, relativeZ, -radians1);
+
+  const breadthScale = srcDims.activeHalfD > 1e-6 ? (dstDims.activeHalfD / srcDims.activeHalfD) : 1;
+  const heightScale = srcDims.activeH > 1e-6 ? (dstDims.activeH / srcDims.activeH) : 1;
+
+  const localOut = {
+    x: -dstDims.halfW,
+    z: local.z * breadthScale,
+    y: relativeY * heightScale,
+  };
+
+  const rotatedOut = rotateXZ(localOut.x, localOut.z, radians2);
+  const pointOut = {
+    x: destObs.x + rotatedOut.x,
+    y: (destObs.baseY || 0) + localOut.y,
+    z: destObs.z + rotatedOut.z,
+  };
+
+  const rotateDelta = radians2 - radians1;
+  const dirRotated = rotateXZ(dirIn.x, dirIn.z, rotateDelta);
+  const dirOut = {
+    x: dirRotated.x,
+    y: dirIn.y,
+    z: dirRotated.z,
+  };
+
+  return { pointOut, dirOut };
+}
+
+const SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE = 0.5;
+
+function traceShotThroughTeleporters(start, dir, travelDistance, reentryBlockTeleporterIndex = null, reentryBlockDistance = 0) {
+  let point = { ...start };
+  let direction = { ...dir };
+  let remaining = travelDistance;
+  let teleports = 0;
+  let blockedTeleporterIndex = Number.isInteger(reentryBlockTeleporterIndex) ? reentryBlockTeleporterIndex : null;
+  let blockedDistance = Math.max(0, Number(reentryBlockDistance) || 0);
+  const maxTeleportsPerTick = 8;
+
+  while (remaining > 1e-6 && teleports < maxTeleportsPerTick) {
+    const end = {
+      x: point.x + direction.x * remaining,
+      y: point.y + direction.y * remaining,
+      z: point.z + direction.z * remaining,
+    };
+
+    let earliest = null;
+    for (const obs of TELEPORTER_OBSTACLES_BY_INDEX.values()) {
+      const crossing = getShotTeleporterCrossing(point, end, obs);
+      if (!crossing) continue;
+      if (blockedTeleporterIndex !== null && blockedDistance > 1e-6 && obs.teleporterIndex === blockedTeleporterIndex) {
+        continue;
+      }
+      if (!earliest || crossing.t < earliest.crossing.t) {
+        earliest = { obs, crossing };
+      }
+    }
+
+    if (!earliest) {
+      blockedDistance = Math.max(0, blockedDistance - remaining);
+      if (blockedDistance <= 1e-6) blockedTeleporterIndex = null;
+      point = end;
+      break;
+    }
+
+    const sourceFaceId = earliest.crossing.sourceFaceId;
+    const sourceObs = earliest.obs;
+    const sourceFace = sourceFaceId % 2;
+    const destinations = TELEPORTER_LINKS_BY_SOURCE_FACE.get(sourceFaceId) || [];
+    const destFaceId = destinations.length > 0
+      ? destinations[0]
+      : ((Math.floor(sourceFaceId / 2) * 2) + (1 - (sourceFaceId % 2)));
+    const destTeleporterIndex = Math.floor(destFaceId / 2);
+    const destFace = destFaceId % 2;
+    const destObs = TELEPORTER_OBSTACLES_BY_INDEX.get(destTeleporterIndex);
+    if (!destObs) break;
+
+    const transformed = transformShotThroughTeleporter(
+      earliest.crossing.point,
+      direction,
+      sourceObs,
+      sourceFace,
+      destObs,
+      destFace,
+    );
+
+    const consumedDistance = remaining * earliest.crossing.t;
+    blockedDistance = Math.max(0, blockedDistance - consumedDistance);
+    if (blockedDistance <= 1e-6) blockedTeleporterIndex = null;
+    remaining = Math.max(0, remaining - consumedDistance);
+    point = {
+      x: transformed.pointOut.x + transformed.dirOut.x * 0.02,
+      y: transformed.pointOut.y + transformed.dirOut.y * 0.02,
+      z: transformed.pointOut.z + transformed.dirOut.z * 0.02,
+    };
+    direction = transformed.dirOut;
+    blockedTeleporterIndex = destTeleporterIndex;
+    blockedDistance = Math.max(
+      SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE,
+      (getShotTeleporterDims(destObs).halfW * 2) + 0.05,
+    );
+    teleports++;
+  }
+
+  return {
+    point,
+    direction,
+    teleports,
+    reentryBlockTeleporterIndex: blockedTeleporterIndex,
+    reentryBlockDistance: blockedDistance,
+  };
+}
+
+function isShotTeleportDebugEnabled() {
+  try {
+    return localStorage.getItem('debugShotTeleports') === '1';
+  } catch {
+    return false;
+  }
 }
 
 function updateProjectiles(deltaTime) {
   const projectileSpeed = Number.isFinite(gameConfig?.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
-  projectiles.forEach((projectile) => {
-    projectile.position.x += projectile.userData.dirX * projectileSpeed * deltaTime;
-    projectile.position.z += projectile.userData.dirZ * projectileSpeed * deltaTime;
-  });
+  const clampedDelta = Math.min(0.1, Math.max(0, Number.isFinite(deltaTime) ? deltaTime : 0));
+  projectileSimAccumulator += clampedDelta;
+  const maxAccumulated = SHOT_SIM_STEP_SECONDS * SHOT_SIM_MAX_STEPS_PER_FRAME;
+  if (projectileSimAccumulator > maxAccumulated) {
+    projectileSimAccumulator = maxAccumulated;
+  }
+
+  while (projectileSimAccumulator >= SHOT_SIM_STEP_SECONDS) {
+    projectiles.forEach((projectile) => {
+      const traced = traceShotThroughTeleporters(
+        {
+          x: projectile.position.x,
+          y: projectile.position.y,
+          z: projectile.position.z,
+        },
+        {
+          x: Number.isFinite(projectile.userData.dirX) ? projectile.userData.dirX : 0,
+          y: Number.isFinite(projectile.userData.dirY) ? projectile.userData.dirY : 0,
+          z: Number.isFinite(projectile.userData.dirZ) ? projectile.userData.dirZ : 0,
+        },
+        projectileSpeed * SHOT_SIM_STEP_SECONDS,
+        projectile.userData.teleportReentryBlockTeleporterIndex,
+        projectile.userData.teleportReentryBlockDistance,
+      );
+
+      projectile.position.x = traced.point.x;
+      projectile.position.y = traced.point.y;
+      projectile.position.z = traced.point.z;
+      projectile.userData.dirX = traced.direction.x;
+      projectile.userData.dirY = traced.direction.y;
+      projectile.userData.dirZ = traced.direction.z;
+      projectile.userData.teleportReentryBlockTeleporterIndex = traced.reentryBlockTeleporterIndex;
+      projectile.userData.teleportReentryBlockDistance = traced.reentryBlockDistance;
+
+      if (traced.teleports > 0 && projectile?.userData?.playerId === myPlayerId && isShotTeleportDebugEnabled()) {
+        sendToServer({
+          type: 'debug',
+          message: `[SHOT_TP_CLIENT] id=${String(projectile?.userData?.pendingServerAck ? 'pending' : 'ack')} teleports=${traced.teleports} pos=(${projectile.position.x.toFixed(2)},${projectile.position.y.toFixed(2)},${projectile.position.z.toFixed(2)})`,
+        });
+      }
+    });
+    projectileSimAccumulator -= SHOT_SIM_STEP_SECONDS;
+  }
 
   if (pendingLocalProjectiles.length > 0) {
     const now = Date.now();
@@ -5014,6 +5349,54 @@ function radarPixelsToWorldDistance(pixelDistance, radarDistance, radarWorldHalf
   if (pixelDistance <= 0) return 0;
   const pixelsPerWorldUnit = radarWorldHalfExtent / Math.max(radarDistance, 1e-6);
   return pixelDistance / Math.max(pixelsPerWorldUnit, 1e-6);
+}
+
+function clipPolygonAxisAligned(points, axis, boundary, keepLessEqual) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  const output = [];
+
+  const isInside = (point) => (
+    keepLessEqual ? point[axis] <= boundary : point[axis] >= boundary
+  );
+
+  const intersect = (a, b) => {
+    const delta = b[axis] - a[axis];
+    if (Math.abs(delta) < 1e-9) {
+      return { x: a.x, y: a.y };
+    }
+    const t = (boundary - a[axis]) / delta;
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+    };
+  };
+
+  for (let i = 0; i < points.length; i += 1) {
+    const current = points[i];
+    const previous = points[(i + points.length - 1) % points.length];
+    const currentInside = isInside(current);
+    const previousInside = isInside(previous);
+
+    if (currentInside) {
+      if (!previousInside) {
+        output.push(intersect(previous, current));
+      }
+      output.push(current);
+    } else if (previousInside) {
+      output.push(intersect(previous, current));
+    }
+  }
+
+  return output;
+}
+
+function clipPolygonToRadarSquare(points, halfExtent) {
+  let clipped = points;
+  clipped = clipPolygonAxisAligned(clipped, 'x', halfExtent, true);
+  clipped = clipPolygonAxisAligned(clipped, 'x', -halfExtent, false);
+  clipped = clipPolygonAxisAligned(clipped, 'y', halfExtent, true);
+  clipped = clipPolygonAxisAligned(clipped, 'y', -halfExtent, false);
+  return clipped;
 }
 
 /**
@@ -5276,9 +5659,6 @@ function updateRadar() {
       const obsWidth = obs.w || 8;
       const obsDepth = obs.d || 8;
 
-      // Transform obstacle to radar coordinates (includes rotation)
-      const result = world2Radar(obs.x, obs.z, px, pz, playerHeading, center, radius, radarDistance, obs.rotation || 0);
-
       const halfW = obsWidth / 2;
       const halfD = obsDepth / 2;
       const obstacleRotation = obs.rotation || 0;
@@ -5290,46 +5670,36 @@ function updateRadar() {
         { x: halfW, z: halfD },
         { x: -halfW, z: halfD },
       ];
-      let minRelX = Infinity;
-      let maxRelX = -Infinity;
-      let minRelY = Infinity;
-      let maxRelY = -Infinity;
 
-      corners.forEach((corner) => {
+      const radarPolygon = corners.map((corner) => {
         const worldCornerX = obs.x + corner.x * cosR - corner.z * sinR;
         const worldCornerZ = obs.z + corner.x * sinR + corner.z * cosR;
-        const relCorner = toRadarRelative(worldCornerX, worldCornerZ);
-        minRelX = Math.min(minRelX, relCorner.x);
-        maxRelX = Math.max(maxRelX, relCorner.x);
-        minRelY = Math.min(minRelY, relCorner.y);
-        maxRelY = Math.max(maxRelY, relCorner.y);
+        return toRadarRelative(worldCornerX, worldCornerZ);
       });
 
-      const outsideSquare = (
-        maxRelX < -radarDistance ||
-        minRelX > radarDistance ||
-        maxRelY < -radarDistance ||
-        minRelY > radarDistance
-      );
-      if (outsideSquare) return;
+      const clippedPolygon = clipPolygonToRadarSquare(radarPolygon, radarDistance);
+      if (clippedPolygon.length < 3) return;
 
       // Calculate opacity based on player's vertical position relative to obstacle
       const baseY = obs.baseY || 0;
       const height = obs.h || 4;
       const opacity = getRadarOpacity(py, baseY, height);
 
-      // Obstacle size scaling
-      const scale = radarWorldHalfExtent / radarDistance;
-      const w = obsWidth * scale;
-      const d = obsDepth * scale;
-
       radarCtx.save();
-      radarCtx.translate(result.x, result.y);
-      radarCtx.rotate(result.rotation);
       radarCtx.globalAlpha = opacity;
       radarCtx.fillStyle = getObstacleRadarFillStyle(obs);
-      // Map Three.js dimensions: w (X-axis) → canvas width, d (Z-axis) → canvas height
-      radarCtx.fillRect(-w/2, -d/2, w, d);
+      radarCtx.beginPath();
+      clippedPolygon.forEach((point, index) => {
+        const drawX = center + (point.x / radarDistance) * radarWorldHalfExtent;
+        const drawY = center + (point.y / radarDistance) * radarWorldHalfExtent;
+        if (index === 0) {
+          radarCtx.moveTo(drawX, drawY);
+        } else {
+          radarCtx.lineTo(drawX, drawY);
+        }
+      });
+      radarCtx.closePath();
+      radarCtx.fill();
       radarCtx.restore();
     });
   }

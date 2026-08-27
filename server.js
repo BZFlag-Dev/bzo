@@ -468,9 +468,206 @@ function parseBZWMap(filename) {
   const text = fs.readFileSync(filename, 'utf8');
   const lines = text.split(/\r?\n/);
   const obstacles = [];
+  const teleporters = [];
+  const parsedLinks = [];
   let current = null;
+  let currentLink = null;
+
+  function getTeleporterEndpointName(teleporter, face) {
+    return `${teleporter.linkName}:${face === 0 ? 'f' : 'b'}`;
+  }
+
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function globMatch(pattern, candidate) {
+    const source = `^${escapeRegExp(pattern).replace(/\\\*/g, '.*').replace(/\\\?/g, '.')}$`;
+    return new RegExp(source, 'i').test(candidate);
+  }
+
+  function normalizeEndpointPattern(value) {
+    if (typeof value !== 'string') return '';
+    let endpoint = value.trim();
+    if (!endpoint) return '';
+    if (endpoint.startsWith(':')) {
+      endpoint = endpoint.slice(1);
+    }
+    const last = endpoint.slice(-1);
+    if (last === 'F' || last === 'B') {
+      endpoint = `${endpoint.slice(0, -1)}${last.toLowerCase()}`;
+    }
+    return endpoint;
+  }
+
+  function resolveNumericFace(faceId) {
+    if (!Number.isInteger(faceId) || faceId < 0 || faceId >= teleporters.length * 2) {
+      return [];
+    }
+    return [faceId];
+  }
+
+  function resolveNamedFaces(pattern) {
+    const normalizedPattern = normalizeEndpointPattern(pattern);
+    if (!normalizedPattern) return [];
+    const matches = [];
+    for (const teleporter of teleporters) {
+      const frontName = getTeleporterEndpointName(teleporter, 0);
+      const backName = getTeleporterEndpointName(teleporter, 1);
+      if (globMatch(normalizedPattern, frontName)) {
+        matches.push(teleporter.teleporterIndex * 2);
+      }
+      if (globMatch(normalizedPattern, backName)) {
+        matches.push(teleporter.teleporterIndex * 2 + 1);
+      }
+    }
+    return matches;
+  }
+
+  function resolveEndpointFaces(endpoint) {
+    if (!endpoint || typeof endpoint.value !== 'string') return [];
+    if (endpoint.kind === 'numeric') {
+      return resolveNumericFace(endpoint.faceId);
+    }
+    return resolveNamedFaces(endpoint.value);
+  }
+
+  function parseLinkEndpoint(value) {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+      return {
+        kind: 'numeric',
+        value: raw,
+        faceId: parseInt(raw, 10),
+      };
+    }
+    return {
+      kind: 'named',
+      value: raw,
+      pattern: normalizeEndpointPattern(raw),
+    };
+  }
+
+  function faceIdToEndpoint(faceId) {
+    const teleporterIndex = Math.floor(faceId / 2);
+    const face = faceId % 2;
+    const teleporter = teleporters[teleporterIndex];
+    if (!teleporter) return null;
+    return {
+      faceId,
+      teleporterIndex,
+      face,
+      endpoint: getTeleporterEndpointName(teleporter, face),
+    };
+  }
+
+  function buildTeleporterLinks() {
+    const linksBySource = new Map();
+
+    for (const link of parsedLinks) {
+      const srcFaces = resolveEndpointFaces(link.from);
+      const dstFaces = resolveEndpointFaces(link.to);
+
+      if (!srcFaces.length || !dstFaces.length) {
+        log(`Ignoring broken teleporter link from "${link.from?.value || ''}" to "${link.to?.value || ''}" in ${filename}`);
+        continue;
+      }
+
+      for (const sourceFaceId of srcFaces) {
+        if (!linksBySource.has(sourceFaceId)) {
+          linksBySource.set(sourceFaceId, new Set());
+        }
+        const destinationSet = linksBySource.get(sourceFaceId);
+        for (const destFaceId of dstFaces) {
+          destinationSet.add(destFaceId);
+        }
+      }
+    }
+
+    // Match BZFlag link behavior: any unlinked source face defaults to
+    // passing through to the opposite face on the same teleporter.
+    for (let sourceFaceId = 0; sourceFaceId < teleporters.length * 2; sourceFaceId++) {
+      if (!linksBySource.has(sourceFaceId) || linksBySource.get(sourceFaceId).size === 0) {
+        const oppositeFaceId = (Math.floor(sourceFaceId / 2) * 2) + (1 - (sourceFaceId % 2));
+        linksBySource.set(sourceFaceId, new Set([oppositeFaceId]));
+      }
+    }
+
+    const normalizedLinks = [];
+    for (const [sourceFaceId, destinationSet] of linksBySource.entries()) {
+      const source = faceIdToEndpoint(sourceFaceId);
+      if (!source) continue;
+
+      for (const destFaceId of destinationSet) {
+        const destination = faceIdToEndpoint(destFaceId);
+        if (!destination) continue;
+
+        normalizedLinks.push({
+          sourceFaceId,
+          sourceEndpoint: source.endpoint,
+          sourceTeleporter: source.teleporterIndex,
+          sourceFace: source.face,
+          destFaceId,
+          destEndpoint: destination.endpoint,
+          destTeleporter: destination.teleporterIndex,
+          destFace: destination.face,
+        });
+      }
+    }
+
+    normalizedLinks.sort((a, b) => {
+      if (a.sourceFaceId !== b.sourceFaceId) return a.sourceFaceId - b.sourceFaceId;
+      return a.destFaceId - b.destFaceId;
+    });
+
+    return {
+      teleporters: teleporters.map((teleporter) => ({
+        teleporterIndex: teleporter.teleporterIndex,
+        name: teleporter.linkName,
+        obstacleName: teleporter.obstacle.name,
+        frontFaceId: teleporter.teleporterIndex * 2,
+        backFaceId: teleporter.teleporterIndex * 2 + 1,
+        frontEndpoint: `${teleporter.linkName}:f`,
+        backEndpoint: `${teleporter.linkName}:b`,
+      })),
+      links: normalizedLinks,
+    };
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    if (currentLink && line === 'end') {
+      if (currentLink.from && currentLink.to) {
+        parsedLinks.push(currentLink);
+      } else {
+        log(`Ignoring incomplete link block in ${filename}`);
+      }
+      currentLink = null;
+      continue;
+    }
+
+    if (currentLink && line.startsWith('from')) {
+      const [, ...fromParts] = line.split(/\s+/);
+      currentLink.from = parseLinkEndpoint(fromParts.join(' ').replace(/"/g, '').trim());
+      continue;
+    }
+
+    if (currentLink && line.startsWith('to')) {
+      const [, ...toParts] = line.split(/\s+/);
+      currentLink.to = parseLinkEndpoint(toParts.join(' ').replace(/"/g, '').trim());
+      continue;
+    }
+
+    if (!current && line.startsWith('link')) {
+      currentLink = { from: null, to: null };
+      continue;
+    }
+
     if (line.startsWith('world')) {
       // Look ahead for size
       for (let j = i + 1; j < lines.length; j++) {
@@ -492,6 +689,11 @@ function parseBZWMap(filename) {
       current = { type: 'box', kind: 'base', team: 1 };
     } else if (line.startsWith('teleporter')) {
       current = { type: 'box', kind: 'teleporter' };
+      const [, ...teleporterNameParts] = line.split(/\s+/);
+      const inlineTeleporterName = teleporterNameParts.join(' ').replace(/"/g, '').trim();
+      if (inlineTeleporterName) {
+        current.name = inlineTeleporterName;
+      }
     } else if (current && line.startsWith('name')) {
       // name <string>
       const [, ...nameParts] = line.split(/\s+/);
@@ -530,13 +732,35 @@ function parseBZWMap(filename) {
     } else if (current && line === 'end') {
       // Use BZW name if present, otherwise assign a generated name
       if (!current.name) {
-        current.name = `${current.type[0].toUpperCase()}${obstacles.length}`;
+        if (current.kind === 'teleporter') {
+          current.name = `t${teleporters.length}`;
+        } else {
+          current.name = `${current.type[0].toUpperCase()}${obstacles.length}`;
+        }
       }
+
+      if (current.kind === 'teleporter') {
+        const teleporterIndex = teleporters.length;
+        const linkName = current.name || `teleporter_${teleporterIndex}`;
+        current.teleporterIndex = teleporterIndex;
+        current.linkName = linkName;
+        teleporters.push({
+          teleporterIndex,
+          linkName,
+          obstacle: current,
+        });
+      }
+
       obstacles.push(current);
       current = null;
     }
   }
-  return obstacles;
+
+  const teleporterGraph = buildTeleporterLinks();
+  return {
+    obstacles,
+    teleporterGraph,
+  };
 }
 
 // Generate random obstacles on server start
@@ -636,14 +860,48 @@ function generateObstacles() {
 }
 
 let OBSTACLES;
+let TELEPORTER_GRAPH = { teleporters: [], links: [] };
 if (MAP_SOURCE === 'random') {
   OBSTACLES = generateObstacles();
+  TELEPORTER_GRAPH = { teleporters: [], links: [] };
   log(`Generated ${OBSTACLES.length} random obstacles`);
 } else {
-  OBSTACLES = parseBZWMap(mapPath);
+  const mapData = parseBZWMap(mapPath);
+  OBSTACLES = mapData.obstacles;
+  TELEPORTER_GRAPH = mapData.teleporterGraph;
   log(`Loaded ${OBSTACLES.length} obstacles from ${mapPath}`);
+  log(`Loaded ${TELEPORTER_GRAPH.links.length} teleporter face links from ${mapPath}`);
 }
 log(OBSTACLES);
+
+let TELEPORTER_OBSTACLES_BY_INDEX = new Map();
+let TELEPORTER_LINKS_BY_SOURCE_FACE = new Map();
+
+function rebuildTeleporterRuntimeState() {
+  TELEPORTER_OBSTACLES_BY_INDEX = new Map();
+  TELEPORTER_LINKS_BY_SOURCE_FACE = new Map();
+
+  for (const obs of OBSTACLES) {
+    if (obs?.kind !== 'teleporter') continue;
+    if (!Number.isInteger(obs.teleporterIndex)) continue;
+    TELEPORTER_OBSTACLES_BY_INDEX.set(obs.teleporterIndex, obs);
+  }
+
+  for (const link of TELEPORTER_GRAPH.links || []) {
+    if (!Number.isInteger(link?.sourceFaceId) || !Number.isInteger(link?.destFaceId)) continue;
+    if (!TELEPORTER_LINKS_BY_SOURCE_FACE.has(link.sourceFaceId)) {
+      TELEPORTER_LINKS_BY_SOURCE_FACE.set(link.sourceFaceId, []);
+    }
+    TELEPORTER_LINKS_BY_SOURCE_FACE.get(link.sourceFaceId).push(link.destFaceId);
+  }
+
+  for (const [sourceFaceId, destinations] of TELEPORTER_LINKS_BY_SOURCE_FACE.entries()) {
+    destinations.sort((a, b) => a - b);
+    TELEPORTER_LINKS_BY_SOURCE_FACE.set(sourceFaceId, Array.from(new Set(destinations)));
+  }
+}
+
+rebuildTeleporterRuntimeState();
 
 function getMaxObstacleTopY(obstacles = []) {
   return obstacles.reduce((maxTop, obstacle) => {
@@ -1026,7 +1284,7 @@ class Player {
 
 // Projectile class
 class Projectile {
-  constructor(id, playerId, shotSlot, x, y, z, dirX, dirZ) {
+  constructor(id, playerId, shotSlot, x, y, z, dirX, dirZ, dirY = 0) {
     this.id = id;
     this.playerId = playerId;
     this.shotSlot = shotSlot;
@@ -1034,10 +1292,17 @@ class Projectile {
     this.y = y || 2.2; // Default height if not specified (tank height + barrel height)
     this.z = z;
     this.dirX = dirX;
+    this.dirY = dirY;
     this.dirZ = dirZ;
     this.createdAt = Date.now();
     this.originX = x;
+    this.originY = this.y;
     this.originZ = z;
+    this.lifetimeSeconds = GAME_CONFIG.SHOT_SPEED > 0
+      ? (GAME_CONFIG.SHOT_RANGE / GAME_CONFIG.SHOT_SPEED)
+      : 10;
+    this.teleportReentryBlockTeleporterIndex = null;
+    this.teleportReentryBlockDistance = 0;
   }
 }
 
@@ -1123,8 +1388,11 @@ function getCollisionColliders() {
   return [...OBSTACLES, ...getWorldBorderColliders()];
 }
 
-function checkCollision(x, y, z, tankRadius = 2) {
+function checkCollision(x, y, z, tankRadius = 2, options = {}) {
+  const ignoreTeleporters = options.ignoreTeleporters === true;
+  const suppressLog = options.suppressLog === true;
   for (const obs of getCollisionColliders()) {
+    if (ignoreTeleporters && obs?.kind === 'teleporter') continue;
     const obstacleHeight = obs.h || 4;
     const obstacleBase = obs.baseY || 0;
     const obstacleTop = obstacleBase + obstacleHeight;
@@ -1143,7 +1411,9 @@ function checkCollision(x, y, z, tankRadius = 2) {
     if (obs.type === 'box' || !obs.type) {
       const distSquared = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
       if (distSquared < tankRadius * tankRadius) {
-        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        if (!suppressLog) {
+          log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        }
         return obs;
       }
     } else if (obs.type === 'pyramid') {
@@ -1180,7 +1450,9 @@ function checkCollision(x, y, z, tankRadius = 2) {
         }
       }
       if (collided) {
-        log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        if (!suppressLog) {
+          log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+        }
         return obs;
       }
     }
@@ -1188,9 +1460,10 @@ function checkCollision(x, y, z, tankRadius = 2) {
   return false;
 }
 
-function findProjectileImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, projectileRadius = 0.1) {
-  const prevHit = !!checkCollision(prevX, prevY, prevZ, projectileRadius);
-  const nextHit = !!checkCollision(nextX, nextY, nextZ, projectileRadius);
+function findProjectileImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, projectileRadius = 0.1, options = {}) {
+  const queryOptions = { ...options, suppressLog: true };
+  const prevHit = !!checkCollision(prevX, prevY, prevZ, projectileRadius, queryOptions);
+  const nextHit = !!checkCollision(nextX, nextY, nextZ, projectileRadius, queryOptions);
 
   // Expected case: clear -> colliding. If not, fall back to the reported position.
   if (prevHit || !nextHit) {
@@ -1207,7 +1480,7 @@ function findProjectileImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, pro
     const mx = prevX + (nextX - prevX) * mid;
     const my = prevY + (nextY - prevY) * mid;
     const mz = prevZ + (nextZ - prevZ) * mid;
-    const midHit = !!checkCollision(mx, my, mz, projectileRadius);
+    const midHit = !!checkCollision(mx, my, mz, projectileRadius, queryOptions);
     if (midHit) {
       hi = mid;
     } else {
@@ -1596,56 +1869,393 @@ function forwardVoiceSignal(player, message) {
   });
 }
 
-// Game loop - update projectiles and check collisions
-let lastGameLoopAt = Date.now();
-let lastVoiceRosterRefreshAt = 0;
-function gameLoop() {
+function getShotTeleporterDims(obs) {
+  const halfW = Math.max(0.25, Number(obs.w) / 2 || 0.56);
+  const sourceHalfBreadth = Math.max(0.25, Number(obs.d) / 2 || 2.24);
+  const sourceHeight = Math.max(1.0, Number(obs.h) || 10.0);
+  const border = Math.max(0.12, Number(obs.border) || 1.12);
 
-  // Advance world time (20 ticks/sec, 24000 ticks/day)
-  worldTime = (worldTime + 1) % 24000;
-  const now = Date.now();
-  const loopDeltaSeconds = Math.min(0.1, Math.max(0, (now - lastGameLoopAt) / 1000));
-  lastGameLoopAt = now;
-  // No need to broadcast worldTime periodically; clients track it locally at 20 ticks/sec.
+  // Match the same teleporter geometry basis as render.js/BZFlag finalize path.
+  const halfD = sourceHalfBreadth + (border * 2.0);
+  const h = sourceHeight + border;
+  const activeHalfD = Math.max(0.1, halfD - border);
+  const activeH = Math.max(0.2, h - border);
+  return { halfW, halfD, h, border, activeHalfD, activeH };
+}
 
-  if (now - lastVoiceRosterRefreshAt >= VOICE_ROSTER_REFRESH_INTERVAL) {
-    refreshVoiceRosters();
-    lastVoiceRosterRefreshAt = now;
+const BZFLAG_TELEPORT_TOLERANCE = 1e-6;
+
+function getSegmentBoxEntryTime(localStart, localEnd, bounds) {
+  const delta = {
+    x: localEnd.x - localStart.x,
+    y: localEnd.y - localStart.y,
+    z: localEnd.z - localStart.z,
+  };
+
+  let tMin = 0;
+  let tMax = 1;
+  const axes = ['x', 'y', 'z'];
+
+  for (const axis of axes) {
+    const start = localStart[axis];
+    const d = delta[axis];
+    const min = bounds.min[axis];
+    const max = bounds.max[axis];
+
+    if (Math.abs(d) < 1e-9) {
+      if (start < min || start > max) return null;
+      continue;
+    }
+
+    let t1 = (min - start) / d;
+    let t2 = (max - start) / d;
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
+
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return null;
   }
 
-  // Update projectiles
+  if (tMax < 0 || tMin > 1) return null;
+  return Math.max(0, tMin);
+}
+
+function getShotTeleporterCrossing(start, end, obs) {
+  const dims = getShotTeleporterDims(obs);
+  const startLocalXZ = getColliderLocalPoint(start.x, start.z, obs);
+  const endLocalXZ = getColliderLocalPoint(end.x, end.z, obs);
+
+  const localStart = {
+    x: startLocalXZ.x,
+    y: start.y - (obs.baseY || 0),
+    z: startLocalXZ.z,
+  };
+  const localEnd = {
+    x: endLocalXZ.x,
+    y: end.y - (obs.baseY || 0),
+    z: endLocalXZ.z,
+  };
+
+  const outerBounds = {
+    min: { x: -dims.halfW, y: 0, z: -dims.halfD },
+    max: { x: dims.halfW, y: dims.h, z: dims.halfD },
+  };
+  const innerBounds = {
+    min: { x: -dims.halfW, y: 0, z: -dims.activeHalfD },
+    max: { x: dims.halfW, y: dims.activeH, z: dims.activeHalfD },
+  };
+
+  const tOuter = getSegmentBoxEntryTime(localStart, localEnd, outerBounds);
+  const tInner = getSegmentBoxEntryTime(localStart, localEnd, innerBounds);
+  if (tInner === null || tInner < 0 || tInner > 1) return null;
+
+  // Match BZFlag Teleporter::isTeleported behavior: if the outer frame
+  // is hit before the inner active slab, this is a frame hit (no teleport).
+  if (tOuter !== null && (tInner - tOuter) > BZFLAG_TELEPORT_TOLERANCE) return null;
+
+  const hitLocalX = localStart.x + (localEnd.x - localStart.x) * tInner;
+  const face = hitLocalX > 0 ? 0 : 1;
+  const sourceFaceId = obs.teleporterIndex * 2 + face;
+
+  return {
+    t: tInner,
+    face,
+    sourceFaceId,
+    tOuter,
+    point: {
+      x: start.x + (end.x - start.x) * tInner,
+      y: start.y + (end.y - start.y) * tInner,
+      z: start.z + (end.z - start.z) * tInner,
+    },
+  };
+}
+
+function getShotTeleporterFrameHit(start, end, obs) {
+  const dims = getShotTeleporterDims(obs);
+  const startLocalXZ = getColliderLocalPoint(start.x, start.z, obs);
+  const endLocalXZ = getColliderLocalPoint(end.x, end.z, obs);
+
+  const localStart = {
+    x: startLocalXZ.x,
+    y: start.y - (obs.baseY || 0),
+    z: startLocalXZ.z,
+  };
+  const localEnd = {
+    x: endLocalXZ.x,
+    y: end.y - (obs.baseY || 0),
+    z: endLocalXZ.z,
+  };
+
+  const outerBounds = {
+    min: { x: -dims.halfW, y: 0, z: -dims.halfD },
+    max: { x: dims.halfW, y: dims.h, z: dims.halfD },
+  };
+  const innerBounds = {
+    min: { x: -dims.halfW, y: 0, z: -dims.activeHalfD },
+    max: { x: dims.halfW, y: dims.activeH, z: dims.activeHalfD },
+  };
+
+  const tOuter = getSegmentBoxEntryTime(localStart, localEnd, outerBounds);
+  if (tOuter === null || tOuter < 0 || tOuter > 1) return null;
+
+  const tInner = getSegmentBoxEntryTime(localStart, localEnd, innerBounds);
+  if (tInner !== null && tInner >= 0 && tInner <= 1 && (tInner - tOuter) <= BZFLAG_TELEPORT_TOLERANCE) {
+    return null;
+  }
+
+  return {
+    t: tOuter,
+    point: {
+      x: start.x + (end.x - start.x) * tOuter,
+      y: start.y + (end.y - start.y) * tOuter,
+      z: start.z + (end.z - start.z) * tOuter,
+    },
+  };
+}
+
+function rotateXZ(x, z, angle) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return {
+    x: cos * x - sin * z,
+    z: sin * x + cos * z,
+  };
+}
+
+function transformShotThroughTeleporter(pointIn, dirIn, sourceObs, sourceFace, destObs, destFace) {
+  const srcDims = getShotTeleporterDims(sourceObs);
+  const dstDims = getShotTeleporterDims(destObs);
+
+  const radians1 = (sourceObs.rotation || 0) + (sourceFace === 0 ? 0 : Math.PI);
+  const radians2 = (destObs.rotation || 0) + (destFace === 1 ? 0 : Math.PI);
+
+  const relativeX = pointIn.x - sourceObs.x;
+  const relativeZ = pointIn.z - sourceObs.z;
+  const relativeY = pointIn.y - (sourceObs.baseY || 0);
+  const local = rotateXZ(relativeX, relativeZ, -radians1);
+
+  const breadthScale = srcDims.activeHalfD > 1e-6 ? (dstDims.activeHalfD / srcDims.activeHalfD) : 1;
+  const heightScale = srcDims.activeH > 1e-6 ? (dstDims.activeH / srcDims.activeH) : 1;
+
+  const localOut = {
+    x: -dstDims.halfW,
+    z: local.z * breadthScale,
+    y: relativeY * heightScale,
+  };
+
+  const rotatedOut = rotateXZ(localOut.x, localOut.z, radians2);
+  const pointOut = {
+    x: destObs.x + rotatedOut.x,
+    y: (destObs.baseY || 0) + localOut.y,
+    z: destObs.z + rotatedOut.z,
+  };
+
+  const rotateDelta = radians2 - radians1;
+  const dirRotated = rotateXZ(dirIn.x, dirIn.z, rotateDelta);
+  const dirOut = {
+    x: dirRotated.x,
+    y: dirIn.y,
+    z: dirRotated.z,
+  };
+
+  return { pointOut, dirOut };
+}
+
+function getShotTeleportDestinationFace(sourceFaceId) {
+  const destinations = TELEPORTER_LINKS_BY_SOURCE_FACE.get(sourceFaceId);
+  if (destinations && destinations.length > 0) return destinations[0];
+  const teleIndex = Math.floor(sourceFaceId / 2);
+  const oppositeFace = (teleIndex * 2) + (1 - (sourceFaceId % 2));
+  return oppositeFace;
+}
+
+const SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE = 0.5;
+
+function traceShotThroughTeleporters(start, dir, travelDistance, projectileId, reentryBlockTeleporterIndex = null, reentryBlockDistance = 0) {
+  let point = { ...start };
+  let direction = { ...dir };
+  let remaining = travelDistance;
+  let teleports = 0;
+  let blockedTeleporterIndex = Number.isInteger(reentryBlockTeleporterIndex) ? reentryBlockTeleporterIndex : null;
+  let blockedDistance = Math.max(0, Number(reentryBlockDistance) || 0);
+  const maxTeleportsPerTick = 8;
+
+  while (remaining > 1e-6 && teleports < maxTeleportsPerTick) {
+    const end = {
+      x: point.x + direction.x * remaining,
+      y: point.y + direction.y * remaining,
+      z: point.z + direction.z * remaining,
+    };
+
+    let earliest = null;
+    for (const obs of TELEPORTER_OBSTACLES_BY_INDEX.values()) {
+      const crossing = getShotTeleporterCrossing(point, end, obs);
+      if (crossing) {
+        if (blockedTeleporterIndex !== null && blockedDistance > 1e-6 && obs.teleporterIndex === blockedTeleporterIndex) {
+          // Ignore immediate re-entry to the just-exited teleporter.
+        } else if (!earliest || crossing.t < earliest.event.t) {
+          earliest = { obs, type: 'teleport', event: crossing };
+        }
+      }
+
+      const frameHit = getShotTeleporterFrameHit(point, end, obs);
+      if (frameHit && (!earliest || frameHit.t < earliest.event.t)) {
+        earliest = { obs, type: 'frameHit', event: frameHit };
+      }
+    }
+
+    if (!earliest) {
+      blockedDistance = Math.max(0, blockedDistance - remaining);
+      if (blockedDistance <= 1e-6) blockedTeleporterIndex = null;
+      point = end;
+      break;
+    }
+
+    if (earliest.type === 'frameHit') {
+      return {
+        point: earliest.event.point,
+        direction,
+        teleports,
+        reentryBlockTeleporterIndex: blockedTeleporterIndex,
+        reentryBlockDistance: Math.max(0, blockedDistance - (remaining * earliest.event.t)),
+        frameHit: true,
+        frameHitObstacle: earliest.obs,
+      };
+    }
+
+    const sourceObs = earliest.obs;
+    const sourceFaceId = earliest.event.sourceFaceId;
+    const destFaceId = getShotTeleportDestinationFace(sourceFaceId);
+    const destTeleporterIndex = Math.floor(destFaceId / 2);
+    const destFace = destFaceId % 2;
+    const sourceFace = sourceFaceId % 2;
+    const destObs = TELEPORTER_OBSTACLES_BY_INDEX.get(destTeleporterIndex);
+
+    if (!destObs) {
+      break;
+    }
+
+    const transformed = transformShotThroughTeleporter(
+      earliest.event.point,
+      direction,
+      sourceObs,
+      sourceFace,
+      destObs,
+      destFace,
+    );
+
+    const consumedDistance = remaining * earliest.event.t;
+    blockedDistance = Math.max(0, blockedDistance - consumedDistance);
+    if (blockedDistance <= 1e-6) blockedTeleporterIndex = null;
+    remaining = Math.max(0, remaining - consumedDistance);
+    point = {
+      x: transformed.pointOut.x + transformed.dirOut.x * 0.02,
+      y: transformed.pointOut.y + transformed.dirOut.y * 0.02,
+      z: transformed.pointOut.z + transformed.dirOut.z * 0.02,
+    };
+    direction = transformed.dirOut;
+    blockedTeleporterIndex = destTeleporterIndex;
+    blockedDistance = Math.max(
+      SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE,
+      (getShotTeleporterDims(destObs).halfW * 2) + 0.05,
+    );
+    teleports++;
+
+    log(`[SHOT_TP] id=${projectileId} srcFace=${sourceFaceId} dstFace=${destFaceId} src=${sourceObs.linkName || sourceObs.name} dst=${destObs.linkName || destObs.name}`);
+  }
+
+  return {
+    point,
+    direction,
+    teleports,
+    reentryBlockTeleporterIndex: blockedTeleporterIndex,
+    reentryBlockDistance: blockedDistance,
+    frameHit: false,
+    frameHitObstacle: null,
+  };
+}
+
+const SHOT_SIM_STEP_SECONDS = 1 / 60;
+const SHOT_SIM_MAX_STEPS_PER_LOOP = 8;
+
+function formatShotPoint(x, y, z) {
+  return `(${Number(x).toFixed(2)},${Number(y).toFixed(2)},${Number(z).toFixed(2)})`;
+}
+
+function logShotEnd(projectile, cause, point, details = '') {
+  const extra = details ? ` ${details}` : '';
+  log(
+    `[SHOT_END] id=${projectile.id} player=${projectile.playerId} slot=${projectile.shotSlot}` +
+    ` cause=${cause} at=${formatShotPoint(point.x, point.y, point.z)}` +
+    ` origin=${formatShotPoint(projectile.originX, projectile.y, projectile.originZ)}` +
+    ` dir=(${projectile.dirX.toFixed(4)},${(projectile.dirY || 0).toFixed(4)},${projectile.dirZ.toFixed(4)})${extra}`
+  );
+}
+
+function simulateProjectilesStep(stepSeconds, now) {
+  const stepDistance = GAME_CONFIG.SHOT_SPEED * stepSeconds;
+
   projectiles.forEach((proj, id) => {
     const deltaTime = (now - proj.createdAt) / 1000;
     const prevX = proj.x;
     const prevY = proj.y;
     const prevZ = proj.z;
-    proj.x += proj.dirX * GAME_CONFIG.SHOT_SPEED * loopDeltaSeconds;
-    proj.z += proj.dirZ * GAME_CONFIG.SHOT_SPEED * loopDeltaSeconds;
+    const traced = traceShotThroughTeleporters(
+      { x: prevX, y: prevY, z: prevZ },
+      { x: proj.dirX, y: proj.dirY || 0, z: proj.dirZ },
+      stepDistance,
+      id,
+      proj.teleportReentryBlockTeleporterIndex,
+      proj.teleportReentryBlockDistance,
+    );
+    proj.x = traced.point.x;
+    proj.y = traced.point.y;
+    proj.z = traced.point.z;
+    proj.dirX = traced.direction.x;
+    proj.dirY = traced.direction.y;
+    proj.dirZ = traced.direction.z;
+    proj.teleportReentryBlockTeleporterIndex = traced.reentryBlockTeleporterIndex;
+    proj.teleportReentryBlockDistance = traced.reentryBlockDistance;
 
-    // Remove if out of bounds, too old, or traveled > shot range
+    if (traced.frameHit) {
+      const impact = traced.point;
+      const hitName = traced.frameHitObstacle?.name || 'teleporter frame';
+      log(`Projectile ${id} hit obstacle "${hitName}" at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
+      logShotEnd(proj, 'frame_hit', impact, `obstacle=${hitName}`);
+      projectiles.delete(id);
+      broadcastAll({ type: 'shotEnd', id, reason: 0, x: impact.x, y: impact.y, z: impact.z });
+      return;
+    }
+
+    // Remove if out of bounds or lifetime budget exhausted.
+    // Match BZFlag semantics: shot lifetime is time-based and does not shrink
+    // from teleports based on straight-line displacement from spawn.
     const halfMap = GAME_CONFIG.MAP_SIZE / 2;
-    const maxShotLifetime = GAME_CONFIG.SHOT_SPEED > 0
-      ? (GAME_CONFIG.SHOT_RANGE / GAME_CONFIG.SHOT_SPEED) + 1
-      : 10;
-    const dx = proj.x - proj.originX;
-    const dz = proj.z - proj.originZ;
-    const distTraveled = Math.sqrt(dx * dx + dz * dz);
     const outOfBounds = Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap;
-    const timedOut = deltaTime > maxShotLifetime || distTraveled > GAME_CONFIG.SHOT_RANGE;
+    const timedOut = deltaTime > proj.lifetimeSeconds;
     if (outOfBounds || timedOut) {
       projectiles.delete(id);
       const reason = outOfBounds ? 0 : 1;
       const removalPoint = outOfBounds
         ? findMapEdgeImpactPoint(prevX, prevY, prevZ, proj.x, proj.y, proj.z, halfMap)
         : { x: proj.x, y: proj.y, z: proj.z };
-      broadcastAll({ type: 'projectileRemoved', id, reason, x: removalPoint.x, y: removalPoint.y, z: removalPoint.z });
-      log(`Projectile ${id} removed (out of bounds ${distTraveled} or expired)`);
+      broadcastAll({ type: 'shotEnd', id, reason, x: removalPoint.x, y: removalPoint.y, z: removalPoint.z });
+      if (outOfBounds) {
+        logShotEnd(proj, 'out_of_bounds', removalPoint, `lifetime=${deltaTime.toFixed(3)}/${proj.lifetimeSeconds.toFixed(3)}`);
+      } else {
+        logShotEnd(proj, 'timeout', removalPoint, `lifetime=${deltaTime.toFixed(3)}/${proj.lifetimeSeconds.toFixed(3)}`);
+      }
+      log(`Projectile ${id} removed (${outOfBounds ? 'out of bounds' : 'expired'})`);
       return;
     }
 
     // Check collision with obstacles using checkCollision() with small projectile radius
     const projectileRadius = 0.1;
-    const obstacleHit = checkCollision(proj.x, proj.y, proj.z, projectileRadius);
+    const obstacleHit = checkCollision(proj.x, proj.y, proj.z, projectileRadius, { ignoreTeleporters: true });
     if (obstacleHit) {
       const impact = findProjectileImpactPoint(
         prevX,
@@ -1655,14 +2265,16 @@ function gameLoop() {
         proj.y,
         proj.z,
         projectileRadius,
+        { ignoreTeleporters: true },
       );
       if (obstacleHit.collisionKind === 'boundary') {
         log(`Projectile ${id} hit boundary at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
       } else {
         log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
       }
+      logShotEnd(proj, 'obstacle', impact, `obstacle=${obstacleHit.name || obstacleHit.collisionKind || 'unknown'}`);
       projectiles.delete(id);
-      broadcastAll({ type: 'projectileRemoved', id, reason: 0, x: impact.x, y: impact.y, z: impact.z });
+      broadcastAll({ type: 'shotEnd', id, reason: 0, x: impact.x, y: impact.y, z: impact.z });
       return;
     }
 
@@ -1696,6 +2308,8 @@ function gameLoop() {
             shooter.kills++;
           }
 
+          logShotEnd(proj, 'player_hit', { x: proj.x, y: proj.y, z: proj.z }, `victim=${player.id}`);
+
           broadcastAll({
             type: 'playerHit',
             victimId: player.id,
@@ -1717,6 +2331,36 @@ function gameLoop() {
       }
     });
   });
+}
+
+// Game loop - update projectiles and check collisions
+let lastGameLoopAt = Date.now();
+let projectileSimAccumulator = 0;
+let lastVoiceRosterRefreshAt = 0;
+function gameLoop() {
+
+  // Advance world time (20 ticks/sec, 24000 ticks/day)
+  worldTime = (worldTime + 1) % 24000;
+  const now = Date.now();
+  const loopDeltaSeconds = Math.min(0.1, Math.max(0, (now - lastGameLoopAt) / 1000));
+  lastGameLoopAt = now;
+  // No need to broadcast worldTime periodically; clients track it locally at 20 ticks/sec.
+
+  if (now - lastVoiceRosterRefreshAt >= VOICE_ROSTER_REFRESH_INTERVAL) {
+    refreshVoiceRosters();
+    lastVoiceRosterRefreshAt = now;
+  }
+
+  // Simulate projectiles at a fixed step to avoid path jitter from loop timing variance.
+  projectileSimAccumulator += loopDeltaSeconds;
+  const maxAccumulated = SHOT_SIM_STEP_SECONDS * SHOT_SIM_MAX_STEPS_PER_LOOP;
+  if (projectileSimAccumulator > maxAccumulated) {
+    projectileSimAccumulator = maxAccumulated;
+  }
+  while (projectileSimAccumulator >= SHOT_SIM_STEP_SECONDS) {
+    simulateProjectilesStep(SHOT_SIM_STEP_SECONDS, now);
+    projectileSimAccumulator -= SHOT_SIM_STEP_SECONDS;
+  }
 }
 
 setInterval(gameLoop, 16); // ~60fps
@@ -1873,6 +2517,7 @@ wss.on('connection', (ws, req) => {
     config: GAME_CONFIG,
     voiceRtcConfig: { iceServers: VOICE_ICE_SERVERS },
     obstacles: OBSTACLES,
+    teleporterGraph: TELEPORTER_GRAPH,
     worldTime,
     clouds: clouds,
     serverName: serverConfig.serverName || '',
@@ -2122,6 +2767,15 @@ wss.on('connection', (ws, req) => {
           if (player.role === 'spectator') break;
           if (player.health <= 0) break; // Dead players can't shoot
           if (!validateShot(player, message.x, message.y, message.z)) break;
+          const rawDirX = Number(message.dirX);
+          const rawDirZ = Number(message.dirZ);
+          const rawDirY = Number(message.dirY);
+          if (!Number.isFinite(rawDirX) || !Number.isFinite(rawDirZ)) break;
+          const planarLength = Math.hypot(rawDirX, rawDirZ);
+          if (planarLength < 1e-6) break;
+          const shotDirX = rawDirX / planarLength;
+          const shotDirZ = rawDirZ / planarLength;
+          const shotDirY = Number.isFinite(rawDirY) ? rawDirY : 0;
           const shotSlot = getAvailableShotSlot(player.id);
           if (shotSlot < 0) {
             log(`Player "${player.name}" had no free shot slot despite passing validation`);
@@ -2136,12 +2790,18 @@ wss.on('connection', (ws, req) => {
             message.x,
             message.y,
             message.z,
-            message.dirX,
-            message.dirZ
+            shotDirX,
+            shotDirZ,
+            shotDirY
           );
           projectiles.set(id, proj);
+          log(
+            `[SHOT_START] id=${proj.id} player=${proj.playerId} slot=${proj.shotSlot}` +
+            ` pos=${formatShotPoint(proj.x, proj.y, proj.z)}` +
+            ` dir=(${proj.dirX.toFixed(4)},${proj.dirY.toFixed(4)},${proj.dirZ.toFixed(4)})`
+          );
           broadcastAll({
-            type: 'projectileCreated',
+            type: 'shotBegin',
             id: proj.id,
             playerId: proj.playerId,
             x: proj.x,
@@ -2149,6 +2809,7 @@ wss.on('connection', (ws, req) => {
             z: proj.z,
             shotSlot: proj.shotSlot,
             dirX: proj.dirX,
+            dirY: proj.dirY,
             dirZ: proj.dirZ,
             createdAt: proj.createdAt
           });

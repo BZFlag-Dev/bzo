@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.30] - 2026-08-27
+
+### Added
+- Added authoritative shot lifecycle diagnostics in `server.log` with `[SHOT_START]`, `[SHOT_TP]`, and `[SHOT_END]` entries to trace teleporter traversal and termination causes.
+
+### Changed
+- Updated shot lifecycle packet names to BZFlag-style semantics: `shotBegin` and `shotEnd` replace `projectileCreated` and `projectileRemoved`.
+- Updated shot expiration to use lifetime-budget semantics (`shotRange / shotSpeed`) so teleport traversal does not incorrectly shorten lifetime based on straight-line displacement from spawn.
+- Updated teleporter frame/crossing classification to use BZFlag-matching tolerance (`1e-6`) and harmonized server/client teleporter aperture math with rendered teleporter geometry.
+
+### Fixed
+- Fixed false shot-end explosions on valid teleporter traversals by separating teleporter frame-hit detection from generic obstacle collision checks and excluding teleporter solids from post-teleport projectile collision tests.
+- Fixed immediate teleporter ping-pong loops by adding short re-entry blocking for the destination teleporter after teleport exit.
+- Fixed radar obstacle clipping for large rotated structures (for example corner x-walls) by clipping obstacle polygons to the radar square instead of culling by coarse bounds.
+
 ## [1.0.29] - 2026-08-26
 
 ### Fixed

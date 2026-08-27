@@ -67,8 +67,9 @@
 - The operator controls are part of the single-page app and should remain in-game. Do not reintroduce a separate `/admin` page for operator tools because navigating away from the SPA drops active game state and the WebSocket connection.
 - The old `/admin` server route was an abandoned experiment and has been removed. Keep future operator/admin UX inside the existing overlay/HUD flow unless the user requests a different architecture.
 - During development, it is intentional that any connected player may use operator controls such as map switching. OAuth or stronger authorization may come later, but it is not a current priority.
-- Client gameplay logic should be correct on its own; the server is a validation backstop, not the primary source of truth for normal packets. Do not rely on server correction packets unless a client is intentionally or maliciously sending invalid data.
-- When a rule affects movement, shooting, or other player actions, the unmodified client should obey it directly and the server should only reject or correct malformed packets.
+- The client should ALWAYS send valid data.
+- The server checks are ONLY in place to detect modified clients.
+- With unmodified client code, the server should never have to correct client actions.
 - Project distribution is public-by-default: source code (AGPL), Docker images, release downloads/artifacts, and install endpoints should remain publicly accessible unless the user explicitly requests a temporary exception.
 - Deferred XR hand-control options are tracked in `docs/webxr-validation.md` under `Deferred TODO: Hand Controls`; do not change current physical controller mappings unless cross-device compatibility requires it.
 
