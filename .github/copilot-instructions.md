@@ -32,6 +32,8 @@
 - Gameplay logs stream to `server.log`, which is cleared on each server boot.
 - The development server is typically already running inside GNU Screen session `0`.
 - Because `npm run dev` is used, edits to watched files usually restart/reload the running server automatically; avoid starting duplicate dev servers unless explicitly needed.
+- When the user says "release now" or "do/make a release", execute the full release flow end-to-end (prepare changelog/version, run checks, commit, tag, and push) unless the user explicitly asks for dry-run/prepare-only/no-commit.
+- After completing a release command, stop at concise confirmation of outcomes; do not add optional follow-up suggestions unless requested.
 
 ## Server Architecture (`server.js`)
 - Single Express app serves static assets and hosts a `ws` WebSocket server that drives gameplay.
