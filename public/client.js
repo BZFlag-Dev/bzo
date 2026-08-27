@@ -5412,7 +5412,7 @@ function clipPolygonToRadarSquare(points, halfExtent) {
  * @param {number} worldRotation - Optional world rotation (default 0)
  * @returns {{x: number, y: number, distance: number, rotation: number}} Radar coordinates, distance, and transformed rotation
  */
-function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shotDistance, worldRotation = 0) {
+function worldToRadarRelative(worldX, worldZ, px, pz, playerHeading) {
   const dx = worldX - px;
   const dz = worldZ - pz;
   const distance = Math.sqrt(dx * dx + dz * dz);
@@ -5420,18 +5420,32 @@ function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shot
   // Rotate to player-relative coordinates (forward = up on radar)
   const rotX = dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading);
   const rotY = dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading);
+
+  return { x: rotX, y: rotY, distance };
+}
+
+function radarRelativeToCanvas(radarX, radarY, center, radarWorldHalfExtent, radarDistance) {
+  return {
+    x: center + (radarX / radarDistance) * radarWorldHalfExtent,
+    y: center + (radarY / radarDistance) * radarWorldHalfExtent,
+  };
+}
+
+function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shotDistance, worldRotation = 0) {
+  const rel = worldToRadarRelative(worldX, worldZ, px, pz, playerHeading);
   const worldHalfExtent = getRadarWorldHalfExtent(radius);
+  const panel = radarRelativeToCanvas(rel.x, rel.y, center, worldHalfExtent, shotDistance);
 
   // Scale to radar size
-  const x = center + (rotX / shotDistance) * worldHalfExtent;
-  const y = center + (rotY / shotDistance) * worldHalfExtent;
+  const x = panel.x;
+  const y = panel.y;
 
   // Rotation transform:
   // - Negate worldRotation to account for Z-axis direction difference (Three.js vs canvas)
   // - Add playerHeading so objects stay fixed in world space as radar rotates
   const rotation = -worldRotation + playerHeading;
 
-  return { x, y, distance, rotation };
+  return { x, y, distance: rel.distance, rotation };
 }
 
 /**
@@ -5504,14 +5518,15 @@ function updateRadar() {
   const py = myTank.position.y;
   const pz = myTank.position.z;
   const playerHeading = myTank.rotation ? myTank.rotation.y : 0;
-  const toRadarRelative = (worldX, worldZ) => {
-    const dx = worldX - px;
-    const dz = worldZ - pz;
-    return {
-      x: dx * Math.cos(playerHeading) - dz * Math.sin(playerHeading),
-      y: dx * Math.sin(playerHeading) + dz * Math.cos(playerHeading),
-    };
-  };
+  const toRadarRelative = (worldX, worldZ) => worldToRadarRelative(worldX, worldZ, px, pz, playerHeading);
+  const radarToCanvas = (radarX, radarY) => radarRelativeToCanvas(
+    radarX,
+    radarY,
+    center,
+    radarWorldHalfExtent,
+    radarDistance,
+  );
+  const getRadarObjectRotation = (worldRotation) => (-worldRotation) + playerHeading;
   const isOutsideRadarSquare = (radarX, radarY, margin = 0) => (
     Math.abs(radarX) > radarDistance + margin || Math.abs(radarY) > radarDistance + margin
   );
@@ -5598,7 +5613,7 @@ function updateRadar() {
     projectiles.forEach((proj) => {
       const rel = toRadarRelative(proj.position.x, proj.position.z);
       if (isOutsideRadarSquare(rel.x, rel.y)) return;
-      const pos = world2Radar(proj.position.x, proj.position.z, px, pz, playerHeading, center, radius, radarDistance);
+      const pos = radarToCanvas(rel.x, rel.y);
       const shotRadarColor = proj.userData?.radarColor || '#FFD700';
 
       radarCtx.save();
@@ -5661,9 +5676,10 @@ function updateRadar() {
 
       const halfW = obsWidth / 2;
       const halfD = obsDepth / 2;
-      const obstacleRotation = obs.rotation || 0;
-      const cosR = Math.cos(obstacleRotation);
-      const sinR = Math.sin(obstacleRotation);
+      const centerRel = toRadarRelative(obs.x, obs.z);
+      const obstacleRadarRotation = getRadarObjectRotation(obs.rotation || 0);
+      const cosR = Math.cos(obstacleRadarRotation);
+      const sinR = Math.sin(obstacleRadarRotation);
       const corners = [
         { x: -halfW, z: -halfD },
         { x: halfW, z: -halfD },
@@ -5672,9 +5688,12 @@ function updateRadar() {
       ];
 
       const radarPolygon = corners.map((corner) => {
-        const worldCornerX = obs.x + corner.x * cosR - corner.z * sinR;
-        const worldCornerZ = obs.z + corner.x * sinR + corner.z * cosR;
-        return toRadarRelative(worldCornerX, worldCornerZ);
+        const rotatedX = corner.x * cosR - corner.z * sinR;
+        const rotatedY = corner.x * sinR + corner.z * cosR;
+        return {
+          x: centerRel.x + rotatedX,
+          y: centerRel.y + rotatedY,
+        };
       });
 
       const clippedPolygon = clipPolygonToRadarSquare(radarPolygon, radarDistance);
@@ -5690,8 +5709,9 @@ function updateRadar() {
       radarCtx.fillStyle = getObstacleRadarFillStyle(obs);
       radarCtx.beginPath();
       clippedPolygon.forEach((point, index) => {
-        const drawX = center + (point.x / radarDistance) * radarWorldHalfExtent;
-        const drawY = center + (point.y / radarDistance) * radarWorldHalfExtent;
+        const panel = radarToCanvas(point.x, point.y);
+        const drawX = panel.x;
+        const drawY = panel.y;
         if (index === 0) {
           radarCtx.moveTo(drawX, drawY);
         } else {
@@ -5721,7 +5741,7 @@ function updateRadar() {
     const rotX = rel.x;
     const rotY = rel.y;
     const tankOutsideRadarSquare = isOutsideRadarSquare(rotX, rotY, tankArrowWorldMargin);
-    const pos = world2Radar(tank.position.x, tank.position.z, px, pz, playerHeading, center, radius, radarDistance);
+    const pos = radarToCanvas(rel.x, rel.y);
 
     if (tankOutsideRadarSquare) {
       // Tank is outside radar range - draw as small dot against square edge.

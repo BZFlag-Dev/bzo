@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.31] - 2026-08-27
+
+### Added
+- Added a unified radar world-to-panel transform path so obstacle, projectile, and tank rendering now share one conversion pipeline.
+
+### Changed
+- Simplified radar math by centralizing world-relative rotation and panel scaling into shared helpers used by all radar entities.
+
+### Fixed
+- Fixed radar obstacle orientation regression for large rotated walls (for example `ne_xwall`) introduced by the polygon clipping rewrite.
+
 ## [1.0.30] - 2026-08-27
 
 ### Added
