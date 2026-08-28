@@ -31,6 +31,15 @@ export function debugLog(message) {
   }
 }
 
+function publishSessionState(enabled) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  if (typeof window.CustomEvent === 'function') {
+    window.dispatchEvent(new window.CustomEvent('webxrsessionchange', {
+      detail: { enabled: Boolean(enabled), mode: xrMode },
+    }));
+  }
+}
+
 // Check if WebXR is available
 async function checkXRSupport() {
   debugLog('Checking XR support... navigator.xr=' + (navigator.xr ? 'YES' : 'NO'));
@@ -131,6 +140,7 @@ async function startXRSession(renderer, animationCallback) {
 
     xrEnabled = true;
     xrState.enabled = true;
+    publishSessionState(true);
 
     // Set up the XR animation loop
     if (animationCallback) {
@@ -268,6 +278,7 @@ function resetXRState() {
   xrState.frameCounter = 0;
   xrInputSources.clear();
   xrState.controllers.clear();
+  publishSessionState(false);
 }
 
 // Store reference to reset animation loop

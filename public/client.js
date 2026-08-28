@@ -2216,6 +2216,12 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // Initialize WebXR support
+  window.addEventListener('webxrsessionchange', event => {
+    if (event.detail?.enabled) return;
+    xrSettingsShortcutLatched = false;
+    setXRButtonState(false);
+  });
+
   initXR().then(mode => {
     showMessage(`WebXR: ${mode}`, 'info');
     const xrBtn = document.getElementById('xrBtn');
