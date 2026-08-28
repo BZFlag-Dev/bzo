@@ -126,6 +126,9 @@ canvas {
   white-space: pre-wrap;
   max-width: 100%;
   box-sizing: border-box;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
 
 #chatMessages .chat-line.chat-kind-server {
@@ -620,6 +623,24 @@ body {
 
 .operatorRow {
   margin-bottom: 10px;
+}
+
+.operatorConfigRow {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+#operatorOverlay input[type="number"] {
+  width: 100%;
+  padding: 8px;
+  font-size: 15px;
+  border: 2px solid #4CAF50;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  margin-bottom: 10px;
+  box-sizing: border-box;
 }
 
 #operatorOverlay .dialogTitle {

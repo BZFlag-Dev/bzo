@@ -396,11 +396,13 @@ export function setupInputHandlers() {
   // Keyboard
   document.addEventListener('keydown', (e) => {
     const activeElement = document.activeElement;
+    if (isOperatorPanelVisible()) return;
     if (isEditableElement(activeElement)) return;
     keys[e.code] = true;
   });
   document.addEventListener('keyup', (e) => {
     const activeElement = document.activeElement;
+    if (isOperatorPanelVisible()) return;
     if (isEditableElement(activeElement)) return;
     keys[e.code] = false;
   });
@@ -525,6 +527,11 @@ function isEditableElement(element) {
     element.tagName === 'SELECT' ||
     element.isContentEditable
   ));
+}
+
+function isOperatorPanelVisible() {
+  if (!domRefs.operatorOverlay) return false;
+  return window.getComputedStyle(domRefs.operatorOverlay).display !== 'none';
 }
 
 function callOptionalHudCallback(names, ...args) {
@@ -858,17 +865,24 @@ function updateOperatorBtn() {
 
 export function toggleOperatorPanel() {
   if (!domRefs.operatorOverlay) return;
-  const currentVisible = window.getComputedStyle(domRefs.operatorOverlay).display !== 'none';
+  const currentVisible = isOperatorPanelVisible();
   if (currentVisible) {
     domRefs.operatorOverlay.style.setProperty('display', 'none');
+    clearKeyboardInput();
     hudContext.showMessage('Operator Panel: Hidden');
   } else {
     hideSettingsHudSilently();
     domRefs.operatorOverlay.style.setProperty('display', 'block');
+    clearKeyboardInput();
     hudContext.showMessage('Operator Panel: Shown');
     const requestId = Math.floor(Math.random() * 1e9);
     hudContext.sendToServer({ type: 'getMaps', requestId });
     window._operatorMapReqId = requestId;
+    const motdInput = document.getElementById('motdInput');
+    if (motdInput) {
+      motdInput.focus();
+      motdInput.select();
+    }
   }
   updateOperatorBtn();
 }
@@ -1066,6 +1080,7 @@ function bindHudElements() {
       if (activeElement === chatInput) return;
       const entryInput = document.getElementById('entryInput');
       if (activeElement === entryInput) return;
+      if (isOperatorPanelVisible()) return;
       if (isEditableElement(activeElement)) return;
 
       if (e.key === 'm' || e.key === 'M') {

@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.34] - 2026-08-28
+
+### Changed
+- Updated projected ground shadows to use a BZFlag-style stencil path so overlapping casters do not over-darken by object count.
+- Updated ground debug grid visibility to follow the existing debug-geometry toggle.
+
+### Fixed
+- Fixed horizon and movement-related shadow flashing by preserving last valid projected shadow meshes and hardening stencil/decal layering.
+- Fixed shadow occlusion so obstacle geometry correctly blocks ground shadow darkening.
+- Fixed ground/grid/shadow draw ordering so debug grid rendering can be layered beneath shadow darkening when enabled.
+- Follow-up on closed issue #22 for ground/shadow visual stability.
+
 ## [1.0.33] - 2026-08-28
 
 ### Added

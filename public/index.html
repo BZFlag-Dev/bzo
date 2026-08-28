@@ -14,6 +14,16 @@
       <div class="dialogTitle">Operator Panel <button id="closeOperatorBtn" class="closeBtn">&times;</button></div>
       <div class="dialogContent">
         <div id="motd">MOTD: </div>
+        <div class="operatorRow operatorConfigRow">
+          <label for="motdInput">Set MOTD:</label>
+          <input type="text" id="motdInput" maxlength="140" placeholder="Message of the day">
+          <button id="setMotdBtn" class="btn">Update MOTD</button>
+        </div>
+        <div class="operatorRow operatorConfigRow">
+          <label for="shotMaxActiveInput">Shot Max Active:</label>
+          <input type="number" id="shotMaxActiveInput" min="1" max="10" step="1" inputmode="numeric">
+          <button id="setShotMaxActiveBtn" class="btn">Update Shot Limit</button>
+        </div>
         <div class="operatorRow">
           <label for="mapList">Map:</label>
           <select id="mapList"></select>

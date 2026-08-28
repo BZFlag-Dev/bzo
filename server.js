@@ -2657,7 +2657,8 @@ function sendMapList(ws) {
   ws.send(JSON.stringify({
     type: 'mapList',
     maps: listAvailableMapFiles(),
-    currentMap: MAP_SOURCE
+    currentMap: MAP_SOURCE,
+    shotMaxActive: GAME_CONFIG.SHOT_MAX_ACTIVE,
   }));
 }
 
@@ -3302,6 +3303,67 @@ wss.on('connection', (ws, req) => {
             // Send updated map list (mapList reply)
             sendMapList(ws);
           });
+          break;
+        }
+        case 'setOperatorConfig': {
+          const hasMotd = Object.prototype.hasOwnProperty.call(message, 'motd');
+          const hasShotMaxActive = Object.prototype.hasOwnProperty.call(message, 'shotMaxActive');
+          if (!hasMotd && !hasShotMaxActive) {
+            ws.send(JSON.stringify({ error: 'No supported operator setting provided' }));
+            break;
+          }
+
+          let nextMotd = serverConfig.motd || '';
+          let nextShotMaxActive = GAME_CONFIG.SHOT_MAX_ACTIVE;
+
+          if (hasMotd) {
+            if (typeof message.motd !== 'string') {
+              ws.send(JSON.stringify({ error: 'Invalid motd value' }));
+              break;
+            }
+            nextMotd = message.motd.trim();
+            if (nextMotd.length > 140) {
+              ws.send(JSON.stringify({ error: 'MOTD must be 140 characters or fewer' }));
+              break;
+            }
+          }
+
+          if (hasShotMaxActive) {
+            const requestedShotMaxActive = Number(message.shotMaxActive);
+            if (!Number.isFinite(requestedShotMaxActive)) {
+              ws.send(JSON.stringify({ error: 'Invalid shot max active value' }));
+              break;
+            }
+            nextShotMaxActive = normalizeShotSlotCount(Math.round(requestedShotMaxActive));
+          }
+
+          try {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            if (hasMotd) config.motd = nextMotd;
+            if (hasShotMaxActive) config.shotMaxActive = nextShotMaxActive;
+            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+            if (hasMotd) serverConfig.motd = nextMotd;
+            if (hasShotMaxActive) {
+              serverConfig.shotMaxActive = nextShotMaxActive;
+              GAME_CONFIG.SHOT_MAX_ACTIVE = nextShotMaxActive;
+            }
+
+            broadcastAll({
+              type: 'serverConfigUpdate',
+              motd: serverConfig.motd || '',
+              shotMaxActive: GAME_CONFIG.SHOT_MAX_ACTIVE,
+            });
+            sendMapList(ws);
+            ws.send(JSON.stringify({ success: true }));
+            log(
+              `Operator updated config: motd=${hasMotd ? 'yes' : 'no'} ` +
+              `shotMaxActive=${hasShotMaxActive ? String(nextShotMaxActive) : 'unchanged'}`
+            );
+          } catch (error) {
+            logError(`Failed to update config at ${configPath}:`, error);
+            ws.send(JSON.stringify({ error: 'Failed to update config' }));
+          }
           break;
         }
       }

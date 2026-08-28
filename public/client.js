@@ -18,6 +18,10 @@ const CHAT_KIND_MISC = 'misc';
 const CHAT_KIND_DEBUG = 'debug';
 const CHAT_KIND_DIRECT_IN = 'direct-in';
 const CHAT_KIND_DIRECT_OUT = 'direct-out';
+const CLIENT_VERSION = '1.0.33';
+const CLIENT_COPYRIGHT = 'Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>';
+const CLIENT_LICENSE = 'AGPL-3.0-only';
+const CLIENT_LICENSE_URL = 'https://www.gnu.org/licenses/agpl-3.0.html';
 const CHAT_TABS = [
   { id: 'all', label: 'All' },
   { id: 'chat', label: 'Chat' },
@@ -142,6 +146,11 @@ const SHOT_SIM_MAX_STEPS_PER_FRAME = 8;
 let projectileSimAccumulator = 0;
 let ws = null;
 let gameConfig = null;
+let serverDescriptionText = '';
+let serverMotdText = '';
+let startupBuildInfoAnnounced = false;
+let lastAnnouncedServerDescription = null;
+let lastAnnouncedServerMotd = null;
 let radarCanvas, radarCtx;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
@@ -592,6 +601,7 @@ async function prepareInitialRender(message, sequenceId) {
   });
 
   renderManager.buildGround(gameConfig.MAP_SIZE);
+  renderManager.setGroundGridEnabled(showDebugGeometry, gameConfig.MAP_SIZE);
   renderManager.createMapBoundaries(gameConfig.MAP_SIZE);
   await waitForAnimationFrame();
   if (sequenceId !== activeInitSequence) return false;
@@ -783,6 +793,41 @@ function scrollChatToNewest() {
 function routeLocalHudMessage(text) {
   addChatEntry(['misc', 'all'], `local: ${text}`, CHAT_KIND_MISC);
   updateChatWindow();
+}
+
+function announceBuildInfoOnce() {
+  if (startupBuildInfoAnnounced) return;
+  startupBuildInfoAnnounced = true;
+  addChatEntry(['misc', 'all'], `client version: ${CLIENT_VERSION}`, CHAT_KIND_MISC);
+  addChatEntry(['misc', 'all'], `copyright: ${CLIENT_COPYRIGHT}`, CHAT_KIND_MISC);
+  addChatEntry(['misc', 'all'], `license: ${CLIENT_LICENSE} (${CLIENT_LICENSE_URL})`, CHAT_KIND_MISC);
+  updateChatWindow();
+}
+
+function announceServerTextIfChanged() {
+  let announced = false;
+
+  if (typeof serverDescriptionText === 'string') {
+    const nextDescription = serverDescriptionText.trim();
+    if (nextDescription.length > 0 && nextDescription !== lastAnnouncedServerDescription) {
+      addChatEntry(['server', 'all'], `[SERVER] Description: ${nextDescription}`, CHAT_KIND_SERVER);
+      lastAnnouncedServerDescription = nextDescription;
+      announced = true;
+    }
+  }
+
+  if (typeof serverMotdText === 'string') {
+    const nextMotd = serverMotdText.trim();
+    if (nextMotd.length > 0 && nextMotd !== lastAnnouncedServerMotd) {
+      addChatEntry(['server', 'all'], `[SERVER] MOTD: ${nextMotd}`, CHAT_KIND_SERVER);
+      lastAnnouncedServerMotd = nextMotd;
+      announced = true;
+    }
+  }
+
+  if (announced) {
+    updateChatWindow();
+  }
 }
 
 function focusChatWithTarget(targetId, { clearInput = true } = {}) {
@@ -1925,6 +1970,7 @@ function showSupportFootprintDebug(obstacle, supportSurface) {
 }
 
 function updateDebugGeometryVisibility() {
+  renderManager.setGroundGridEnabled(showDebugGeometry, gameConfig?.MAP_SIZE);
   if (!showDebugGeometry) {
     hideSelectedFaceDebug();
     hideSupportSurfaceDebug();
@@ -2099,6 +2145,36 @@ window.addEventListener('DOMContentLoaded', () => {
           }
         };
         reader.readAsText(file);
+      });
+    }
+
+    const setMotdBtn = document.getElementById('setMotdBtn');
+    const motdInput = document.getElementById('motdInput');
+    if (setMotdBtn && motdInput) {
+      setMotdBtn.addEventListener('click', () => {
+        const motd = motdInput.value.trim();
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        sendToServer({
+          type: 'setOperatorConfig',
+          motd,
+        });
+      });
+    }
+
+    const setShotMaxActiveBtn = document.getElementById('setShotMaxActiveBtn');
+    const shotMaxActiveInput = document.getElementById('shotMaxActiveInput');
+    if (setShotMaxActiveBtn && shotMaxActiveInput) {
+      setShotMaxActiveBtn.addEventListener('click', () => {
+        const parsed = Number(shotMaxActiveInput.value);
+        if (!Number.isFinite(parsed)) {
+          showMessage('Shot max active must be a number.');
+          return;
+        }
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        sendToServer({
+          type: 'setOperatorConfig',
+          shotMaxActive: Math.round(parsed),
+        });
       });
     }
   const btn = document.getElementById('debugLabelsBtn');
@@ -2318,6 +2394,7 @@ function init() {
   });
   syncDebugTabVisibility();
   updateChatWindow();
+  announceBuildInfoOnce();
 
   // Restore debug state from localStorage
   const savedDebugState = localStorage.getItem('debugEnabled');
@@ -2384,11 +2461,45 @@ function init() {
     onWindowResize();
     updateChatLayoutForDebugOverlap();
   });
+
+  function getUiKeyboardLockState() {
+    const activeElement = document.activeElement;
+    const entryDialog = document.getElementById('entryDialog');
+    const operatorOverlay = document.getElementById('operatorOverlay');
+    const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
+    const isOperatorPanelOpen = operatorOverlay && operatorOverlay.style.display === 'block';
+    const isChatFocused = chatActive || activeElement === chatInput;
+    const isTypingInEditable = Boolean(activeElement && (
+      activeElement.tagName === 'INPUT' ||
+      activeElement.tagName === 'TEXTAREA' ||
+      activeElement.tagName === 'SELECT' ||
+      activeElement.isContentEditable
+    ));
+    return {
+      isentryDialogOpen,
+      isOperatorPanelOpen,
+      isChatFocused,
+      isTypingInEditable,
+    };
+  }
+
   document.addEventListener('keydown', (e) => {
-    // Check if name dialog is open (declare once at top)
     const entryDialog = document.getElementById('entryDialog');
     const helpPanel = document.getElementById('helpPanel');
-    const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
+    const {
+      isentryDialogOpen,
+      isOperatorPanelOpen,
+      isChatFocused,
+      isTypingInEditable,
+    } = getUiKeyboardLockState();
+
+    if (isOperatorPanelOpen) {
+      return;
+    }
+
+    if (isentryDialogOpen) {
+      return;
+    }
 
     // Allow pause/unpause with P key even when paused
     if (e.code === 'KeyP') {
@@ -2480,7 +2591,7 @@ function init() {
       }
     }
 
-    if (chatActive || document.activeElement === chatInput) {
+    if (isChatFocused || isTypingInEditable) {
       // Disable all movement/game keys while chat is active
       e.preventDefault();
       return;
@@ -2492,15 +2603,8 @@ function init() {
       return;
     }
 
-    // Don't register game keys if dialog is open (except allow Escape to close things)
-    if (!isentryDialogOpen || e.code === 'Escape') {
-      keys[e.code] = true;
-    }
-
-    // If name dialog is open, only allow Escape and don't process other game controls
-    if (isentryDialogOpen && e.code !== 'Escape') {
-      return;
-    }
+    // Register game keys only when no text-entry dialogs are active.
+    keys[e.code] = true;
     // Prevent tab key default behavior
     if (e.key === 'Tab') {
       e.preventDefault();
@@ -2526,12 +2630,15 @@ function init() {
     }
   });
   document.addEventListener('keyup', (e) => {
-    // Check if name dialog is open
-    const entryDialog = document.getElementById('entryDialog');
-    const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
+    const {
+      isentryDialogOpen,
+      isOperatorPanelOpen,
+      isChatFocused,
+      isTypingInEditable,
+    } = getUiKeyboardLockState();
 
-    // Only clear keys if dialog is not open
-    if (!isentryDialogOpen) {
+    // Only clear keys if no UI element currently owns keyboard focus.
+    if (!isentryDialogOpen && !isOperatorPanelOpen && !isChatFocused && !isTypingInEditable) {
       keys[e.code] = false;
     }
   });
@@ -2592,6 +2699,13 @@ function init() {
 
   // Exit mouse mode on Escape
   document.addEventListener('keydown', (e) => {
+    const {
+      isentryDialogOpen,
+      isOperatorPanelOpen,
+      isChatFocused,
+      isTypingInEditable,
+    } = getUiKeyboardLockState();
+    if (isOperatorPanelOpen || isentryDialogOpen || isChatFocused || isTypingInEditable) return;
     if (e.code === 'Escape' && mouseControlEnabled) {
       mouseControlEnabled = false;
       showMessage('Controls: Keyboard');
@@ -2780,9 +2894,12 @@ function handleServerMessage(message) {
       const serverNameEl = document.getElementById('serverName');
       const serverDescriptionEl = document.getElementById('serverDescription');
       const serverMotdEl = document.getElementById('serverMotd');
+      serverDescriptionText = message.description || '';
+      serverMotdText = message.motd || '';
       if (serverNameEl) serverNameEl.textContent = 'Server: ' + (message.serverName || '');
-      if (serverDescriptionEl) serverDescriptionEl.textContent = message.description || '';
-      if (serverMotdEl) serverMotdEl.textContent = message.motd || '';
+      if (serverDescriptionEl) serverDescriptionEl.textContent = serverDescriptionText;
+      if (serverMotdEl) serverMotdEl.textContent = serverMotdText;
+      announceServerTextIfChanged();
       worldTime = message.worldTime;
       // Clear any existing tanks from previous connections
       tanks.forEach((tank) => {
@@ -3170,6 +3287,10 @@ function handleServerMessage(message) {
 
     case 'mapList':
       handleMapsList(message);
+      break;
+
+    case 'serverConfigUpdate':
+      handleServerConfigUpdate(message);
       break;
 
     case 'reload':
@@ -3564,7 +3685,6 @@ function callUpdateScoreboard() {
 function handleMapsList(message) {
   const mapList = document.getElementById('mapList');
   if (!mapList) return;
-  console.log(message)
 
   // Clear existing options
   mapList.innerHTML = '';
@@ -3578,6 +3698,48 @@ function handleMapsList(message) {
 
   if (message.currentMap) {
     mapList.value = message.currentMap;
+  }
+
+  const motdEl = document.getElementById('motd');
+  const motdInput = document.getElementById('motdInput');
+  if (motdEl) motdEl.textContent = `MOTD: ${serverMotdText}`;
+  if (motdInput) motdInput.value = serverMotdText;
+
+  if (Number.isFinite(message.shotMaxActive)) {
+    const shotMaxActiveInput = document.getElementById('shotMaxActiveInput');
+    if (shotMaxActiveInput) {
+      shotMaxActiveInput.value = String(message.shotMaxActive);
+    }
+  }
+}
+
+function handleServerConfigUpdate(message) {
+  if (typeof message.description === 'string') {
+    serverDescriptionText = message.description;
+    const serverDescriptionEl = document.getElementById('serverDescription');
+    if (serverDescriptionEl) serverDescriptionEl.textContent = serverDescriptionText;
+  }
+
+  if (typeof message.motd === 'string') {
+    serverMotdText = message.motd;
+    const serverMotdEl = document.getElementById('serverMotd');
+    const motdEl = document.getElementById('motd');
+    const motdInput = document.getElementById('motdInput');
+    if (serverMotdEl) serverMotdEl.textContent = serverMotdText;
+    if (motdEl) motdEl.textContent = `MOTD: ${serverMotdText}`;
+    if (motdInput) motdInput.value = serverMotdText;
+  }
+
+  announceServerTextIfChanged();
+
+  if (Number.isFinite(message.shotMaxActive)) {
+    if (gameConfig) {
+      gameConfig.SHOT_MAX_ACTIVE = message.shotMaxActive;
+    }
+    const shotMaxActiveInput = document.getElementById('shotMaxActiveInput');
+    if (shotMaxActiveInput) {
+      shotMaxActiveInput.value = String(message.shotMaxActive);
+    }
   }
 }
 
