@@ -6,6 +6,22 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.33] - 2026-08-28
+
+### Added
+- Added explicit BZFlag-style player teleport packets (`tp`/`pt`) so teleports are replicated as authoritative events instead of being inferred from movement.
+- Added the shipped BZFlag teleport sound asset at [public/teleport.wav](public/teleport.wav) and preload/caching for required gameplay audio during map initialization.
+
+### Changed
+- Updated player teleports to validate from the client's predicted source-side state and preserve turn, jump direction, vertical velocity, and airborne horizontal velocity through teleport exits.
+- Updated server debug packet logging to use a consistent `[DEBUG] Player "name": ...` format.
+
+### Fixed
+- Fixed teleporter frame/interior collision handling so tanks pass through active portals instead of sliding on them.
+- Fixed blocked or out-of-bounds teleporter exits by rejecting invalid destinations instead of placing players outside the map.
+- Fixed jump-through-teleporter kinematics so falling/rising state, turning, and post-teleport extrapolation stay aligned without false anticheat spikes.
+- Fixed projectile teleport ping-pong on stacked upper/lower teleporters by extending shot re-entry blocking to cover the portal breadth after exit.
+
 ## [1.0.32] - 2026-08-28
 
 ### Added

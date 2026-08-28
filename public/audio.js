@@ -91,3 +91,12 @@ export function createLandBuffer(audioContext) {
   }
   return buffer;
 }
+
+export async function loadAudioBuffer(audioContext, url) {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to load audio buffer from ${url}: ${response.status}`);
+  }
+  const audioData = await response.arrayBuffer();
+  return await audioContext.decodeAudioData(audioData);
+}

@@ -15,6 +15,7 @@ import {
   createJumpBuffer,
   createLandBuffer,
   createProjectilePopBuffer,
+  loadAudioBuffer,
 } from './audio.js';
 import {
   createBoundaryTexture,
@@ -307,6 +308,7 @@ class RenderManager {
     this.explosionBuffer = null;
     this.jumpBuffer = null;
     this.landBuffer = null;
+    this.teleportBuffer = null;
     this.container = null;
 
     this.ground = null;
@@ -343,6 +345,7 @@ class RenderManager {
     this._tankModelLoadsInFlight = new Set();
     this._tankModelReadyPromisesByPath = new Map();
     this._tankModelReadyResolversByPath = new Map();
+    this._audioBufferPromisesByPath = new Map();
     this._tankModelPath = '/obj/bzflag.obj';
     this.deathFollowTarget = null;
     this.deathFollowAnchor = null;
@@ -450,6 +453,33 @@ class RenderManager {
     this.moonLight = new THREE.DirectionalLight(0xffffff, 0.0);
     this.moonLight.castShadow = false;
     this.worldGroup.add(this.moonLight);
+  }
+
+  preloadAudioBuffer(path) {
+    if (!path) return Promise.resolve(null);
+    if (this._audioBufferPromisesByPath.has(path)) {
+      return this._audioBufferPromisesByPath.get(path);
+    }
+    if (!this.audioListener?.context) {
+      return Promise.reject(new Error('Audio context is not initialized'));
+    }
+
+    const promise = loadAudioBuffer(this.audioListener.context, path).catch((error) => {
+      this._audioBufferPromisesByPath.delete(path);
+      throw error;
+    });
+    this._audioBufferPromisesByPath.set(path, promise);
+    return promise;
+  }
+
+  async preloadGameplayAudio() {
+    const [teleportBuffer] = await Promise.all([
+      this.preloadAudioBuffer('/teleport.wav'),
+    ]);
+    this.teleportBuffer = teleportBuffer;
+    return {
+      teleportBuffer,
+    };
   }
 
   _getWorldGroupLocalMatrix(object) {
@@ -2831,6 +2861,18 @@ class RenderManager {
     sound.setBuffer(this.landBuffer);
     sound.setRefDistance(8);
     sound.setVolume(0.9);
+    if (position) sound.position.copy(position);
+    this.worldGroup.add(sound);
+    sound.play();
+    sound.source.onended = () => { this.worldGroup.remove(sound); };
+  }
+
+  playTeleportSound(position) {
+    if (!this.teleportBuffer) return;
+    const sound = new THREE.PositionalAudio(this.audioListener);
+    sound.setBuffer(this.teleportBuffer);
+    sound.setRefDistance(12);
+    sound.setVolume(0.6);
     if (position) sound.position.copy(position);
     this.worldGroup.add(sound);
     sound.play();

@@ -1008,6 +1008,10 @@ class Player {
     this.slideDirection = undefined;
     this.airVelocityX = 0;
     this.airVelocityZ = 0;
+    this.teleportReentryBlockTeleporterIndex = null;
+    this.teleportReentryBlockDistance = 0;
+    this.teleportReentryBlockUntil = 0;
+    this.teleportCooldownUntil = 0;
 
     // Keep-alive tracking
     this.lastPongTime = Date.now();
@@ -1170,6 +1174,10 @@ class Player {
     this.rotationSpeed = 0;
     this.airVelocityX = 0;
     this.airVelocityZ = 0;
+    this.teleportReentryBlockTeleporterIndex = null;
+    this.teleportReentryBlockDistance = 0;
+    this.teleportReentryBlockUntil = 0;
+    this.teleportCooldownUntil = 0;
   }
 
   getState() {
@@ -1196,6 +1204,7 @@ class Player {
       tankModel: this.tankModel,
       role: this.role,
       voiceMicEnabled: this.voiceMicEnabled,
+      teleportCooldownUntil: this.teleportCooldownUntil,
     };
   }
 
@@ -1409,12 +1418,34 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
     const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
 
     if (obs.type === 'box' || !obs.type) {
-      const distSquared = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
-      if (distSquared < tankRadius * tankRadius) {
-        if (!suppressLog) {
-          log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+      // Teleporter boxes are only solid on the frame. The inner active portal
+      // area must remain non-colliding so crossing can trigger teleport.
+      if (obs?.kind === 'teleporter') {
+        const dims = getShotTeleporterDims(obs);
+        const outerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.halfD);
+        if (outerDistSquared < tankRadius * tankRadius) {
+          const innerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.activeHalfD);
+          const activeBaseY = obstacleBase;
+          const activeTopY = obstacleBase + dims.activeH;
+          const overlapsActiveVertical = tankTop > (activeBaseY + epsilon) && y < (activeTopY - epsilon);
+          const inPortalInterior = overlapsActiveVertical && innerDistSquared < tankRadius * tankRadius;
+          if (inPortalInterior) {
+            continue;
+          }
+
+          if (!suppressLog) {
+            log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+          }
+          return obs;
         }
-        return obs;
+      } else {
+        const distSquared = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
+        if (distSquared < tankRadius * tankRadius) {
+          if (!suppressLog) {
+            log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
+          }
+          return obs;
+        }
       }
     } else if (obs.type === 'pyramid') {
       // Pyramid collision: check if tank top is under the sloped surface
@@ -1550,7 +1581,7 @@ function findValidSpawnPosition(tankRadius = 2) {
 }
 
 // Validate player movement
-function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velocityChanged = false) {
+function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velocityChanged = false, options = {}) {
   // Can't move while paused
   if (player.paused) {
     return false;
@@ -1615,7 +1646,8 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
   }
 
   // Check collision against the unified collider set (map objects + border colliders).
-  let collision = checkCollision(newX, newY, newZ, 2);
+  const ignoreTeleporters = options.ignoreTeleporters === true;
+  let collision = checkCollision(newX, newY, newZ, 2, { ignoreTeleporters });
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback to safe rejection.
@@ -2074,6 +2106,164 @@ function getShotTeleportDestinationFace(sourceFaceId) {
 }
 
 const SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE = 0.5;
+const PLAYER_TELEPORT_REENTRY_BLOCK_DISTANCE = 5.0;
+const PLAYER_TELEPORT_REENTRY_BLOCK_MIN_MS = 250;
+const PLAYER_TELEPORT_EXIT_EPSILON = 0.08;
+const PLAYER_TELEPORT_COOLDOWN_MS = 1000;
+
+function isPlayerTeleportReentryBlocked(player, teleporterIndex, now) {
+  if (!player || !Number.isInteger(teleporterIndex)) return false;
+  if (player.teleportReentryBlockTeleporterIndex !== teleporterIndex) return false;
+  return player.teleportReentryBlockDistance > 1e-6 || now < (player.teleportReentryBlockUntil || 0);
+}
+
+function decayPlayerTeleportReentryBlock(player, travelDistance, now) {
+  if (!player) return;
+  const moved = Math.max(0, Number(travelDistance) || 0);
+  player.teleportReentryBlockDistance = Math.max(0, (player.teleportReentryBlockDistance || 0) - moved);
+  if (player.teleportReentryBlockDistance <= 1e-6 && now >= (player.teleportReentryBlockUntil || 0)) {
+    player.teleportReentryBlockTeleporterIndex = null;
+    player.teleportReentryBlockDistance = 0;
+    player.teleportReentryBlockUntil = 0;
+  }
+}
+
+function isPointInsideTeleporterPortal(obs, x, y, z, tankRadius = 2) {
+  if (!obs || obs.kind !== 'teleporter') return false;
+  const obstacleBase = obs.baseY || 0;
+  const epsilon = 0.15;
+  const tankTop = y + tankRadius;
+  const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
+  const dims = getShotTeleporterDims(obs);
+  const innerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.activeHalfD);
+  const activeBaseY = obstacleBase;
+  const activeTopY = obstacleBase + dims.activeH;
+  const overlapsActiveVertical = tankTop > (activeBaseY + epsilon) && y < (activeTopY - epsilon);
+  return overlapsActiveVertical && innerDistSquared < tankRadius * tankRadius;
+}
+
+function applyPlayerTeleportMessage(player, sourceState, fromFaceId, toFaceId, now) {
+  if (!player || !sourceState || !Number.isInteger(fromFaceId) || !Number.isInteger(toFaceId)) {
+    return { ok: false, reason: 'invalid_packet' };
+  }
+
+  if (!Number.isFinite(sourceState.x) || !Number.isFinite(sourceState.y) || !Number.isFinite(sourceState.z)) {
+    return { ok: false, reason: 'invalid_source_state' };
+  }
+
+  const sourceRotation = Number.isFinite(sourceState.r) ? sourceState.r : player.rotation;
+  const sourceVerticalVelocity = Number.isFinite(sourceState.vv) ? sourceState.vv : player.verticalVelocity;
+  const sourceAirVelocityX = Number.isFinite(sourceState.vx) ? sourceState.vx : player.airVelocityX;
+  const sourceAirVelocityZ = Number.isFinite(sourceState.vz) ? sourceState.vz : player.airVelocityZ;
+  const hasSourceJumpDirection = sourceState.jd !== null && Number.isFinite(sourceState.jd);
+  const sourceJumpDirection = hasSourceJumpDirection ? sourceState.jd : player.jumpDirection;
+
+  if (now < (player.teleportCooldownUntil || 0)) {
+    return { ok: false, reason: 'cooldown' };
+  }
+
+  const expectedToFaceId = getShotTeleportDestinationFace(fromFaceId);
+  if (toFaceId !== expectedToFaceId) {
+    return { ok: false, reason: 'invalid_link' };
+  }
+
+  const sourceTeleporterIndex = Math.floor(fromFaceId / 2);
+  const destinationTeleporterIndex = Math.floor(toFaceId / 2);
+  const sourceFace = fromFaceId % 2;
+  const destinationFace = toFaceId % 2;
+  const sourceObs = TELEPORTER_OBSTACLES_BY_INDEX.get(sourceTeleporterIndex);
+  const destinationObs = TELEPORTER_OBSTACLES_BY_INDEX.get(destinationTeleporterIndex);
+  if (!sourceObs || !destinationObs) {
+    return { ok: false, reason: 'missing_teleporter' };
+  }
+
+  const deltaTime = Math.max(0, (now - player.lastUpdate) / 1000);
+  if (!validateMovement(player, sourceState.x, sourceState.y, sourceState.z, sourceRotation, deltaTime, true)) {
+    return { ok: false, reason: 'invalid_source_state' };
+  }
+
+  if (!isPointInsideTeleporterPortal(sourceObs, sourceState.x, sourceState.y, sourceState.z, 2)) {
+    return { ok: false, reason: 'not_in_source_portal' };
+  }
+
+  if (isPlayerTeleportReentryBlocked(player, sourceTeleporterIndex, now)) {
+    return { ok: false, reason: 'reentry_block' };
+  }
+
+  player.x = sourceState.x;
+  player.y = sourceState.y;
+  player.z = sourceState.z;
+  player.rotation = sourceRotation;
+  player.verticalVelocity = sourceVerticalVelocity;
+  player.airVelocityX = sourceAirVelocityX;
+  player.airVelocityZ = sourceAirVelocityZ;
+  player.jumpDirection = sourceJumpDirection;
+
+  const moveDirection = player.slideDirection !== undefined
+    ? player.slideDirection
+    : (player.jumpDirection !== null && player.jumpDirection !== undefined ? player.jumpDirection : player.rotation);
+  const dirIn = {
+    x: -Math.sin(moveDirection),
+    y: 0,
+    z: -Math.cos(moveDirection),
+  };
+
+  const transformed = transformShotThroughTeleporter(
+    { x: sourceState.x, y: sourceState.y, z: sourceState.z },
+    dirIn,
+    sourceObs,
+    sourceFace,
+    destinationObs,
+    destinationFace,
+  );
+
+  const outX = transformed.pointOut.x + transformed.dirOut.x * PLAYER_TELEPORT_EXIT_EPSILON;
+  const outY = Math.max(0, transformed.pointOut.y + transformed.dirOut.y * PLAYER_TELEPORT_EXIT_EPSILON);
+  const outZ = transformed.pointOut.z + transformed.dirOut.z * PLAYER_TELEPORT_EXIT_EPSILON;
+
+  const destinationCollision = checkCollision(outX, outY, outZ, 2, {
+    ignoreTeleporters: true,
+    suppressLog: true,
+  });
+  if (destinationCollision) {
+    return { ok: false, reason: 'blocked_exit' };
+  }
+
+  const radians1 = (sourceObs.rotation || 0) + (sourceFace === 0 ? 0 : Math.PI);
+  const radians2 = (destinationObs.rotation || 0) + (destinationFace === 1 ? 0 : Math.PI);
+  const rotateDelta = radians2 - radians1;
+
+  player.x = outX;
+  player.y = outY;
+  player.z = outZ;
+  player.rotation = normalizeAngle(player.rotation + rotateDelta);
+  if (player.slideDirection !== undefined) {
+    player.slideDirection = normalizeAngle(player.slideDirection + rotateDelta);
+  }
+  if (player.jumpDirection !== null && player.jumpDirection !== undefined) {
+    player.jumpDirection = normalizeAngle(player.jumpDirection + rotateDelta);
+  }
+  if (Number.isFinite(player.airVelocityX) && Number.isFinite(player.airVelocityZ)) {
+    const rotatedAirVelocity = rotateXZ(player.airVelocityX, player.airVelocityZ, rotateDelta);
+    player.airVelocityX = rotatedAirVelocity.x;
+    player.airVelocityZ = rotatedAirVelocity.z;
+  }
+
+  player.teleportReentryBlockTeleporterIndex = destinationTeleporterIndex;
+  player.teleportReentryBlockDistance = Math.max(
+    PLAYER_TELEPORT_REENTRY_BLOCK_DISTANCE,
+    (getShotTeleporterDims(destinationObs).halfW * 2) + 0.25,
+  );
+  player.teleportReentryBlockUntil = now + PLAYER_TELEPORT_REENTRY_BLOCK_MIN_MS;
+  player.teleportCooldownUntil = now + PLAYER_TELEPORT_COOLDOWN_MS;
+  player.lastUpdate = now;
+
+  return {
+    ok: true,
+    fromFaceId,
+    toFaceId,
+  };
+}
 
 function traceShotThroughTeleporters(start, dir, travelDistance, projectileId, reentryBlockTeleporterIndex = null, reentryBlockDistance = 0) {
   let point = { ...start };
@@ -2161,7 +2351,7 @@ function traceShotThroughTeleporters(start, dir, travelDistance, projectileId, r
     blockedTeleporterIndex = destTeleporterIndex;
     blockedDistance = Math.max(
       SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE,
-      (getShotTeleporterDims(destObs).halfW * 2) + 0.05,
+      (getShotTeleporterDims(destObs).activeHalfD * 2) + 0.05,
     );
     teleports++;
 
@@ -2616,7 +2806,67 @@ wss.on('connection', (ws, req) => {
           // Log debug messages from clients
           const payloadName = typeof message.name === 'string' ? message.name.trim() : '';
           const debugFrom = payloadName || player.name || `Player ${player.playerNumber}`;
-          log(`[DEBUG from ${debugFrom}] ${message.message || ''}`);
+          log(`[DEBUG] Player "${debugFrom}": ${message.message || ''}`);
+          break;
+        }
+        case 'tp': {
+          if (player.role === 'spectator') break;
+
+          const now = Date.now();
+          const sourceState = {
+            x: Number(message.x),
+            y: Number(message.y),
+            z: Number(message.z),
+            r: Number(message.r),
+            vv: Number(message.vv),
+            vx: Number(message.vx),
+            vz: Number(message.vz),
+            jd: message.jd === null ? null : Number(message.jd),
+          };
+          const fromFaceId = Number(message.fromFaceId);
+          const toFaceId = Number(message.toFaceId);
+          const teleportResult = applyPlayerTeleportMessage(player, sourceState, fromFaceId, toFaceId, now);
+
+          if (!teleportResult.ok) {
+            ws.send(JSON.stringify({
+              type: 'positionCorrection',
+              x: player.x,
+              y: player.y,
+              z: player.z,
+              r: player.rotation,
+              vv: player.verticalVelocity || 0,
+            }));
+            if (teleportResult.reason !== 'cooldown' && teleportResult.reason !== 'reentry_block') {
+              log(`[PLAYER_TP_REJECT] player=${player.id} fromFace=${fromFaceId} toFace=${toFaceId} reason=${teleportResult.reason}`);
+            }
+            break;
+          }
+
+          const ptPacket = {
+            type: 'pt',
+            id: player.id,
+            x: player.x,
+            y: player.y,
+            z: player.z,
+            r: player.rotation,
+            fs: player.forwardSpeed || 0,
+            rs: player.rotationSpeed || 0,
+            vv: player.verticalVelocity || 0,
+            vx: player.airVelocityX || 0,
+            vz: player.airVelocityZ || 0,
+            fromFaceId: teleportResult.fromFaceId,
+            toFaceId: teleportResult.toFaceId,
+            jd: player.jumpDirection,
+          };
+          if (player.slideDirection !== undefined) {
+            ptPacket.d = player.slideDirection;
+          }
+
+          broadcastAll(ptPacket);
+          log(
+            `[PLAYER_TP] player=${player.id} srcFace=${teleportResult.fromFaceId} ` +
+            `dstFace=${teleportResult.toFaceId} pos=(${player.x.toFixed(2)},${player.y.toFixed(2)},${player.z.toFixed(2)})`
+          );
           break;
         }
         case 'm': {
@@ -2628,10 +2878,10 @@ wss.on('connection', (ws, req) => {
           // DON'T update player.lastUpdate here - it breaks extrapolation in validateMovement!
 
           // Only accept new compact field names
-          const x = Number(message.x);
-          const y = Number(message.y);
-          const z = Number(message.z);
-          const r = Number(message.r);
+          let x = Number(message.x);
+          let y = Number(message.y);
+          let z = Number(message.z);
+          let r = Number(message.r);
           const reverseSpeedRatio = Number.isFinite(GAME_CONFIG.REVERSE_SPEED_RATIO)
             ? GAME_CONFIG.REVERSE_SPEED_RATIO
             : 0.5;
@@ -2663,10 +2913,20 @@ wss.on('connection', (ws, req) => {
                       rs = requestedRS;
                     }
 
-          const d = message.d !== undefined ? Number(message.d) : undefined; // Optional slide direction
-          const vx = message.vx !== undefined ? Number(message.vx) : undefined;
-          const vz = message.vz !== undefined ? Number(message.vz) : undefined;
+          let d = message.d !== undefined ? Number(message.d) : undefined; // Optional slide direction
+          let vx = message.vx !== undefined ? Number(message.vx) : undefined;
+          let vz = message.vz !== undefined ? Number(message.vz) : undefined;
           const hasAirVelocity = Number.isFinite(vx) && Number.isFinite(vz);
+
+          const previousState = {
+            x: player.x,
+            y: player.y,
+            z: player.z,
+            r: player.rotation,
+          };
+
+          const teleportReentryActive = player.teleportReentryBlockTeleporterIndex !== null
+            && (player.teleportReentryBlockDistance > 1e-6 || now < (player.teleportReentryBlockUntil || 0));
 
           // Track jump direction for extrapolation
           const oldVV = player.verticalVelocity || 0;
@@ -2702,7 +2962,16 @@ wss.on('connection', (ws, req) => {
 
           // Use actual deltaTime for validation since we compare to extrapolated position
           // The extrapolated position accounts for the full time interval using OLD velocities
-          if (validateMovement(player, x, y, z, r, deltaTime, velocityChanged)) {
+          if (validateMovement(
+            player,
+            x,
+            y,
+            z,
+            r,
+            deltaTime,
+            velocityChanged,
+            { ignoreTeleporters: teleportReentryActive }
+          )) {
             // Validation passed - now update jumpDirection
             if (isJumpStart) {
               player.jumpDirection = r; // Store rotation at jump start
@@ -2733,6 +3002,10 @@ wss.on('connection', (ws, req) => {
               player.airVelocityX = 0;
               player.airVelocityZ = 0;
             }
+
+            const movedPlanarDistance = Math.hypot(player.x - previousState.x, player.z - previousState.z);
+            decayPlayerTeleportReentryBlock(player, movedPlanarDistance, now);
+
             player.lastUpdate = now; // Update timestamp AFTER accepting the move
 
             const pmPacket = {
@@ -2883,6 +3156,17 @@ wss.on('connection', (ws, req) => {
           player.verticalVelocity = 0;
           player.isJumping = false;
           player.onObstacle = false;
+          player.forwardSpeed = 0;
+          player.rotationSpeed = 0;
+          player.jumpDirection = null;
+          player.slideDirection = undefined;
+          player.airVelocityX = 0;
+          player.airVelocityZ = 0;
+          player.teleportReentryBlockTeleporterIndex = null;
+          player.teleportReentryBlockDistance = 0;
+          player.teleportReentryBlockUntil = 0;
+          player.teleportCooldownUntil = 0;
+          player.lastUpdate = Date.now();
           player.deaths = 0;
           player.kills = 0;
           if (message.isMobile) {

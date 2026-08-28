@@ -580,6 +580,9 @@ async function prepareInitialRender(message, sequenceId) {
     '/textures/mountain4.png',
     '/textures/mountain5.png',
   ];
+  const audioPaths = [
+    '/teleport.wav',
+  ];
 
   setLoadingOverlayState({
     visible: true,
@@ -634,16 +637,17 @@ async function prepareInitialRender(message, sequenceId) {
     visible: true,
     progress: 0.55,
     status: 'Loading vehicle systems...',
-    detail: 'Preparing tank models and textures',
+    detail: 'Preparing tank models, textures, and audio',
   });
 
   try {
     await Promise.all([
       ...modelPaths.map((path) => renderManager.whenTankModelReady(path)),
       ...texturePaths.map((path) => renderManager.preloadImage(path).catch(() => null)),
+      renderManager.preloadGameplayAudio(),
     ]);
   } catch (error) {
-    console.warn('Render asset preload failed:', error);
+    console.warn('Render asset preload failed:', error, audioPaths);
   }
   if (sequenceId !== activeInitSequence) return false;
 
@@ -2913,6 +2917,11 @@ function handleServerMessage(message) {
           myTank.userData.airVelocityX = message.player.airVelocityX || 0;
           myTank.userData.airVelocityZ = message.player.airVelocityZ || 0;
           myTank.visible = true;
+          localTeleportReentryBlockTeleporterIndex = null;
+          localTeleportReentryBlockDistance = 0;
+          localTeleportReentryBlockUntil = 0;
+          localTeleportCooldownUntil = 0;
+          suppressLocalTeleportFxUntil = 0;
 
           if (!wasAliveBefore && message.player.health > 0) {
             triggerSpawnEffectForTank(myTank, message.player.color);
@@ -2960,7 +2969,9 @@ function handleServerMessage(message) {
       }
       break;
 
-    case 'pm': {
+    case 'pm':
+    case 'pt': {
+      const isTeleportPacket = message.type === 'pt';
       // Compact playerMoved message
       const tank = tanks.get(message.id);
       if (tank) {
@@ -2989,6 +3000,10 @@ function handleServerMessage(message) {
         tank.userData.airVelocityZ = Number.isFinite(message.vz)
           ? message.vz
           : tank.userData.airVelocityZ || 0;
+
+        if (isTeleportPacket && message.jd !== undefined) {
+          tank.userData.jumpDirection = message.jd;
+        }
 
         // Detect jump start (record jump direction)
         if (oldVerticalVel <= 0 && message.vv > 10) {
@@ -3041,6 +3056,30 @@ function handleServerMessage(message) {
         } else {
           clearJumpPredictionDebug(tank);
         }
+
+        if (isTeleportPacket) {
+          const suppressLocalFx = message.id === myPlayerId && performance.now() < suppressLocalTeleportFxUntil;
+          if (!suppressLocalFx) {
+            renderManager.playTeleportSound(tank.position);
+            triggerSpawnEffectForTank(tank);
+          }
+
+          if (message.id === myPlayerId) {
+            playerX = message.x;
+            playerY = message.y;
+            playerZ = message.z;
+            playerRotation = message.r;
+            jumpDirection = tank.userData.jumpDirection ?? null;
+            myJumpDirection = jumpDirection;
+            localTeleportCooldownUntil = Date.now() + PLAYER_TELEPORT_COOLDOWN_MS;
+            lastSentForwardSpeed = Number.isFinite(message.fs) ? message.fs : lastSentForwardSpeed;
+            lastSentRotationSpeed = Number.isFinite(message.rs) ? message.rs : lastSentRotationSpeed;
+            lastSentVerticalVelocity = Number.isFinite(message.vv) ? message.vv : lastSentVerticalVelocity;
+            lastSentAirVelocityX = Number.isFinite(message.vx) ? message.vx : lastSentAirVelocityX;
+            lastSentAirVelocityZ = Number.isFinite(message.vz) ? message.vz : lastSentAirVelocityZ;
+            lastSentTime = performance.now();
+          }
+        }
       }
       break;
     }
@@ -3063,6 +3102,11 @@ function handleServerMessage(message) {
         myTank.userData.airVelocityZ = 0;
         myTank.userData.jumpDirection = null;
         myTank.userData.slideDirection = undefined;
+        localTeleportReentryBlockTeleporterIndex = null;
+        localTeleportReentryBlockDistance = 0;
+        localTeleportReentryBlockUntil = 0;
+        localTeleportCooldownUntil = 0;
+        suppressLocalTeleportFxUntil = 0;
         clearJumpPredictionDebug(myTank);
         deathFollowTarget = null;
         renderManager.deathFollowTarget = null;
@@ -3650,7 +3694,22 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
     if (y >= obstacleTop - epsilon) continue;
 
     if (obs.type === 'box' || !obs.type) {
-      if (distSquared < tankRadius * tankRadius) {
+      // Teleporters only collide on their frame; the active inner slab must
+      // be pass-through so client movement does not slide before teleport.
+      if (obs?.kind === 'teleporter') {
+        const dims = getShotTeleporterDims(obs);
+        const outerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.halfD).distSquared;
+        if (outerDistSquared < tankRadius * tankRadius) {
+          const innerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.activeHalfD).distSquared;
+          const activeBaseY = obstacleBase;
+          const activeTopY = obstacleBase + dims.activeH;
+          const overlapsActiveVertical = tankTop > (activeBaseY + epsilon) && y < (activeTopY - epsilon);
+          const inPortalInterior = overlapsActiveVertical && innerDistSquared < tankRadius * tankRadius;
+          if (!inPortalInterior) {
+            return { type: 'collision', obstacle: obs };
+          }
+        }
+      } else if (distSquared < tankRadius * tankRadius) {
         return { type: 'collision', obstacle: obs };
       }
     } else if (obs.type === 'pyramid') {
@@ -4689,8 +4748,17 @@ let jumpDirection = null; // Stores the direction at jump start
 let currentSupportObstacle = null;
 let smoothedForwardInput = 0;
 let smoothedRotationInput = 0;
+let localTeleportReentryBlockTeleporterIndex = null;
+let localTeleportReentryBlockDistance = 0;
+let localTeleportReentryBlockUntil = 0;
+let localTeleportCooldownUntil = 0;
+let suppressLocalTeleportFxUntil = 0;
 const LANDING_SQUISH_FACTOR = 1.0;
 const LANDING_SQUISH_TIME = 1.0;
+const PLAYER_TELEPORT_REENTRY_BLOCK_DISTANCE = 5.0;
+const PLAYER_TELEPORT_REENTRY_BLOCK_MIN_MS = 250;
+const PLAYER_TELEPORT_EXIT_EPSILON = 0.08;
+const PLAYER_TELEPORT_COOLDOWN_MS = 1000;
 
 function ensureLandingSquishState(tank) {
   if (!tank?.userData) return;
@@ -4795,12 +4863,158 @@ function formatDebugNumber(value) {
   return Number.isFinite(value) ? value.toFixed(2) : 'NaN';
 }
 
+function normalizeAngle(angle) {
+  let normalized = Number(angle) || 0;
+  while (normalized > Math.PI) normalized -= Math.PI * 2;
+  while (normalized < -Math.PI) normalized += Math.PI * 2;
+  return normalized;
+}
+
 function triggerLandingFeedback(tank, impactSpeed = 0, { local = false } = {}) {
   if (!tank?.position) return;
   const clampedImpact = Math.max(0, impactSpeed || 0);
   const intensity = 1.0;
   applyLandingSquish(tank, clampedImpact);
   renderManager.createLandingEffect(tank.position, intensity, { local });
+}
+
+function decayLocalTeleportReentryBlock(distanceMoved, nowMs) {
+  const moved = Math.max(0, Number(distanceMoved) || 0);
+  localTeleportReentryBlockDistance = Math.max(0, localTeleportReentryBlockDistance - moved);
+  if (localTeleportReentryBlockDistance <= 1e-6 && nowMs >= localTeleportReentryBlockUntil) {
+    localTeleportReentryBlockTeleporterIndex = null;
+    localTeleportReentryBlockDistance = 0;
+    localTeleportReentryBlockUntil = 0;
+  }
+}
+
+function isLocalTeleportReentryBlocked(teleporterIndex, nowMs) {
+  if (!Number.isInteger(teleporterIndex)) return false;
+  if (localTeleportReentryBlockTeleporterIndex !== teleporterIndex) return false;
+  return localTeleportReentryBlockDistance > 1e-6 || nowMs < localTeleportReentryBlockUntil;
+}
+
+function predictLocalPlayerTeleport(startState, endState, nowMs) {
+  if (nowMs < localTeleportCooldownUntil) {
+    return {
+      applied: false,
+      state: endState,
+      rotateDelta: 0,
+      destinationObstacle: null,
+      destinationTeleporterIndex: null,
+      fromFaceId: null,
+      toFaceId: null,
+    };
+  }
+
+  const deltaX = endState.x - startState.x;
+  const deltaY = endState.y - startState.y;
+  const deltaZ = endState.z - startState.z;
+  const segmentLength = Math.hypot(deltaX, deltaY, deltaZ);
+  const planarDistance = Math.hypot(deltaX, deltaZ);
+  if (segmentLength <= 1e-6) {
+    return {
+      applied: false,
+      state: endState,
+      rotateDelta: 0,
+      destinationObstacle: null,
+      destinationTeleporterIndex: null,
+      fromFaceId: null,
+      toFaceId: null,
+    };
+  }
+
+  const start = { x: startState.x, y: startState.y, z: startState.z };
+  const end = { x: endState.x, y: endState.y, z: endState.z };
+
+  let earliest = null;
+  for (const obs of TELEPORTER_OBSTACLES_BY_INDEX.values()) {
+    if (isLocalTeleportReentryBlocked(obs.teleporterIndex, nowMs)) continue;
+    const crossing = getShotTeleporterCrossing(start, end, obs);
+    if (!crossing) continue;
+    if (!earliest || crossing.t < earliest.crossing.t) {
+      earliest = { obs, crossing };
+    }
+  }
+
+  if (!earliest) {
+    decayLocalTeleportReentryBlock(planarDistance, nowMs);
+    return {
+      applied: false,
+      state: endState,
+      rotateDelta: 0,
+      destinationObstacle: null,
+      destinationTeleporterIndex: null,
+      fromFaceId: null,
+      toFaceId: null,
+    };
+  }
+
+  const sourceFaceId = earliest.crossing.sourceFaceId;
+  const sourceFace = sourceFaceId % 2;
+  const destinations = TELEPORTER_LINKS_BY_SOURCE_FACE.get(sourceFaceId) || [];
+  const destFaceId = destinations.length > 0
+    ? destinations[0]
+    : ((Math.floor(sourceFaceId / 2) * 2) + (1 - (sourceFaceId % 2)));
+  const destTeleporterIndex = Math.floor(destFaceId / 2);
+  const destFace = destFaceId % 2;
+  const destObs = TELEPORTER_OBSTACLES_BY_INDEX.get(destTeleporterIndex);
+  if (!destObs) {
+    decayLocalTeleportReentryBlock(planarDistance, nowMs);
+    return {
+      applied: false,
+      state: endState,
+      rotateDelta: 0,
+      destinationObstacle: null,
+      destinationTeleporterIndex: null,
+      fromFaceId: null,
+      toFaceId: null,
+    };
+  }
+
+  const dirIn = {
+    x: deltaX / segmentLength,
+    y: deltaY / segmentLength,
+    z: deltaZ / segmentLength,
+  };
+  const transformed = transformShotThroughTeleporter(
+    earliest.crossing.point,
+    dirIn,
+    earliest.obs,
+    sourceFace,
+    destObs,
+    destFace,
+  );
+
+  const exitAdvance = PLAYER_TELEPORT_EXIT_EPSILON;
+  const outState = {
+    ...endState,
+    x: transformed.pointOut.x + transformed.dirOut.x * exitAdvance,
+    y: Math.max(0, transformed.pointOut.y + transformed.dirOut.y * exitAdvance),
+    z: transformed.pointOut.z + transformed.dirOut.z * exitAdvance,
+  };
+
+  const radians1 = (earliest.obs.rotation || 0) + (sourceFace === 0 ? 0 : Math.PI);
+  const radians2 = (destObs.rotation || 0) + (destFace === 1 ? 0 : Math.PI);
+  const rotateDelta = radians2 - radians1;
+
+  localTeleportReentryBlockTeleporterIndex = destTeleporterIndex;
+  localTeleportReentryBlockDistance = Math.max(
+    PLAYER_TELEPORT_REENTRY_BLOCK_DISTANCE,
+    (getShotTeleporterDims(destObs).halfW * 2) + 0.25,
+  );
+  localTeleportReentryBlockUntil = nowMs + PLAYER_TELEPORT_REENTRY_BLOCK_MIN_MS;
+  localTeleportCooldownUntil = nowMs + PLAYER_TELEPORT_COOLDOWN_MS;
+
+  return {
+    applied: true,
+    state: outState,
+    rotateDelta,
+    destinationObstacle: destObs,
+    destinationTeleporterIndex: destTeleporterIndex,
+    fromFaceId: sourceFaceId,
+    toFaceId: destFaceId,
+  };
 }
 
 function handleInputEvents() {
@@ -4922,6 +5136,7 @@ function handleMotion(deltaTime) {
   }
 
   const oldX = playerX;
+  const oldY = playerY;
   const oldZ = playerZ;
   const oldRotation = playerRotation;
 
@@ -5000,7 +5215,52 @@ function handleMotion(deltaTime) {
     if (myTank) renderManager.playLocalJumpSound(myTank.position);
   }
 
-  const result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
+  let result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
+  const localNowMs = Date.now();
+  let teleportedThisFrame = false;
+  let predictedTeleportRotateDelta = 0;
+  let predictedTeleportPacket = null;
+  const sourceRotationBeforeTeleport = normalizeAngle(movementRotationInput * rotSpeed + oldRotation);
+  if (result.moved && !result.startedFalling && !result.hitObstacleBottom) {
+    const predictedTeleport = predictLocalPlayerTeleport(
+      { x: oldX, y: oldY, z: oldZ },
+      { x: result.x, y: result.y, z: result.z },
+      localNowMs,
+    );
+    if (predictedTeleport.applied) {
+      const sourceState = {
+        x: result.x,
+        y: result.y,
+        z: result.z,
+      };
+      teleportedThisFrame = true;
+      predictedTeleportRotateDelta = predictedTeleport.rotateDelta;
+      result = {
+        ...result,
+        x: predictedTeleport.state.x,
+        y: predictedTeleport.state.y,
+        z: predictedTeleport.state.z,
+        moved: true,
+        altered: true,
+      };
+      predictedTeleportPacket = {
+        type: 'tp',
+        fromFaceId: predictedTeleport.fromFaceId,
+        toFaceId: predictedTeleport.toFaceId,
+        x: Number(sourceState.x.toFixed(2)),
+        y: Number(sourceState.y.toFixed(2)),
+        z: Number(sourceState.z.toFixed(2)),
+        r: Number(sourceRotationBeforeTeleport.toFixed(2)),
+        vv: Number((myTank.userData.verticalVelocity || 0).toFixed(2)),
+        vx: Number((myTank.userData.airVelocityX || 0).toFixed(2)),
+        vz: Number((myTank.userData.airVelocityZ || 0).toFixed(2)),
+        jd: jumpDirection !== null && jumpDirection !== undefined
+          ? Number(jumpDirection.toFixed(2))
+          : null,
+      };
+      forceMoveSend = true;
+    }
+  }
 
   if (result.hitObstacleBottom) {
     // Hit obstacle bottom while jumping upward - reverse to falling
@@ -5050,8 +5310,35 @@ function handleMotion(deltaTime) {
     playerZ = result.z;
     // Always update playerRotation for visual tank rotation
     playerRotation = movementRotationInput * rotSpeed + oldRotation;
+    if (teleportedThisFrame) {
+      playerRotation = normalizeAngle(playerRotation + predictedTeleportRotateDelta);
+      if (jumpDirection !== null && jumpDirection !== undefined) {
+        jumpDirection = normalizeAngle(jumpDirection + predictedTeleportRotateDelta);
+        myJumpDirection = jumpDirection;
+      }
+
+      const rotatedAirVelocity = rotateXZ(
+        myTank.userData.airVelocityX || 0,
+        myTank.userData.airVelocityZ || 0,
+        predictedTeleportRotateDelta,
+      );
+      setAirVelocity(myTank, rotatedAirVelocity.x, rotatedAirVelocity.z);
+      myTank.userData.slideDirection = undefined;
+    }
     myTank.position.set(playerX, playerY, playerZ);
     myTank.rotation.y = playerRotation;
+
+    if (teleportedThisFrame) {
+      renderManager.playTeleportSound(myTank.position);
+      triggerSpawnEffectForTank(myTank);
+      suppressLocalTeleportFxUntil = performance.now() + 250;
+
+      // Match BZFlag semantics: explicit teleport event is sent before
+      // any subsequent movement packet generated this frame.
+      if (predictedTeleportPacket && ws && ws.readyState === WebSocket.OPEN) {
+        sendToServer(predictedTeleportPacket);
+      }
+    }
 
     // Store jumpDirection AFTER rotation update so it matches packet r value
     if (jumpStarted) {
@@ -5094,14 +5381,21 @@ function handleMotion(deltaTime) {
       const angleDiff = Math.abs(((actualDirection - expectedDirection + Math.PI) % (Math.PI * 2)) - Math.PI);
 
       // If actual direction differs from expected by more than 0.01 radians, include it
-      if (angleDiff > 0.01) {
+      if (!teleportedThisFrame && angleDiff > 0.01) {
         slideDirection = actualDirection;
       }
     }
   }
 
+  if (!teleportedThisFrame) {
+    decayLocalTeleportReentryBlock(Math.hypot(actualDeltaX, actualDeltaZ), localNowMs);
+  }
+
   if ((isInAir || jumpStarted || fallStarted) && deltaTime > 0) {
-    if (result.moved && result.altered) {
+    if (teleportedThisFrame) {
+      // Preserve the rotated airborne velocity through teleports. The portal
+      // displacement is not physical travel and would wildly overstate speed.
+    } else if (result.moved && result.altered) {
       const newAirVelocityX = trajectoryDeltaX / deltaTime;
       const newAirVelocityZ = trajectoryDeltaZ / deltaTime;
       const airVelocityDelta = Math.hypot(newAirVelocityX - priorAirVelocityX, newAirVelocityZ - priorAirVelocityZ);
@@ -5556,7 +5850,7 @@ function traceShotThroughTeleporters(start, dir, travelDistance, reentryBlockTel
     blockedTeleporterIndex = destTeleporterIndex;
     blockedDistance = Math.max(
       SHOT_TELEPORT_REENTRY_BLOCK_DISTANCE,
-      (getShotTeleporterDims(destObs).halfW * 2) + 0.05,
+      (getShotTeleporterDims(destObs).activeHalfD * 2) + 0.05,
     );
     teleports++;
   }
