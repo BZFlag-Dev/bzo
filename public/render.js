@@ -71,6 +71,8 @@ const BZFLAG_TANK_LENGTH = 6.0;
 const BZFLAG_SHOT_EXPLOSION_SIZE = 1.2 * BZFLAG_TANK_LENGTH;
 const BZFLAG_SHOT_EXPLOSION_DURATION = 0.8;
 const BZFLAG_SHOT_EXPLOSION_LIGHT_FADE_START_RATIO = 0.7;
+const PROJECTED_SHADOW_MIN_LIGHT_Y = 0.05;
+const PROJECTED_SHADOW_DIRECTION_EPSILON_SQ = 1e-6;
 
 class RenderManager {
   _getVerticalFovForAspect(aspect) {
@@ -497,6 +499,46 @@ class RenderManager {
   // --- Projected Planar Shadows (Stencil-style) ---
   // Build each shadow in worldGroup-local space so XR can move the whole world
   // without applying the camera transform to the shadow twice.
+  _getProjectedShadowDirection(lightDirection) {
+    if (!lightDirection) return null;
+
+    const dir = lightDirection.clone();
+    const lengthSq = dir.lengthSq();
+    if (!Number.isFinite(lengthSq) || lengthSq < Number.EPSILON) return null;
+
+    dir.normalize();
+    // A light at or below the horizon would produce an unbounded or inverted
+    // projection. Keep the last valid shadow until the light rises again.
+    if (!Number.isFinite(dir.y) || dir.y <= PROJECTED_SHADOW_MIN_LIGHT_Y) return null;
+    return dir;
+  }
+
+  _updateProjectedShadowMesh(shadowMesh, sourceMesh, lightDirection) {
+    if (!shadowMesh?.geometry || !sourceMesh?.geometry) return false;
+
+    const localMatrix = this._getWorldGroupLocalMatrix(sourceMesh);
+    const sourcePosAttr = sourceMesh.geometry.getAttribute('position');
+    const shadowPosAttr = shadowMesh.geometry.getAttribute('position');
+    const dir = this._getProjectedShadowDirection(lightDirection);
+    if (!localMatrix || !sourcePosAttr || !shadowPosAttr || sourcePosAttr.count !== shadowPosAttr.count || !dir) {
+      return false;
+    }
+
+    const temp = new THREE.Vector3();
+    for (let i = 0; i < sourcePosAttr.count; ++i) {
+      temp.set(sourcePosAttr.getX(i), sourcePosAttr.getY(i), sourcePosAttr.getZ(i));
+      temp.applyMatrix4(localMatrix);
+      const t = temp.y / dir.y;
+      temp.x -= t * dir.x;
+      temp.y = 0.01;
+      temp.z -= t * dir.z;
+      shadowPosAttr.setXYZ(i, temp.x, temp.y, temp.z);
+    }
+
+    shadowPosAttr.needsUpdate = true;
+    return true;
+  }
+
   _createProjectedShadowMesh(sourceMesh, lightDirection) {
     if (!sourceMesh.geometry) return null;
 
@@ -505,14 +547,18 @@ class RenderManager {
 
     const shadowGeo = sourceMesh.geometry.clone();
     const posAttr = shadowGeo.getAttribute('position');
-    const dir = lightDirection.clone().normalize();
+    const dir = this._getProjectedShadowDirection(lightDirection);
+    if (!posAttr || !dir) {
+      shadowGeo.dispose();
+      return null;
+    }
     const temp = new THREE.Vector3();
 
     for (let i = 0; i < posAttr.count; ++i) {
       temp.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
       temp.applyMatrix4(localMatrix);
       // Project to ground (y=0) along -dir
-      const t = temp.y / (dir.y !== 0 ? dir.y : 1e-6);
+      const t = temp.y / dir.y;
       temp.x = temp.x - t * dir.x;
       temp.y = 0.01; // Slightly above ground to avoid z-fighting
       temp.z = temp.z - t * dir.z;
@@ -550,6 +596,9 @@ class RenderManager {
     }
     // Remove any previous shadow
     if (mesh.userData.shadowMesh) {
+      if (this._updateProjectedShadowMesh(mesh.userData.shadowMesh, mesh, lightDirection)) {
+        return;
+      }
       this.worldGroup.remove(mesh.userData.shadowMesh);
       mesh.userData.shadowMesh.geometry.dispose();
       mesh.userData.shadowMesh.material.dispose();
@@ -570,10 +619,11 @@ class RenderManager {
   updateProjectedShadows(tankMeshes = []) {
     // Use sun or moon depending on which is visible
     const light = (this.sunLight && this.sunLight.intensity > 0.5) ? this.sunLight : this.moonLight;
-    const dir = light ? light.position.clone().normalize() : new THREE.Vector3(1, -2, 1).normalize();
+    const dir = this._getProjectedShadowDirection(light?.position);
+    if (!dir) return;
 
     // --- Obstacles: only update if light direction changed ---
-    if (!this._lastObstacleShadowDir || !dir.equals(this._lastObstacleShadowDir)) {
+    if (!this._lastObstacleShadowDir || dir.distanceToSquared(this._lastObstacleShadowDir) > PROJECTED_SHADOW_DIRECTION_EPSILON_SQ) {
       for (const mesh of this.obstacleMeshes) {
         this._addProjectedShadowForMesh(mesh, dir);
       }
