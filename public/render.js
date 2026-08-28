@@ -2780,6 +2780,7 @@ class RenderManager {
     const sprite = new THREE.Sprite(material);
     sprite.position.copy(position);
     sprite.scale.set(BZFLAG_SHOT_EXPLOSION_SIZE, BZFLAG_SHOT_EXPLOSION_SIZE, 1);
+    sprite.renderOrder = GROUND_GRID_RENDER_ORDER + 2;
     this.worldGroup.add(sprite);
 
     let light = null;
@@ -3181,6 +3182,7 @@ class RenderManager {
 
     const head = new THREE.Sprite(headMaterial);
     head.scale.set(1.35, 1.35, 1);
+    head.renderOrder = GROUND_GRID_RENDER_ORDER + 1;
 
     const dir = new THREE.Vector3(data.dirX || 0, 0, data.dirZ || -1);
     if (dir.lengthSq() < 0.0001) {
@@ -3212,11 +3214,13 @@ class RenderManager {
       const segment = new THREE.Sprite(segmentMaterial);
       const scale = 0.78 - (i * 0.08);
       segment.scale.set(scale, scale, 1);
+      segment.renderOrder = GROUND_GRID_RENDER_ORDER + 1;
       const distance = 0.34 + (i * 0.28);
       segment.position.set(-dir.x * distance, 0, -dir.z * distance);
       projectile.add(segment);
       tailSegments.push(segment);
     }
+    projectile.renderOrder = GROUND_GRID_RENDER_ORDER + 1;
     projectile.add(head);
     projectile.userData = {
       dirX: data.dirX,

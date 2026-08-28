@@ -15,6 +15,7 @@ let xrInputSources = new Map(); // Map of controller input source ID -> controll
 let xrSessionLifecycle = null;
 let xrStartPromise = null;
 let xrEndPromise = null;
+const xrStateSubscribers = new Set();
 
 export const xrState = {
   enabled: false,
@@ -24,6 +25,29 @@ export const xrState = {
   frameCounter: 0,
 };
 
+export function getXRStateSnapshot() {
+  return {
+    enabled: Boolean(xrEnabled),
+    isSupported: Boolean(xrSupported || xrState.isSupported),
+    mode: xrMode,
+    headPose: xrState.headPose,
+    frameCounter: xrState.frameCounter,
+  };
+}
+
+export function subscribeToXRState(listener) {
+  if (typeof listener !== 'function') {
+    throw new TypeError('XR state listener must be a function');
+  }
+
+  xrStateSubscribers.add(listener);
+  listener(getXRStateSnapshot());
+
+  return () => {
+    xrStateSubscribers.delete(listener);
+  };
+}
+
 // Send debug message through app-wide logger in client.js
 export function debugLog(message) {
   if (typeof window !== 'undefined' && typeof window.gameDebugLog === 'function') {
@@ -31,12 +55,10 @@ export function debugLog(message) {
   }
 }
 
-function publishSessionState(enabled) {
-  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
-  if (typeof window.CustomEvent === 'function') {
-    window.dispatchEvent(new window.CustomEvent('webxrsessionchange', {
-      detail: { enabled: Boolean(enabled), mode: xrMode },
-    }));
+function publishSessionState() {
+  const snapshot = getXRStateSnapshot();
+  for (const listener of [...xrStateSubscribers]) {
+    listener(snapshot);
   }
 }
 
@@ -140,7 +162,7 @@ async function startXRSession(renderer, animationCallback) {
 
     xrEnabled = true;
     xrState.enabled = true;
-    publishSessionState(true);
+    publishSessionState();
 
     // Set up the XR animation loop
     if (animationCallback) {
@@ -278,7 +300,7 @@ function resetXRState() {
   xrState.frameCounter = 0;
   xrInputSources.clear();
   xrState.controllers.clear();
-  publishSessionState(false);
+  publishSessionState();
 }
 
 // Store reference to reset animation loop
@@ -554,5 +576,5 @@ export async function toggleXRSession(renderer, animationCallback) {
 }
 
 export function isXREnabled() {
-  return xrEnabled;
+  return getXRStateSnapshot().enabled;
 }
