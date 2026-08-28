@@ -2532,50 +2532,65 @@ wss.on('connection', (ws, req) => {
 
       switch (message.type) {
 
-        case 'chat': {
-          // Ensure 'to' field exists
-          const targetId = typeof message.to === 'number' ? message.to : 0;
+        case 'message': {
+          const rawTarget = message.dst ?? message.to;
+          const isAllTarget = rawTarget === 0 || rawTarget === '0' || rawTarget === null || rawTarget === undefined || rawTarget === '';
+          const isServerTarget = rawTarget === -1 || rawTarget === '-1';
+          const targetId = isAllTarget || isServerTarget ? Number(rawTarget) : String(rawTarget);
           const fromId = player.id;
           const fromName = player.name;
+          const msgType = message.msgType === 'action' ? 'action' : 'chat';
+          const text = typeof message.text === 'string' ? message.text.trim() : '';
+          if (text.length === 0) break;
+
           function getPlayerName(id) {
             if (id === 0) return 'ALL';
             if (id === -1) return 'SERVER';
             return players.has(id) ? players.get(id).name : `Player ${id}`;
           }
           const toName = getPlayerName(targetId);
+
           // Log locally only if to == -1
-          if (targetId === -1) {
-            log(`[CHAT] ${fromName}->${toName}: ${message.text}`);
+          if (isServerTarget) {
+            log(`[CHAT] ${fromName}->${toName}: ${text}`);
             break;
           }
-          //console.log('chat:', message, toName, targetId, players.get(targetId));
+
           // Broadcast to all if to == 0
-          if (targetId === 0) {
-            log(`[CHAT] ${fromName}->ALL: ${message.text}`);
+          if (isAllTarget) {
+            log(`[CHAT] ${fromName}->ALL: ${text}`);
             broadcastAll({
-              type: 'chat',
-              from: fromId,
-              to: 0,
-              text: message.text.trim(),
-              id: fromId
+              type: 'message',
+              src: fromId,
+              dst: 0,
+              msgType,
+              text,
+              ts: Date.now(),
             });
             break;
           }
+
           // Send to specific player if id exists
-          if (targetId > 0 && players.has(targetId)) {
-            log(`[CHAT] ${fromName}->${toName}: ${message.text}`);
+          if (typeof targetId === 'string' && players.has(targetId)) {
+            log(`[CHAT] ${fromName}->${toName}: ${text}`);
             const targetPlayer = players.get(targetId);
+            const payload = {
+              type: 'message',
+              src: fromId,
+              dst: targetId,
+              msgType,
+              text,
+              ts: Date.now(),
+            };
             if (targetPlayer && targetPlayer.ws && targetPlayer.ws.readyState === 1) {
-              targetPlayer.ws.send(JSON.stringify({
-                type: 'chat',
-                from: fromId,
-                to: targetId,
-                text: message.text.trim(),
-                id: fromId
-              }));
+              targetPlayer.ws.send(JSON.stringify(payload));
+            }
+            if (player.ws && player.ws.readyState === 1 && targetId !== fromId) {
+              player.ws.send(JSON.stringify(payload));
             }
             break;
           }
+
           // If targetId is invalid, ignore
           break;
         }
@@ -2994,9 +3009,10 @@ wss.on('connection', (ws, req) => {
             ws.send(JSON.stringify({ success: true }));
             // Send direct chat message to uploader
             ws.send(JSON.stringify({
-              type: 'chat',
-              from: -1, // SERVER
-              to: player.id,
+              type: 'message',
+              src: -1, // SERVER
+              dst: player.id,
+              msgType: 'server',
               text: `Upload ${safeMapName} with ${Buffer.byteLength(mapContent, 'utf8')} bytes`
             }));
             // Send updated map list (mapList reply)

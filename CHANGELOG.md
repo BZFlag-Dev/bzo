@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.32] - 2026-08-28
+
+### Added
+- Added BZFlag-style tabbed chat panel with `All`, `Chat`, `Server`, `Misc`, and `Debug` tabs plus per-tab scrollback and unread indicators.
+- Added chat navigation and compose shortcuts: direct tab select (`1`-`5`), tab cycling (`[`/`]`), reply to last direct sender (`.`), and message-nemesis targeting (`,`).
+
+### Changed
+- Aligned chat packet naming/content toward BZFlag semantics by replacing `chat` packets with `message` packets carrying `src`, `dst`, `msgType`, and `text`.
+- Updated chat rendering to distinguish message categories and direct-message direction in the panel (`[->name]` outbound and `[name->]` inbound) similar to BZFlag formatting.
+- Updated radar zoom hotkeys to use `+`/`-` (and numpad equivalents), freeing `[`/`]` for chat tab cycling.
+
+### Fixed
+- Fixed private-message delivery and sender-name display by handling player IDs as string identifiers in both client and server message routing.
+- Fixed message misclassification where normal chat could appear as `[SERVER]` when legacy/alternate message fields were received.
+- Fixed chat panel click propagation so selecting chat tabs no longer triggers firing.
+- Fixed cross-monitor chat text clipping and improved desktop layout so chat shrinks away from the debug HUD when there is sufficient horizontal space.
+
 ## [1.0.31] - 2026-08-27
 
 ### Added

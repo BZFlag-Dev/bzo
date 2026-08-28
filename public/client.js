@@ -4,8 +4,53 @@
  * Source: https://github.com/timriker/bzo
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
-let chatMessages = [];
-const CHAT_MAX_MESSAGES = 6;
+const CHAT_VISIBLE_MESSAGES = 6;
+const CHAT_SCROLLBACK_LIMIT = 600;
+const CHAT_SCROLL_STEP = 3;
+const CHAT_MIN_WIDTH_WITH_DEBUG = 560;
+const CHAT_DEBUG_PANEL_RESERVE = 352;
+const CHAT_TARGET_ALL = 0;
+const CHAT_TARGET_SERVER = -1;
+const CHAT_KIND_CHAT = 'chat';
+const CHAT_KIND_ACTION = 'action';
+const CHAT_KIND_SERVER = 'server';
+const CHAT_KIND_MISC = 'misc';
+const CHAT_KIND_DEBUG = 'debug';
+const CHAT_KIND_DIRECT_IN = 'direct-in';
+const CHAT_KIND_DIRECT_OUT = 'direct-out';
+const CHAT_TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'chat', label: 'Chat' },
+  { id: 'server', label: 'Server' },
+  { id: 'misc', label: 'Misc' },
+  { id: 'debug', label: 'Debug' },
+];
+const chatState = {
+  activeTab: 'all',
+  messages: {
+    all: [],
+    chat: [],
+    server: [],
+    misc: [],
+    debug: [],
+  },
+  scrollOffsets: {
+    all: 0,
+    chat: 0,
+    server: 0,
+    misc: 0,
+    debug: 0,
+  },
+  unread: {
+    all: false,
+    chat: false,
+    server: false,
+    misc: false,
+    debug: false,
+  }
+};
+let lastDirectSenderId = null;
+let nemesisPlayerId = null;
 let chatInput = null;
 let chatActive = false;
 let virtualControlsEnabled = false;
@@ -641,6 +686,193 @@ function isDebugHudVisible() {
   return computed.display !== 'none' && computed.visibility !== 'hidden';
 }
 
+function updateChatLayoutForDebugOverlap() {
+  const body = document.body;
+  if (!body) return;
+  const desktopLike = window.innerWidth > 900 && !window.matchMedia('(orientation: portrait)').matches;
+  const debugVisible = isDebugHudVisible();
+  const availableChatWidth = window.innerWidth - CHAT_DEBUG_PANEL_RESERVE;
+  const shouldAvoidOverlap = desktopLike && debugVisible && availableChatWidth >= CHAT_MIN_WIDTH_WITH_DEBUG;
+  body.classList.toggle('chat-avoid-debug', shouldAvoidOverlap);
+}
+
+function getVisibleChatTabs() {
+  if (isDebugHudVisible()) {
+    return CHAT_TABS;
+  }
+  return CHAT_TABS.filter((tab) => tab.id !== 'debug');
+}
+
+function normalizeActiveChatTab() {
+  if (chatState.activeTab === 'debug' && !isDebugHudVisible()) {
+    chatState.activeTab = 'all';
+  }
+}
+
+function setActiveChatTab(tabId) {
+  const visibleTabs = getVisibleChatTabs();
+  if (!visibleTabs.some((tab) => tab.id === tabId)) {
+    return false;
+  }
+  chatState.activeTab = tabId;
+  chatState.unread[tabId] = false;
+  chatState.scrollOffsets[tabId] = 0;
+  chatWindowDirty = true;
+  updateChatWindow();
+  return true;
+}
+
+function cycleChatTab(direction) {
+  const visibleTabs = getVisibleChatTabs();
+  if (visibleTabs.length === 0) return;
+  const currentIndex = visibleTabs.findIndex((tab) => tab.id === chatState.activeTab);
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + direction + visibleTabs.length) % visibleTabs.length;
+  setActiveChatTab(visibleTabs[nextIndex].id);
+}
+
+function addChatEntry(tabIds, text, kind = CHAT_KIND_MISC) {
+  const entry = {
+    text: String(text),
+    kind,
+    ts: Date.now(),
+  };
+  const uniqueTabIds = Array.from(new Set(tabIds));
+  uniqueTabIds.forEach((tabId) => {
+    const tabMessages = chatState.messages[tabId];
+    if (!Array.isArray(tabMessages)) return;
+    tabMessages.push(entry);
+    while (tabMessages.length > CHAT_SCROLLBACK_LIMIT) {
+      tabMessages.shift();
+    }
+    if (tabId !== chatState.activeTab) {
+      chatState.unread[tabId] = true;
+    } else if (chatState.scrollOffsets[tabId] > 0) {
+      chatState.scrollOffsets[tabId] = Math.min(chatState.scrollOffsets[tabId] + 1, Math.max(0, tabMessages.length - 1));
+    }
+  });
+  chatWindowDirty = true;
+}
+
+function setChatScrollOffset(tabId, nextOffset) {
+  const tabMessages = chatState.messages[tabId] || [];
+  const maxOffset = Math.max(0, tabMessages.length - CHAT_VISIBLE_MESSAGES);
+  chatState.scrollOffsets[tabId] = Math.max(0, Math.min(maxOffset, nextOffset));
+  chatWindowDirty = true;
+  updateChatWindow();
+}
+
+function adjustChatScroll(delta) {
+  const tabId = chatState.activeTab;
+  const current = chatState.scrollOffsets[tabId] || 0;
+  setChatScrollOffset(tabId, current + delta);
+}
+
+function scrollChatPage(direction) {
+  adjustChatScroll(direction * CHAT_VISIBLE_MESSAGES);
+}
+
+function scrollChatToNewest() {
+  setChatScrollOffset(chatState.activeTab, 0);
+}
+
+function routeLocalHudMessage(text) {
+  addChatEntry(['misc', 'all'], `local: ${text}`, CHAT_KIND_MISC);
+  updateChatWindow();
+}
+
+function focusChatWithTarget(targetId, { clearInput = true } = {}) {
+  const chatTarget = document.getElementById('chatTarget');
+  const nextTarget = normalizeMessageEndpoint(targetId, CHAT_TARGET_ALL);
+  if (chatTarget) {
+    const value = nextTarget === CHAT_TARGET_ALL || nextTarget === CHAT_TARGET_SERVER
+      ? String(nextTarget)
+      : nextTarget;
+    const optionExists = Array.from(chatTarget.options).some((opt) => opt.value === value);
+    chatTarget.value = optionExists ? value : String(CHAT_TARGET_ALL);
+  }
+  if (chatInput) {
+    if (clearInput) {
+      chatInput.value = '';
+    }
+    chatInput.focus();
+  }
+}
+
+function handleReplyToLastSender() {
+  if (typeof lastDirectSenderId !== 'string' || lastDirectSenderId.length === 0) {
+    showMessage('No recent direct sender to reply to');
+    return;
+  }
+  focusChatWithTarget(lastDirectSenderId);
+}
+
+function handleMessageNemesisTarget() {
+  if (typeof nemesisPlayerId !== 'string' || nemesisPlayerId.length === 0) {
+    showMessage('No nemesis target available');
+    return;
+  }
+  focusChatWithTarget(nemesisPlayerId);
+}
+
+function normalizeMessageEndpoint(value, fallback = CHAT_TARGET_ALL) {
+  if (value === CHAT_TARGET_ALL || value === String(CHAT_TARGET_ALL)) return CHAT_TARGET_ALL;
+  if (value === CHAT_TARGET_SERVER || value === String(CHAT_TARGET_SERVER)) return CHAT_TARGET_SERVER;
+  if (value === null || value === undefined || value === '') return fallback;
+  return String(value);
+}
+
+function getPlayerName(id) {
+  const normalizedId = normalizeMessageEndpoint(id, CHAT_TARGET_SERVER);
+  if (normalizedId === CHAT_TARGET_ALL) return 'ALL';
+  if (normalizedId === CHAT_TARGET_SERVER) return 'SERVER';
+  if (normalizedId === myPlayerId && typeof myPlayerName === 'string' && myPlayerName.trim().length > 0) {
+    return myPlayerName.trim();
+  }
+  const tank = tanks.get(normalizedId);
+  return tank && tank.userData && tank.userData.playerState && tank.userData.playerState.name
+    ? tank.userData.playerState.name
+    : `Player ${normalizedId}`;
+}
+
+function formatNetworkMessage(message) {
+  const text = typeof message.text === 'string' ? message.text : '';
+  const src = normalizeMessageEndpoint(message.src ?? message.from, CHAT_TARGET_SERVER);
+  const dst = normalizeMessageEndpoint(message.dst ?? message.to, CHAT_TARGET_ALL);
+  const msgType = message.msgType === CHAT_KIND_ACTION
+    ? CHAT_KIND_ACTION
+    : (message.msgType === CHAT_KIND_SERVER ? CHAT_KIND_SERVER : CHAT_KIND_CHAT);
+  const fromName = getPlayerName(src);
+  const toName = getPlayerName(dst);
+
+  if (msgType === CHAT_KIND_SERVER || src === CHAT_TARGET_SERVER) {
+    return { text: `[SERVER] ${text}`, tabs: ['server', 'all'], kind: CHAT_KIND_SERVER };
+  }
+  if (msgType === CHAT_KIND_ACTION) {
+    if (typeof dst === 'string') {
+      if (src === myPlayerId) {
+        return { text: `[->${toName}] ${text}`, tabs: ['chat', 'all'], kind: CHAT_KIND_DIRECT_OUT };
+      }
+      return { text: `[${fromName}->] ${text}`, tabs: ['chat', 'all'], kind: CHAT_KIND_DIRECT_IN };
+    }
+    return { text: `${fromName} ${text}`, tabs: ['chat', 'all'], kind: CHAT_KIND_ACTION };
+  }
+  if (typeof dst === 'string') {
+    if (src === myPlayerId) {
+      return { text: `[->${toName}] ${text}`, tabs: ['chat', 'all'], kind: CHAT_KIND_DIRECT_OUT };
+    }
+    return { text: `[${fromName}->] ${text}`, tabs: ['chat', 'all'], kind: CHAT_KIND_DIRECT_IN };
+  }
+  return { text: `${fromName}: ${text}`, tabs: ['chat', 'all'], kind: CHAT_KIND_CHAT };
+}
+
+function syncDebugTabVisibility() {
+  normalizeActiveChatTab();
+  updateChatLayoutForDebugOverlap();
+  chatWindowDirty = true;
+  updateChatWindow();
+}
+
 function queueDebugPacket(payload) {
   pendingDebugPackets.push(payload);
   if (pendingDebugPackets.length > 120) {
@@ -660,16 +892,8 @@ function getDebugSenderName() {
 }
 
 function debugLog(message, source = '') {
-  if (!isDebugHudVisible()) {
-    return;
-  }
   const text = source ? `[${source}] ${String(message)}` : String(message);
-  const chatText = `[DBG] ${text}`;
-  chatMessages.push(chatText);
-  if (chatMessages.length > CHAT_MAX_MESSAGES * 3) {
-    chatMessages.shift();
-  }
-  chatWindowDirty = true;
+  addChatEntry(['debug'], `[DBG] ${text}`, CHAT_KIND_DEBUG);
   updateChatWindow();
   console.log(text);
   const payload = {
@@ -1750,6 +1974,7 @@ initHudControls({
   setDebugEnabled: (value) => {
     debugEnabled = value;
     // Only toggles debug HUD, not debug labels
+    syncDebugTabVisibility();
   },
   getDebugLabelsEnabled: () => debugLabelsEnabled,
   setDebugLabelsEnabled: (value) => {
@@ -1766,11 +1991,7 @@ initHudControls({
   getVirtualControlsEnabled: () => virtualControlsEnabled,
   setVirtualControlsEnabled: (value) => { virtualControlsEnabled = value; },
   pushChatMessage: (msg) => {
-    chatMessages.push(msg);
-    if (chatMessages.length > CHAT_MAX_MESSAGES * 3) {
-      chatMessages.shift();
-    }
-    chatWindowDirty = true;
+    addChatEntry(['misc', 'all'], msg, CHAT_KIND_MISC);
   },
   updateChatWindow: () => updateChatWindow(),
   sendToServer: (payload) => sendToServer(payload),
@@ -1975,6 +2196,7 @@ function init() {
 
   // Chat UI
   const chatWindow = document.getElementById('chatWindow');
+  const chatTabs = document.getElementById('chatTabs');
   chatInput = document.getElementById('chatInput');
   const chatTarget = document.getElementById('chatTarget');
 
@@ -2004,15 +2226,60 @@ function init() {
 
   // Update dropdown whenever tanks change
   setInterval(updateChatTargetOptions, 1000);
+  updateChatTargetOptions();
+
+  if (chatTabs) {
+    chatTabs.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = e.target.closest('button[data-chat-tab]');
+      if (!target) return;
+      const tabId = target.getAttribute('data-chat-tab');
+      if (tabId) {
+        setActiveChatTab(tabId);
+      }
+    });
+  }
+
+  const chatMessagesDiv = document.getElementById('chatMessages');
+  const onChatWheel = (e) => {
+    if (e.deltaY < 0) {
+      adjustChatScroll(CHAT_SCROLL_STEP);
+    } else if (e.deltaY > 0) {
+      adjustChatScroll(-CHAT_SCROLL_STEP);
+    }
+    e.preventDefault();
+  };
+  if (chatMessagesDiv) {
+    chatMessagesDiv.addEventListener('wheel', onChatWheel, { passive: false });
+  }
+  if (chatTabs) {
+    chatTabs.addEventListener('wheel', onChatWheel, { passive: false });
+  }
 
   chatInput.addEventListener('keydown', (e) => {
     // Prevent all game events while typing
     e.stopPropagation();
+    if (e.code === 'PageUp' || e.key === 'PageUp') {
+      scrollChatPage(1);
+      e.preventDefault();
+      return;
+    }
+    if (e.code === 'PageDown' || e.key === 'PageDown') {
+      scrollChatPage(-1);
+      e.preventDefault();
+      return;
+    }
+    if (e.code === 'End' || e.key === 'End') {
+      scrollChatToNewest();
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Enter') {
       const text = chatInput.value.trim();
       if (text.length > 0) {
-        const to = parseInt(chatTarget.value, 10);
-        sendToServer({ type: 'chat', to, text });
+        const dst = normalizeMessageEndpoint(chatTarget.value, CHAT_TARGET_ALL);
+        sendToServer({ type: 'message', dst, msgType: CHAT_KIND_CHAT, text });
         chatInput.value = '';
       }
       chatInput.blur();
@@ -2045,6 +2312,7 @@ function init() {
       chatActive = false;
     }
   });
+  syncDebugTabVisibility();
   updateChatWindow();
 
   // Restore debug state from localStorage
@@ -2056,7 +2324,10 @@ function init() {
     const cameraBtn = document.getElementById('cameraBtn');
     toggleDebugHud({
       debugEnabled,
-      setDebugEnabled: v => { debugEnabled = v; },
+      setDebugEnabled: (v) => {
+        debugEnabled = v;
+        syncDebugTabVisibility();
+      },
       updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
       showMessage,
       updateDebugDisplay,
@@ -2102,9 +2373,13 @@ function init() {
   radarCtx = radarCanvas.getContext('2d');
   resizeRadar();
   updateRadar();
+  updateChatLayoutForDebugOverlap();
 
   // Event listeners
-  window.addEventListener('resize', onWindowResize);
+  window.addEventListener('resize', () => {
+    onWindowResize();
+    updateChatLayoutForDebugOverlap();
+  });
   document.addEventListener('keydown', (e) => {
     // Check if name dialog is open (declare once at top)
     const entryDialog = document.getElementById('entryDialog');
@@ -2121,19 +2396,75 @@ function init() {
 
     // Activate chat with n, but NOT if name dialog is open
     if (!chatActive && !isentryDialogOpen && (e.key === 'n' || e.key === 'N')) {
-      chatInput.value = '';
-      chatInput.focus();
+      focusChatWithTarget(CHAT_TARGET_ALL);
+      e.preventDefault();
+      return;
+    }
+
+    if (!chatActive && !isentryDialogOpen && e.code === 'Period' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      handleReplyToLastSender();
+      e.preventDefault();
+      return;
+    }
+
+    if (!chatActive && !isentryDialogOpen && e.code === 'Comma' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      handleMessageNemesisTarget();
       e.preventDefault();
       return;
     }
 
     if (!chatActive && !isentryDialogOpen) {
-      if ((e.code === 'Equal' && e.shiftKey) || e.code === 'NumpadAdd' || e.code === 'BracketRight') {
+      if (e.code === 'Digit1') {
+        if (setActiveChatTab('all')) e.preventDefault();
+        return;
+      }
+      if (e.code === 'Digit2') {
+        if (setActiveChatTab('chat')) e.preventDefault();
+        return;
+      }
+      if (e.code === 'Digit3') {
+        if (setActiveChatTab('server')) e.preventDefault();
+        return;
+      }
+      if (e.code === 'Digit4') {
+        if (setActiveChatTab('misc')) e.preventDefault();
+        return;
+      }
+      if (e.code === 'Digit5') {
+        if (setActiveChatTab('debug')) e.preventDefault();
+        return;
+      }
+      if (e.code === 'BracketLeft' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        cycleChatTab(-1);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'BracketRight' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        cycleChatTab(1);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'PageUp' || e.key === 'PageUp') {
+        scrollChatPage(1);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'PageDown' || e.key === 'PageDown') {
+        scrollChatPage(-1);
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'End' || e.key === 'End') {
+        scrollChatToNewest();
+        e.preventDefault();
+        return;
+      }
+      if ((e.code === 'Equal' && e.shiftKey) || e.code === 'NumpadAdd') {
         adjustRadarZoom(1);
         e.preventDefault();
         return;
       }
-      if (e.code === 'Minus' || e.code === 'NumpadSubtract' || e.code === 'BracketLeft') {
+      if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
         adjustRadarZoom(-1);
         e.preventDefault();
         return;
@@ -2221,6 +2552,15 @@ function init() {
     // Only block mouse actions if the click is on the chat input itself
     if (e.target === chatInput) return;
 
+    // Chat panel interactions should never trigger gameplay fire input.
+    if (e.target.closest && e.target.closest('#chatWindow')) {
+      if (e.target !== chatInput) {
+        chatInput.blur();
+        chatActive = false;
+      }
+      return;
+    }
+
     // Prevent firing if clicking on HUD elements and not in mouse mode
     const hudSelectors = ['#playerName', '#mouseBtn', '#fullscreenBtn', '#debugBtn', '#cameraBtn', '#helpBtn'];
     for (const sel of hudSelectors) {
@@ -2230,11 +2570,6 @@ function init() {
       }
     }
 
-    // If the click is inside the chat window but not on the input, blur input and exit chat
-    if (e.target.closest && e.target.closest('#chatWindow') && e.target !== chatInput) {
-      chatInput.blur();
-      chatActive = false;
-    }
     if (chatActive || document.activeElement === chatInput) return;
     if (e.button === 0) { // Left click
       if (justActivatedMouseControl) {
@@ -2777,21 +3112,14 @@ function handleServerMessage(message) {
       removeShield(message.playerId);
       break;
 
-    case 'chat': {
-      // Format: { type: 'chat', from, to, text, id }
-      // Lookup names for from/to
-      function getPlayerName(id) {
-        if (id === 0) return 'ALL';
-        if (id === -1) return 'SERVER';
-        const tank = tanks.get(id);
-        return tank && tank.userData && tank.userData.playerState && tank.userData.playerState.name ? tank.userData.playerState.name : `Player ${id}`;
-    }
-      const fromName = getPlayerName(message.from);
-      const toName = getPlayerName(message.to);
-      let prefix = `${fromName} -> ${toName} `;
-      chatMessages.push(prefix + message.text);
-      if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
-      chatWindowDirty = true;
+    case 'message': {
+      const srcId = normalizeMessageEndpoint(message.src ?? message.from, CHAT_TARGET_SERVER);
+      const dstId = normalizeMessageEndpoint(message.dst ?? message.to, CHAT_TARGET_ALL);
+      if (typeof srcId === 'string' && dstId === myPlayerId && srcId !== myPlayerId) {
+        lastDirectSenderId = srcId;
+      }
+      const formatted = formatNetworkMessage(message);
+      addChatEntry(formatted.tabs, formatted.text, formatted.kind);
       updateChatWindow();
       break;
     }
@@ -3055,6 +3383,16 @@ function handlePlayerHit(message) {
   const shooterName = shooterTank && shooterTank.userData && shooterTank.userData.playerState && shooterTank.userData.playerState.name ? shooterTank.userData.playerState.name : 'Someone';
   const victimName = victimTank && victimTank.userData && victimTank.userData.playerState && victimTank.userData.playerState.name ? victimTank.userData.playerState.name : 'Someone';
   const isSelfDestruct = Boolean(message.suicide) || (message.victimId === message.shooterId);
+  const shooterId = normalizeMessageEndpoint(message.shooterId, CHAT_TARGET_SERVER);
+  const victimId = normalizeMessageEndpoint(message.victimId, CHAT_TARGET_SERVER);
+
+  if (!isSelfDestruct) {
+    if (victimId === myPlayerId && typeof shooterId === 'string' && shooterId !== myPlayerId) {
+      nemesisPlayerId = shooterId;
+    } else if (shooterId === myPlayerId && typeof victimId === 'string' && victimId !== myPlayerId) {
+      nemesisPlayerId = victimId;
+    }
+  }
 
   if (message.victimId === myPlayerId) {
     // Local player was killed
@@ -3200,12 +3538,7 @@ function handleMapsList(message) {
 }
 
 function showMessage(text) {
-  // Show a message in the chat window as if from SERVER
-  const prefix = 'local: ';
-  chatMessages.push(prefix + text);
-  if (chatMessages.length > CHAT_MAX_MESSAGES * 3) chatMessages.shift();
-  chatWindowDirty = true;
-  updateChatWindow();
+  routeLocalHudMessage(text);
 }
 
 function getColliderLocalPoint(x, z, obs) {
@@ -5855,17 +6188,43 @@ function handleXRSettingsShortcut() {
 
 function updateChatWindow() {
   if (!chatWindowDirty) return;
+  normalizeActiveChatTab();
+  const chatTabsDiv = document.getElementById('chatTabs');
   const chatMessagesDiv = document.getElementById('chatMessages');
   if (!chatMessagesDiv) return;
-  // Remove all previous messages
+
+  if (chatTabsDiv) {
+    chatTabsDiv.innerHTML = '';
+    const visibleTabs = getVisibleChatTabs();
+    visibleTabs.forEach((tab) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-tab';
+      if (tab.id === chatState.activeTab) {
+        btn.classList.add('active');
+      } else if (chatState.unread[tab.id]) {
+        btn.classList.add('unread');
+      }
+      btn.setAttribute('data-chat-tab', tab.id);
+      btn.textContent = tab.label;
+      chatTabsDiv.appendChild(btn);
+    });
+  }
+
   chatMessagesDiv.innerHTML = '';
-  // Add messages
-  for (let i = Math.max(0, chatMessages.length - CHAT_MAX_MESSAGES); i < chatMessages.length; i++) {
-    const msg = chatMessages[i];
+
+  const activeMessages = chatState.messages[chatState.activeTab] || [];
+  const offset = chatState.scrollOffsets[chatState.activeTab] || 0;
+  const end = Math.max(0, activeMessages.length - offset);
+  const start = Math.max(0, end - CHAT_VISIBLE_MESSAGES);
+  for (let i = start; i < end; i++) {
+    const msg = activeMessages[i];
     const div = document.createElement('div');
-    div.textContent = msg;
+    div.className = `chat-line chat-kind-${msg.kind || CHAT_KIND_CHAT}`;
+    div.textContent = msg.text;
     chatMessagesDiv.appendChild(div);
   }
+
   chatWindowDirty = false;
 }
 

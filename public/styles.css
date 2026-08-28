@@ -103,20 +103,82 @@ canvas {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 2px;
+  gap: 4px;
   box-sizing: border-box;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   align-items: stretch;
 }
 
-#chatWindow div {
+#chatMessages {
+  min-height: calc(6 * 1.25em + 0.4em);
+  max-height: calc(6 * 1.25em + 0.4em);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-bottom: 0.2em;
+}
+
+#chatMessages .chat-line {
+  line-height: 1.25;
   overflow-wrap: break-word;
   word-break: break-word;
   white-space: pre-wrap;
   max-width: 100%;
   box-sizing: border-box;
 }
+
+#chatMessages .chat-line.chat-kind-server {
+  color: #ffe082;
+}
+
+#chatMessages .chat-line.chat-kind-misc {
+  color: #b3e5fc;
+}
+
+#chatMessages .chat-line.chat-kind-debug {
+  color: #b0bec5;
+}
+
+#chatMessages .chat-line.chat-kind-action {
+  color: #ffccbc;
+}
+
+#chatMessages .chat-line.chat-kind-direct-in {
+  color: #80deea;
+}
+
+#chatMessages .chat-line.chat-kind-direct-out {
+  color: #b39ddb;
+}
+
+.chat-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-tab {
+  border: 1px solid #777;
+  background: rgba(24, 24, 24, 0.9);
+  color: #ddd;
+  border-radius: 5px;
+  font: 12px monospace;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.chat-tab.active {
+  border-color: #fff;
+  color: #fff;
+  background: rgba(52, 52, 52, 0.95);
+}
+
+.chat-tab.unread {
+  border-color: #c62828;
+  color: #ff8a80;
+}
+
 #chatWindow .chat-input-row {
   display: flex;
   align-items: center;
@@ -152,6 +214,16 @@ canvas {
   }
 }
 
+@media (orientation: landscape) and (min-width: 901px) {
+  body.chat-avoid-debug #chatWindow {
+    left: max(10px, env(safe-area-inset-left));
+    right: calc(max(10px, env(safe-area-inset-right)) + 340px);
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+}
+
 @media (max-width: 800px) {
   #chatWindow {
     width: 98vw;
@@ -180,6 +252,11 @@ canvas {
     font-size: 12px;
     margin-bottom: 2px;
     max-width: 100%;
+  }
+
+  #chatMessages {
+    min-height: calc(6 * 1.2em + 0.35em);
+    max-height: calc(6 * 1.2em + 0.35em);
   }
 }
 /* Mobile Controls Overlay Styles */

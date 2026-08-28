@@ -215,13 +215,19 @@ If you want automatic container updates, use your preferred container update man
 - `N` — open chat
 - `Enter` — send chat (while chat input is focused)
 - `Esc` — exit chat input or mouse mode
+- `1` / `2` / `3` / `4` / `5` — switch chat tab (`All` / `Chat` / `Server` / `Misc` / `Debug`)
+- `[` / `]` — previous/next chat tab
+- `.` — reply to last direct-message sender
+- `,` — message nemesis target
+- `Page Up` / `Page Down` — scroll chat history
+- `End` — jump chat to newest message
 - `M` — toggle mouse movement
 - `C` — cycle camera mode
 - `O` — toggle operator panel
 - `F` — toggle fullscreen
 - `I` — toggle debug HUD
-- `]` or `+` or `Numpad +` — zoom radar out (increase range)
-- `[` or `-` or `Numpad -` — zoom radar in (decrease range)
+- `+` or `Numpad +` — zoom radar out (increase range)
+- `-` or `Numpad -` — zoom radar in (decrease range)
 - `\` — reset radar zoom to baseline range (1.0x shot-distance)
 - `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets
 - `B` — toggle nearby voice microphone
