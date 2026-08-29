@@ -4,7 +4,7 @@
  * Source: https://github.com/timriker/bzo
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
-const CHAT_VISIBLE_MESSAGES = 3;
+const CHAT_VISIBLE_MESSAGES = 6;
 const CHAT_SCROLLBACK_LIMIT = 600;
 const CHAT_SCROLL_STEP = 3;
 const CHAT_MIN_WIDTH_WITH_DEBUG = 560;
@@ -157,6 +157,13 @@ let xrRadarTexture = null;
 let xrChatCanvas = null;
 let xrChatTexture = null;
 let xrChatTextureMesh = null;
+let xrShotStatusCanvas = null;
+let xrShotStatusTexture = null;
+let xrShotStatusTextureMesh = null;
+let xrScoreboardCanvas = null;
+let xrScoreboardTexture = null;
+let xrScoreboardTextureMesh = null;
+const XR_HUD_PLANE_Z = -0.85;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 const RADAR_ZOOM_STORAGE_KEY = 'radarZoomLevel';
@@ -6175,7 +6182,6 @@ function ensureXRRadarTexture() {
     baseCamera.add(xrRadarTextureMesh);
   }
 
-  const distance = 0.8;
   const sizeScale = 0.75;
   const planeWidth = 0.45 * sizeScale;
   const planeHeight = 0.45 * sizeScale;
@@ -6186,7 +6192,7 @@ function ensureXRRadarTexture() {
   xrRadarTextureMesh.scale.set(1, 1, 1);
   xrRadarTextureMesh.geometry.dispose();
   xrRadarTextureMesh.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-  xrRadarTextureMesh.position.set(targetX, targetY, -distance);
+  xrRadarTextureMesh.position.set(targetX, targetY, XR_HUD_PLANE_Z);
   xrRadarTextureMesh.rotation.set(0, 0, 0);
   xrRadarTextureMesh.visible = isXREnabled();
 
@@ -6204,7 +6210,7 @@ function ensureXRChatOverlay() {
   if (!xrChatCanvas) {
     xrChatCanvas = document.createElement('canvas');
     xrChatCanvas.width = 1024;
-    xrChatCanvas.height = 512;
+    xrChatCanvas.height = 220;
     xrChatTexture = new THREE.CanvasTexture(xrChatCanvas);
     xrChatTexture.colorSpace = THREE.SRGBColorSpace;
   }
@@ -6240,11 +6246,11 @@ function ensureXRChatOverlay() {
 
   const w = xrChatCanvas.width;
   const h = xrChatCanvas.height;
-  const radius = 18;
-  const panelX = 28;
-  const panelY = 26;
-  const panelW = w - 56;
-  const panelH = h - 52;
+  const radius = 12;
+  const panelX = 14;
+  const panelY = 14;
+  const panelW = w - 28;
+  const panelH = h - 26;
 
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = 'rgba(13, 16, 22, 0.78)';
@@ -6262,22 +6268,22 @@ function ensureXRChatOverlay() {
   ctx.fill();
 
   const activeMessages = chatState.messages[chatState.activeTab] || [];
-  const visibleMessages = activeMessages.slice(-4);
+  const visibleMessages = activeMessages.slice(-3);
   ctx.fillStyle = '#dfe7f3';
-  ctx.font = 'bold 22px monospace';
+  ctx.font = 'bold 17px monospace';
   const messageAreaTop = 26;
-  const messageLineHeight = 26;
+  const messageLineHeight = 18;
   visibleMessages.forEach((msg, index) => {
     const text = msg.text || '';
     const y = messageAreaTop + index * messageLineHeight;
-    ctx.fillStyle = index % 2 === 0 ? '#eaf1ff' : '#dfe7f3';
-    ctx.fillText(text.length > 60 ? `${text.slice(0, 57)}...` : text, 46, y + 22);
+    const trimmed = text.length > 42 ? `${text.slice(0, 39)}...` : text;
+    ctx.fillText(trimmed, 24, y + 14);
   });
 
   const tabs = getVisibleChatTabs();
-  const tabStripY = h - 56;
-  const tabStripHeight = 34;
-  const tabGap = 10;
+  const tabStripY = h - 32;
+  const tabStripHeight = 18;
+  const tabGap = 6;
   const tabWidth = (panelW - (tabs.length + 1) * tabGap) / Math.max(1, tabs.length);
 
   tabs.forEach((tab, index) => {
@@ -6286,22 +6292,258 @@ function ensureXRChatOverlay() {
     ctx.fillStyle = isActive ? '#f5f7ff' : 'rgba(90, 100, 115, 0.88)';
     ctx.fillRect(x, tabStripY, tabWidth, tabStripHeight);
     ctx.strokeStyle = isActive ? '#a9c8ff' : '#d7dce6';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1;
     ctx.strokeRect(x, tabStripY, tabWidth, tabStripHeight);
     ctx.fillStyle = isActive ? '#1c2430' : '#f1f5f9';
-    ctx.font = 'bold 18px monospace';
-    const label = tab.label;
-    ctx.fillText(label, x + 10, tabStripY + 22);
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(tab.label, x + 6, tabStripY + 13);
   });
 
   xrChatTexture.needsUpdate = true;
 
+  const chatPlaneWidth = 0.9;
+  const chatPlaneHeight = 0.18;
+  const chatCenterX = 0;
+  const chatCenterY = -0.48;
+
   xrChatTextureMesh.scale.set(1, 1, 1);
   xrChatTextureMesh.geometry.dispose();
-  xrChatTextureMesh.geometry = new THREE.PlaneGeometry(0.9, 0.42);
-  xrChatTextureMesh.position.set(0, -0.42, -0.85);
+  xrChatTextureMesh.geometry = new THREE.PlaneGeometry(chatPlaneWidth, chatPlaneHeight);
+  xrChatTextureMesh.position.set(chatCenterX, chatCenterY, XR_HUD_PLANE_Z);
   xrChatTextureMesh.rotation.set(0, 0, 0);
   xrChatTextureMesh.visible = isXREnabled();
+}
+
+function ensureXRShotStatusOverlay() {
+  if (!renderManager || !renderManager.getCamera()) return;
+
+  const baseCamera = renderManager.getCamera();
+  if (!baseCamera) return;
+
+  if (!xrShotStatusCanvas) {
+    xrShotStatusCanvas = document.createElement('canvas');
+    xrShotStatusCanvas.width = 220;
+    xrShotStatusCanvas.height = 200;
+    xrShotStatusTexture = new THREE.CanvasTexture(xrShotStatusCanvas);
+    xrShotStatusTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  if (!xrShotStatusTextureMesh) {
+    const material = new THREE.MeshBasicMaterial({
+      map: xrShotStatusTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      opacity: 1,
+    });
+    const geometry = new THREE.PlaneGeometry(0.28, 0.22);
+    xrShotStatusTextureMesh = new THREE.Mesh(geometry, material);
+    xrShotStatusTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
+    xrShotStatusTextureMesh.visible = false;
+    baseCamera.add(xrShotStatusTextureMesh);
+  }
+
+  if (xrShotStatusTextureMesh.parent !== baseCamera) {
+    if (xrShotStatusTextureMesh.parent) {
+      xrShotStatusTextureMesh.parent.remove(xrShotStatusTextureMesh);
+    }
+    baseCamera.add(xrShotStatusTextureMesh);
+  }
+
+  const ctx = xrShotStatusCanvas.getContext('2d');
+  if (!ctx) {
+    xrShotStatusTextureMesh.visible = false;
+    return;
+  }
+
+  const maxSlots = gameConfig && Number.isFinite(gameConfig.SHOT_MAX_ACTIVE)
+    ? normalizeShotSlotCount(gameConfig.SHOT_MAX_ACTIVE)
+    : 5;
+  const shotSpeed = Number.isFinite(gameConfig?.SHOT_SPEED) ? gameConfig.SHOT_SPEED : 100;
+  const shotRange = Number.isFinite(gameConfig?.SHOT_RANGE)
+    ? gameConfig.SHOT_RANGE
+    : (Number.isFinite(gameConfig?.SHOT_DISTANCE) ? gameConfig.SHOT_DISTANCE : 350);
+  const slotLifetimeMs = shotSpeed > 0 ? (shotRange / shotSpeed) * 1000 : 0;
+  const slotProgress = new Array(maxSlots).fill(1);
+
+  if (projectiles && typeof projectiles.forEach === 'function') {
+    projectiles.forEach((projectile) => {
+      if (projectile?.userData?.playerId !== myPlayerId) return;
+      const slotIndex = Number.isInteger(projectile?.userData?.shotSlot) ? projectile.userData.shotSlot : -1;
+      if (slotIndex < 0 || slotIndex >= maxSlots) return;
+      const createdAt = Number.isFinite(projectile?.userData?.createdAt) ? projectile.userData.createdAt : Date.now();
+      const ageMs = Math.max(0, Date.now() - createdAt);
+      const progress = slotLifetimeMs > 0 ? Math.max(0, Math.min(1, ageMs / slotLifetimeMs)) : 0;
+      slotProgress[slotIndex] = progress;
+    });
+  }
+
+  const barCount = maxSlots;
+  const barGap = 2;
+  const barHeight = 7;
+  const barWidth = 32;
+  const totalHeight = barCount * barHeight + Math.max(0, barCount - 1) * barGap;
+  xrShotStatusCanvas.width = barWidth;
+  xrShotStatusCanvas.height = Math.max(32, totalHeight);
+
+  ctx.clearRect(0, 0, xrShotStatusCanvas.width, xrShotStatusCanvas.height);
+  ctx.clearRect(0, 0, xrShotStatusCanvas.width, xrShotStatusCanvas.height);
+
+  slotProgress.forEach((progress, index) => {
+    const x = 0;
+    const y = index * (barHeight + barGap);
+
+    if (progress >= 1) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillRect(x, y, barWidth, barHeight);
+    } else {
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+      ctx.fillRect(x, y, barWidth, barHeight);
+      const fillWidth = barWidth * Math.max(0, Math.min(1, progress));
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+      ctx.fillRect(x, y, fillWidth, barHeight);
+    }
+  });
+
+  xrShotStatusTexture.needsUpdate = true;
+
+  const shotWidth = 0.08;
+  const shotHeight = Math.min(0.18, 0.02 + barCount * 0.015);
+  const radarPlaneWidth = xrRadarTextureMesh && xrRadarTextureMesh.geometry ? xrRadarTextureMesh.geometry.parameters.width : 0.3375;
+  const radarRightEdge = xrRadarTextureMesh ? (xrRadarTextureMesh.position.x + (radarPlaneWidth / 2)) : (0.42 - (0.25 * 0.3375) + (0.3375 / 2));
+  const shotX = radarRightEdge - (shotWidth / 2);
+  xrShotStatusTextureMesh.scale.set(1, 1, 1);
+  xrShotStatusTextureMesh.geometry.dispose();
+  xrShotStatusTextureMesh.geometry = new THREE.PlaneGeometry(shotWidth, shotHeight);
+  xrShotStatusTextureMesh.position.set(shotX, 0.02, XR_HUD_PLANE_Z);
+  xrShotStatusTextureMesh.rotation.set(0, 0, 0);
+  xrShotStatusTextureMesh.visible = isXREnabled();
+}
+
+function ensureXRScoreboardOverlay() {
+  if (!renderManager || !renderManager.getCamera()) return;
+
+  const baseCamera = renderManager.getCamera();
+  if (!baseCamera) return;
+
+  if (!xrScoreboardCanvas) {
+    xrScoreboardCanvas = document.createElement('canvas');
+    xrScoreboardCanvas.width = 720;
+    xrScoreboardCanvas.height = 340;
+    xrScoreboardTexture = new THREE.CanvasTexture(xrScoreboardCanvas);
+    xrScoreboardTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  if (!xrScoreboardTextureMesh) {
+    const material = new THREE.MeshBasicMaterial({
+      map: xrScoreboardTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      opacity: 1,
+    });
+    const geometry = new THREE.PlaneGeometry(0.75, 0.45);
+    xrScoreboardTextureMesh = new THREE.Mesh(geometry, material);
+    xrScoreboardTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
+    xrScoreboardTextureMesh.visible = false;
+    baseCamera.add(xrScoreboardTextureMesh);
+  }
+
+  if (xrScoreboardTextureMesh.parent !== baseCamera) {
+    if (xrScoreboardTextureMesh.parent) {
+      xrScoreboardTextureMesh.parent.remove(xrScoreboardTextureMesh);
+    }
+    baseCamera.add(xrScoreboardTextureMesh);
+  }
+
+  const ctx = xrScoreboardCanvas.getContext('2d');
+  if (!ctx) {
+    xrScoreboardTextureMesh.visible = false;
+    return;
+  }
+
+  const playerData = [];
+  if (myPlayerId && myTank && myTank.userData.playerState) {
+    playerData.push({
+      id: myPlayerId,
+      name: myPlayerName,
+      kills: myTank.userData.playerState.kills || 0,
+      deaths: myTank.userData.playerState.deaths || 0,
+      isCurrent: true,
+    });
+  }
+
+  tanks.forEach((tank, id) => {
+    if (id !== myPlayerId && tank.userData.playerState) {
+      playerData.push({
+        id,
+        name: tank.userData.playerState.name || 'Player',
+        kills: tank.userData.playerState.kills || 0,
+        deaths: tank.userData.playerState.deaths || 0,
+        isCurrent: false,
+      });
+    }
+  });
+
+  playerData.sort((a, b) => {
+    const aScore = (a.kills || 0) - (a.deaths || 0);
+    const bScore = (b.kills || 0) - (b.deaths || 0);
+    if (bScore !== aScore) return bScore - aScore;
+    if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
+    if ((a.deaths || 0) !== (b.deaths || 0)) return (a.deaths || 0) - (b.deaths || 0);
+    return String(a.name).localeCompare(String(b.name));
+  });
+
+  const margin = 12;
+  const rowHeight = 18;
+  const headerHeight = 20;
+  const maxRows = 8;
+  const visiblePlayers = playerData.slice(0, maxRows);
+  const panelW = 320;
+  const panelH = Math.max(120, headerHeight + 10 + visiblePlayers.length * rowHeight + 12);
+  xrScoreboardCanvas.width = panelW;
+  xrScoreboardCanvas.height = panelH;
+
+  ctx.clearRect(0, 0, panelW, panelH);
+  ctx.fillStyle = 'rgba(7, 10, 14, 0.78)';
+  ctx.fillRect(0, 0, panelW, panelH);
+
+  ctx.strokeStyle = 'rgba(130, 150, 170, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(6, 6, panelW - 12, panelH - 12);
+
+  ctx.fillStyle = '#4CAF50';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('Player', margin, 16);
+  ctx.fillText('K/D', panelW - 42, 16);
+
+  ctx.font = '13px monospace';
+  visiblePlayers.forEach((player, index) => {
+    const y = 38 + index * rowHeight;
+    const name = String(player.name || 'Player');
+    ctx.fillStyle = player.isCurrent ? '#8BE28C' : '#E6F1FF';
+    ctx.fillText(name.length > 14 ? `${name.slice(0, 11)}...` : name, margin, y);
+    ctx.fillStyle = '#F2F5F8';
+    ctx.fillText(`${player.kills} / ${player.deaths}`, panelW - 46, y);
+  });
+
+  xrScoreboardTexture.needsUpdate = true;
+
+  const baseWidth = 0.36;
+  const baseHeight = Math.min(0.30, 0.06 + visiblePlayers.length * 0.025);
+  xrScoreboardTextureMesh.scale.set(1, 1, 1);
+  xrScoreboardTextureMesh.geometry.dispose();
+  xrScoreboardTextureMesh.geometry = new THREE.PlaneGeometry(baseWidth, baseHeight);
+
+  const chatLeftEdge = -(0.9 / 2);
+  const scoreboardLeftEdge = chatLeftEdge;
+  const scoreboardCenterX = scoreboardLeftEdge + (baseWidth / 2);
+  const scoreboardCenterY = 0.42 - (baseHeight / 2);
+  xrScoreboardTextureMesh.position.set(scoreboardCenterX, scoreboardCenterY, XR_HUD_PLANE_Z);
+  xrScoreboardTextureMesh.rotation.set(0, 0, 0);
+  xrScoreboardTextureMesh.visible = isXREnabled();
 }
 
 const RADAR_WORLD_INSET_PX = 10;
@@ -6972,7 +7214,9 @@ function animate() {
   renderManager.setWorldTime(worldTime);
 
   ensureXRRadarTexture();
+  ensureXRShotStatusOverlay();
   ensureXRChatOverlay();
+  ensureXRScoreboardOverlay();
 
   // Debug: log game state in XR once on entry
   if (isXREnabled() && !window.xrDebugLogged) {
