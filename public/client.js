@@ -4,7 +4,7 @@
  * Source: https://github.com/timriker/bzo
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
-const CHAT_VISIBLE_MESSAGES = 6;
+const CHAT_VISIBLE_MESSAGES = 3;
 const CHAT_SCROLLBACK_LIMIT = 600;
 const CHAT_SCROLL_STEP = 3;
 const CHAT_MIN_WIDTH_WITH_DEBUG = 560;
@@ -154,6 +154,9 @@ let lastAnnouncedServerMotd = null;
 let radarCanvas, radarCtx;
 let xrRadarTextureMesh = null;
 let xrRadarTexture = null;
+let xrChatCanvas = null;
+let xrChatTexture = null;
+let xrChatTextureMesh = null;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 const RADAR_ZOOM_STORAGE_KEY = 'radarZoomLevel';
@@ -6192,6 +6195,115 @@ function ensureXRRadarTexture() {
   }
 }
 
+function ensureXRChatOverlay() {
+  if (!renderManager || !renderManager.getCamera()) return;
+
+  const baseCamera = renderManager.getCamera();
+  if (!baseCamera) return;
+
+  if (!xrChatCanvas) {
+    xrChatCanvas = document.createElement('canvas');
+    xrChatCanvas.width = 1024;
+    xrChatCanvas.height = 512;
+    xrChatTexture = new THREE.CanvasTexture(xrChatCanvas);
+    xrChatTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  if (!xrChatTextureMesh) {
+    const material = new THREE.MeshBasicMaterial({
+      map: xrChatTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      opacity: 1,
+    });
+    const geometry = new THREE.PlaneGeometry(0.9, 0.42);
+    xrChatTextureMesh = new THREE.Mesh(geometry, material);
+    xrChatTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
+    xrChatTextureMesh.visible = false;
+    baseCamera.add(xrChatTextureMesh);
+  }
+
+  if (xrChatTextureMesh.parent !== baseCamera) {
+    if (xrChatTextureMesh.parent) {
+      xrChatTextureMesh.parent.remove(xrChatTextureMesh);
+    }
+    baseCamera.add(xrChatTextureMesh);
+  }
+
+  const ctx = xrChatCanvas.getContext('2d');
+  if (!ctx) {
+    xrChatTextureMesh.visible = false;
+    return;
+  }
+
+  const w = xrChatCanvas.width;
+  const h = xrChatCanvas.height;
+  const radius = 18;
+  const panelX = 28;
+  const panelY = 26;
+  const panelW = w - 56;
+  const panelH = h - 52;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(13, 16, 22, 0.78)';
+  ctx.beginPath();
+  ctx.moveTo(panelX + radius, panelY);
+  ctx.lineTo(panelX + panelW - radius, panelY);
+  ctx.quadraticCurveTo(panelX + panelW, panelY, panelX + panelW, panelY + radius);
+  ctx.lineTo(panelX + panelW, panelY + panelH - radius);
+  ctx.quadraticCurveTo(panelX + panelW, panelY + panelH, panelX + panelW - radius, panelY + panelH);
+  ctx.lineTo(panelX + radius, panelY + panelH);
+  ctx.quadraticCurveTo(panelX, panelY + panelH, panelX, panelY + panelH - radius);
+  ctx.lineTo(panelX, panelY + radius);
+  ctx.quadraticCurveTo(panelX, panelY, panelX + radius, panelY);
+  ctx.closePath();
+  ctx.fill();
+
+  const activeMessages = chatState.messages[chatState.activeTab] || [];
+  const visibleMessages = activeMessages.slice(-4);
+  ctx.fillStyle = '#dfe7f3';
+  ctx.font = 'bold 22px monospace';
+  const messageAreaTop = 26;
+  const messageLineHeight = 26;
+  visibleMessages.forEach((msg, index) => {
+    const text = msg.text || '';
+    const y = messageAreaTop + index * messageLineHeight;
+    ctx.fillStyle = index % 2 === 0 ? '#eaf1ff' : '#dfe7f3';
+    ctx.fillText(text.length > 60 ? `${text.slice(0, 57)}...` : text, 46, y + 22);
+  });
+
+  const tabs = getVisibleChatTabs();
+  const tabStripY = h - 56;
+  const tabStripHeight = 34;
+  const tabGap = 10;
+  const tabWidth = (panelW - (tabs.length + 1) * tabGap) / Math.max(1, tabs.length);
+
+  tabs.forEach((tab, index) => {
+    const x = panelX + tabGap + index * (tabWidth + tabGap);
+    const isActive = tab.id === chatState.activeTab;
+    ctx.fillStyle = isActive ? '#f5f7ff' : 'rgba(90, 100, 115, 0.88)';
+    ctx.fillRect(x, tabStripY, tabWidth, tabStripHeight);
+    ctx.strokeStyle = isActive ? '#a9c8ff' : '#d7dce6';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, tabStripY, tabWidth, tabStripHeight);
+    ctx.fillStyle = isActive ? '#1c2430' : '#f1f5f9';
+    ctx.font = 'bold 18px monospace';
+    const label = tab.label;
+    ctx.fillText(label, x + 10, tabStripY + 22);
+  });
+
+  xrChatTexture.needsUpdate = true;
+
+  xrChatTextureMesh.scale.set(1, 1, 1);
+  xrChatTextureMesh.geometry.dispose();
+  xrChatTextureMesh.geometry = new THREE.PlaneGeometry(0.9, 0.42);
+  xrChatTextureMesh.position.set(0, -0.42, -0.85);
+  xrChatTextureMesh.rotation.set(0, 0, 0);
+  xrChatTextureMesh.visible = isXREnabled();
+}
+
 const RADAR_WORLD_INSET_PX = 10;
 const RADAR_EDGE_DOT_INSET_PX = 4;
 const RADAR_TANK_ARROW_EXTENT_PX = 10;
@@ -6860,6 +6972,7 @@ function animate() {
   renderManager.setWorldTime(worldTime);
 
   ensureXRRadarTexture();
+  ensureXRChatOverlay();
 
   // Debug: log game state in XR once on entry
   if (isXREnabled() && !window.xrDebugLogged) {
