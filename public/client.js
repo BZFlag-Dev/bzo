@@ -152,6 +152,8 @@ let startupBuildInfoAnnounced = false;
 let lastAnnouncedServerDescription = null;
 let lastAnnouncedServerMotd = null;
 let radarCanvas, radarCtx;
+let xrRadarTextureMesh = null;
+let xrRadarTexture = null;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 const RADAR_ZOOM_STORAGE_KEY = 'radarZoomLevel';
@@ -6132,6 +6134,64 @@ function resizeRadar() {
   radarCanvas.style.height = size + 'px';
 }
 
+function ensureXRRadarTexture() {
+  if (!renderManager || !renderManager.getCamera()) return;
+
+  const baseCamera = renderManager.getCamera();
+  if (!baseCamera) return;
+
+  if (!radarCanvas) {
+    return;
+  }
+
+  if (!xrRadarTexture) {
+    xrRadarTexture = new THREE.CanvasTexture(radarCanvas);
+    xrRadarTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  if (!xrRadarTextureMesh) {
+    const material = new THREE.MeshBasicMaterial({
+      map: xrRadarTexture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      opacity: 1,
+    });
+    const geometry = new THREE.PlaneGeometry(0.45, 0.45);
+    xrRadarTextureMesh = new THREE.Mesh(geometry, material);
+    xrRadarTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
+    xrRadarTextureMesh.visible = false;
+    baseCamera.add(xrRadarTextureMesh);
+  }
+
+  if (xrRadarTextureMesh.parent !== baseCamera) {
+    if (xrRadarTextureMesh.parent) {
+      xrRadarTextureMesh.parent.remove(xrRadarTextureMesh);
+    }
+    baseCamera.add(xrRadarTextureMesh);
+  }
+
+  const distance = 0.8;
+  const sizeScale = 0.75;
+  const planeWidth = 0.45 * sizeScale;
+  const planeHeight = 0.45 * sizeScale;
+  const centerShift = 0.25 * Math.max(planeWidth, planeHeight);
+  const targetX = 0.42 - centerShift;
+  const targetY = 0.38 - centerShift;
+
+  xrRadarTextureMesh.scale.set(1, 1, 1);
+  xrRadarTextureMesh.geometry.dispose();
+  xrRadarTextureMesh.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+  xrRadarTextureMesh.position.set(targetX, targetY, -distance);
+  xrRadarTextureMesh.rotation.set(0, 0, 0);
+  xrRadarTextureMesh.visible = isXREnabled();
+
+  if (isXREnabled()) {
+    xrRadarTexture.needsUpdate = true;
+  }
+}
+
 const RADAR_WORLD_INSET_PX = 10;
 const RADAR_EDGE_DOT_INSET_PX = 4;
 const RADAR_TANK_ARROW_EXTENT_PX = 10;
@@ -6798,6 +6858,8 @@ function animate() {
   // 24000 / 1200 = 20 ticks per second
   worldTime = (worldTime + 20 * deltaTime) % 24000;
   renderManager.setWorldTime(worldTime);
+
+  ensureXRRadarTexture();
 
   // Debug: log game state in XR once on entry
   if (isXREnabled() && !window.xrDebugLogged) {

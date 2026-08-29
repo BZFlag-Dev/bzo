@@ -392,6 +392,7 @@ class RenderManager {
     this.camera = new THREE.PerspectiveCamera(verticalFov, viewport.width / viewport.height, 0.1, 1000);
     this.camera.position.set(0, 15, 20);
     this.camera.lookAt(0, 0, 0);
+    this.scene.add(this.camera);
 
     try {
       this.renderer = new THREE.WebGLRenderer({ antialias: true, xrCompatible: true, stencil: true });
