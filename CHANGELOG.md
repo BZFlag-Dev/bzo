@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.35] - 2026-08-29
+
+### Added
+- Added camera-attached WebXR HUD overlays for the radar, chat tabs, scoreboard, and shot cooldown indicators.
+- Added an empty test world for focused rendering and WebXR diagnostics.
+
+### Changed
+- Updated WebXR session state handling to publish consistent lifecycle snapshots to subscribers.
+- Aligned WebXR HUD overlays on a shared camera plane with headset-oriented sizing and placement.
+
+### Fixed
+- Fixed projectile heads, trails, and impact effects rendering behind the ground debug grid.
+- Fixed WebXR HUD visibility by rendering overlays through the camera-attached XR path.
+
 ## [1.0.34] - 2026-08-28
 
 ### Changed
