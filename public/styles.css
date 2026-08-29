@@ -412,6 +412,10 @@ body {
   font-size: 1.5em;
 }
 
+#xrQuickBtn .settingsIcon {
+  font-size: 1.3em;
+}
+
 .hudButtons {
   display: flex !important;
   gap: 6px;

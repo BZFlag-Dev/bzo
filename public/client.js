@@ -2237,35 +2237,41 @@ window.addEventListener('DOMContentLoaded', () => {
   initXR().then(mode => {
     showMessage(`WebXR: ${mode}`, 'info');
     const xrBtn = document.getElementById('xrBtn');
-    if (xrBtn) {
-      if (mode === 'none') {
+    const xrQuickBtn = document.getElementById('xrQuickBtn');
+    if (mode === 'none') {
+      if (xrBtn) {
         xrBtn.disabled = true;
         xrBtn.title = 'WebXR not supported on this device';
         xrBtn.classList.add('disabled');
-      } else {
-        xrBtn.addEventListener('click', async () => {
-          showMessage('Requesting VR...');
-          const renderer = renderManager.getRenderer();
-          if (!renderer) {
-            showMessage('Error: Renderer not available');
-            return;
-          }
+      }
+    } else {
+      const xrClickHandler = async () => {
+        showMessage('Requesting VR...');
+        const renderer = renderManager.getRenderer();
+        if (!renderer) {
+          showMessage('Error: Renderer not available');
+          return;
+        }
 
-          const wasEnabled = isXREnabled();
-          const result = await toggleXRSession(renderer, animate);
-          if (result || isXREnabled()) {
-            setXRButtonState(true);
-            // Force first-person camera when entering VR
-            cameraMode = 'first-person';
-            showMessage('✓ WebXR VR Mode: ON');
-          } else {
-            setXRButtonState(false);
-            if (!wasEnabled) {
-              showMessage('✗ VR request failed - check server.log');
-            }
-            showMessage('WebXR VR Mode: OFF');
+        const wasEnabled = isXREnabled();
+        const result = await toggleXRSession(renderer, animate);
+        if (result || isXREnabled()) {
+          setXRButtonState(true);
+          // Force first-person camera when entering VR
+          cameraMode = 'first-person';
+          showMessage('✓ WebXR VR Mode: ON');
+        } else {
+          setXRButtonState(false);
+          if (!wasEnabled) {
+            showMessage('✗ VR request failed - check server.log');
           }
-        });
+          showMessage('WebXR VR Mode: OFF');
+        }
+      };
+      if (xrBtn) xrBtn.addEventListener('click', xrClickHandler);
+      if (xrQuickBtn) {
+        xrQuickBtn.style.display = '';
+        xrQuickBtn.addEventListener('click', xrClickHandler);
       }
     }
   });
@@ -7007,13 +7013,13 @@ let lastTime = performance.now();
 
 function setXRButtonState(enabled) {
   const xrBtn = document.getElementById('xrBtn');
-  if (!xrBtn) return;
+  const xrQuickBtn = document.getElementById('xrQuickBtn');
   if (enabled) {
-    xrBtn.classList.add('active');
-    xrBtn.title = 'Exit WebXR VR Mode';
+    if (xrBtn) { xrBtn.classList.add('active'); xrBtn.title = 'Exit WebXR VR Mode'; }
+    if (xrQuickBtn) { xrQuickBtn.classList.add('active'); xrQuickBtn.title = 'Exit WebXR VR Mode'; }
   } else {
-    xrBtn.classList.remove('active');
-    xrBtn.title = 'Enter WebXR VR Mode';
+    if (xrBtn) { xrBtn.classList.remove('active'); xrBtn.title = 'Enter WebXR VR Mode'; }
+    if (xrQuickBtn) { xrQuickBtn.classList.remove('active'); xrQuickBtn.title = 'Enter WebXR VR Mode'; }
   }
 }
 
