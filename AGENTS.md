@@ -162,6 +162,10 @@ git push origin v1.0.37
 Node 18/24 compatibility → multi-arch Docker build and smoke test → GHCR tag
 promotion → GitHub release with notes extracted from `CHANGELOG.md`.
 
+**Do not wait for that workflow to finish.** Pushing the tag completes the
+release task; the workflow result arrives by email. Stop at a concise
+confirmation once the tag is pushed.
+
 - Release tags are stable `vX.Y.Z` SemVer only. Prereleases and build metadata
   are not published.
 - `public/version.mjs` is written by `scripts/prepare-release.mjs` and verified
@@ -171,7 +175,7 @@ promotion → GitHub release with notes extracted from `CHANGELOG.md`.
 ## Environment Preference
 
 For git push/tag operations in this environment, always run with
-`SSH_AUTH_SOCK=/home/timr/.ssh/ssh_auth_sock` (or export it first) so SSH
+`SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"` (or export it first) so SSH
 authentication succeeds.
 
 ## Debugging Tips
@@ -444,7 +448,6 @@ Remaining, none of which are current priorities:
 
 - Hand tracking. Tracked in detail under `Deferred TODO: Hand Controls` in
   `docs/webxr-validation.md`.
-- Comfort settings and an optional snap-turning mode.
 - Controller haptic feedback.
 - Voice commands in XR.
 
