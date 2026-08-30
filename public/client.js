@@ -121,6 +121,7 @@ import {
 import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shot-limits.mjs';
 import { CLIENT_VERSION } from './version.mjs';
+import { getSoundPaths } from './audio.js';
 import {
   getColliderLocalPoint,
   getPyramidHeight,
@@ -652,10 +653,11 @@ async function prepareInitialRender(message, sequenceId) {
     '/textures/mountain3.png',
     '/textures/mountain4.png',
     '/textures/mountain5.png',
+    '/textures/blend_flash.png',
+    '/textures/dusty_flare.png',
+    '/textures/jumpjets.png',
   ];
-  const audioPaths = [
-    '/teleport.wav',
-  ];
+  const audioPaths = getSoundPaths();
 
   setLoadingOverlayState({
     visible: true,
@@ -3120,6 +3122,7 @@ function handleServerMessage(message) {
         if (oldVerticalVel <= 0 && message.vv > 10) {
           tank.userData.jumpDirection = message.r;
           renderManager.playLocalJumpSound(tank.position);
+          renderManager.fireTankJumpJets(tank);
         }
 
         // Detect fall start (drove off edge - record direction for air physics)
@@ -4849,24 +4852,36 @@ let localTeleportCooldownUntil = 0;
 let suppressLocalTeleportFxUntil = 0;
 const LANDING_SQUISH_FACTOR = 1.0;
 const LANDING_SQUISH_TIME = 1.0;
+// BZFlag Player::spawnEffect(): a spawning tank starts at 1% on every axis and
+// grows to full size over _flagEffectTime. It shares dimensionsScale with the
+// landing squish, so both converge through the same loop (Player.cxx:520).
+const SPAWN_GROW_TIME = 0.64;
+const SPAWN_START_SCALE = 0.01;
 const PLAYER_TELEPORT_REENTRY_BLOCK_DISTANCE = 5.0;
 const PLAYER_TELEPORT_REENTRY_BLOCK_MIN_MS = 250;
 const PLAYER_TELEPORT_EXIT_EPSILON = 0.08;
 const PLAYER_TELEPORT_COOLDOWN_MS = 1000;
 
-function ensureLandingSquishState(tank) {
+function ensureTankDimensionState(tank) {
   if (!tank?.userData) return;
   if (!Number.isFinite(tank.userData.baseScaleX)) tank.userData.baseScaleX = tank.scale.x;
   if (!Number.isFinite(tank.userData.baseScaleY)) tank.userData.baseScaleY = tank.scale.y;
   if (!Number.isFinite(tank.userData.baseScaleZ)) tank.userData.baseScaleZ = tank.scale.z;
   if (!Number.isFinite(tank.userData.landingSquishScaleY)) tank.userData.landingSquishScaleY = 1;
   if (!Number.isFinite(tank.userData.landingSquishRecoverRate)) tank.userData.landingSquishRecoverRate = 1 / LANDING_SQUISH_TIME;
+  if (!Number.isFinite(tank.userData.spawnScale)) tank.userData.spawnScale = 1;
+}
+
+function applySpawnGrow(tank) {
+  if (!tank?.userData) return;
+  ensureTankDimensionState(tank);
+  tank.userData.spawnScale = SPAWN_START_SCALE;
 }
 
 function applyLandingSquish(tank, impactSpeed = 0) {
   if (!tank?.userData || !gameConfig) return;
 
-  ensureLandingSquishState(tank);
+  ensureTankDimensionState(tank);
 
   const gravity = Number.isFinite(gameConfig.GRAVITY) && gameConfig.GRAVITY > 0
     ? gameConfig.GRAVITY
@@ -4882,10 +4897,10 @@ function applyLandingSquish(tank, impactSpeed = 0) {
   tank.userData.landingSquishRecoverRate = 1 / LANDING_SQUISH_TIME;
 }
 
-function updateLandingSquish(deltaTime) {
+function updateTankDimensions(deltaTime) {
   tanks.forEach((tank) => {
     if (!tank?.userData) return;
-    ensureLandingSquishState(tank);
+    ensureTankDimensionState(tank);
 
     const baseScaleX = tank.userData.baseScaleX;
     const baseScaleY = tank.userData.baseScaleY;
@@ -4902,7 +4917,18 @@ function updateLandingSquish(deltaTime) {
       tank.userData.landingSquishScaleY = squishScaleY;
     }
 
-    tank.scale.set(baseScaleX, baseScaleY * squishScaleY, baseScaleZ);
+    let spawnScale = tank.userData.spawnScale;
+    if (!Number.isFinite(spawnScale)) spawnScale = 1;
+    if (spawnScale < 1) {
+      spawnScale = Math.min(1, spawnScale + (deltaTime / SPAWN_GROW_TIME));
+      tank.userData.spawnScale = spawnScale;
+    }
+
+    tank.scale.set(
+      baseScaleX * spawnScale,
+      baseScaleY * squishScaleY * spawnScale,
+      baseScaleZ * spawnScale
+    );
   });
 }
 
@@ -4913,6 +4939,7 @@ function triggerSpawnEffectForTank(tank, colorOverride = null) {
   const tankColor = tank.userData?.playerState?.color;
   const effectColor = colorOverride ?? tankColor ?? defaultColor;
   renderManager.createSpawnEffect(tank.position, effectColor);
+  applySpawnGrow(tank);
 }
 
 function approachValue(currentValue, targetValue, maxStep) {
@@ -5304,7 +5331,10 @@ function handleMotion(deltaTime) {
     myTank.userData.fallForwardSpeed = movementForwardInput;
     myTank.userData.slideDirection = undefined;
     forceMoveSend = true; // Force send on jump
-    if (myTank) renderManager.playLocalJumpSound(myTank.position);
+    if (myTank) {
+      renderManager.playLocalJumpSound(myTank.position);
+      renderManager.fireTankJumpJets(myTank);
+    }
   }
 
   let result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
@@ -5994,6 +6024,9 @@ function updateProjectiles(deltaTime) {
       projectile.position.x = traced.point.x;
       projectile.position.y = traced.point.y;
       projectile.position.z = traced.point.z;
+      if (traced.teleports > 0) {
+        renderManager.createShotTeleportEffect(projectile);
+      }
       projectile.userData.dirX = traced.direction.x;
       projectile.userData.dirY = traced.direction.y;
       projectile.userData.dirZ = traced.direction.z;
@@ -7437,10 +7470,13 @@ function animate() {
   }
 
   updateProjectiles(deltaTime);
-  updateLandingSquish(deltaTime);
+  updateTankDimensions(deltaTime);
   renderManager.updateExplosions(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
+  renderManager.updateMuzzleFlashes(deltaTime);
+  renderManager.updateShotTeleportEffects(deltaTime);
+  renderManager.updateJumpJets(tanks, deltaTime, gameConfig);
   if (gameConfig) {
     renderManager.updateClouds(deltaTime, gameConfig.MAP_SIZE || 100);
   }

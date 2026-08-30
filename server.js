@@ -138,8 +138,8 @@ const GAME_CONFIG = {
   SHOT_SPEED: 100, // BZFlag _shotSpeed default (units per second)
   SHOT_RANGE: 350, // BZFlag _shotRange default (world units)
   SHOT_DISTANCE: 350, // Legacy alias for client/radar code
-  SHOT_RELOAD_TIME: 1000, // ms; configurable independently until shot-slot behavior matches BZFlag
-  SHOT_COOLDOWN: 1000, // Legacy alias used by existing client fire gating
+  SHOT_RELOAD_TIME: null, // ms; derived below from BZFlag's _reloadTime / maxShots
+  SHOT_COOLDOWN: null, // Legacy alias used by existing client fire gating
   SHOT_MAX_ACTIVE: 1, // BZFlag maxShots default
   SHOT_RADIUS: 0.5, // BZFlag _shotRadius default
   SHOT_TAIL_LENGTH: 4.0, // BZFlag _shotTailLength default
@@ -416,6 +416,18 @@ if (typeof serverConfig.shotsKeepVerticalVelocity === 'boolean') {
 }
 
 GAME_CONFIG.SHOT_DISTANCE = GAME_CONFIG.SHOT_RANGE;
+
+// BZFlag derives both numbers from _reloadTime, which itself defaults to
+// _shotRange / _shotSpeed:
+//   ShotPath.cxx:48    lifetime = _reloadTime
+//   LocalPlayer.cxx:1311  forceReload(_reloadTime / numShots)
+// So a shot lives for the full reload time while each slot comes back after
+// _reloadTime / maxShots. Firing continuously then sustains exactly maxShots in
+// flight. Only derive when the operator has not pinned shotReloadTime.
+if (GAME_CONFIG.SHOT_RELOAD_TIME === null) {
+  const shotLifetimeMs = (GAME_CONFIG.SHOT_RANGE / GAME_CONFIG.SHOT_SPEED) * 1000;
+  GAME_CONFIG.SHOT_RELOAD_TIME = shotLifetimeMs / GAME_CONFIG.SHOT_MAX_ACTIVE;
+}
 GAME_CONFIG.SHOT_COOLDOWN = GAME_CONFIG.SHOT_RELOAD_TIME;
 
 const validFogModes = new Set(['none', 'linear', 'exp', 'exp2']);
@@ -1663,17 +1675,28 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
 }
 
 // Validate shot
-function validateShot(player, shotX, shotY, shotZ) {
+// Every rejection here is a client/server inconsistency: an unmodified client
+// never fires a shot the server refuses. Return the reason so the caller can log
+// all of them the same way rather than some paths logging and others going
+// quiet. Returns null when the shot is good.
+function getShotRejection(player, shotX, shotY, shotZ) {
   // Shot originates from barrel end, which is ~3 units from tank center
   const barrelLength = 3.0;
   const now = Date.now();
+
+  if (player.team === 'observer') {
+    return 'observer cannot shoot';
+  }
+
+  if (player.health <= 0) {
+    return `dead player cannot shoot (health=${player.health})`;
+  }
 
   if (player.lastShot > 0) {
     const elapsedSinceLastShot = now - player.lastShot;
     if (elapsedSinceLastShot < GAME_CONFIG.SHOT_RELOAD_TIME) {
       const remaining = GAME_CONFIG.SHOT_RELOAD_TIME - elapsedSinceLastShot;
-      log(`Player "${player.name}" tried to fire too soon (${remaining}ms remaining)`);
-      return false;
+      return `fired too soon (${remaining.toFixed(0)}ms of ${GAME_CONFIG.SHOT_RELOAD_TIME.toFixed(0)}ms reload remaining)`;
     }
   }
 
@@ -1682,8 +1705,10 @@ function validateShot(player, shotX, shotY, shotZ) {
   const dist = distance(extrapolated.x, extrapolated.z, shotX, shotZ);
 
   if (dist > barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE) {
-    log(`Player "${player.name}" shot from invalid position: ${dist.toFixed(2)} units away (extrapolated: ${extrapolated.x.toFixed(2)}, ${extrapolated.z.toFixed(2)}, shot: ${shotX.toFixed(2)}, ${shotZ.toFixed(2)})`);
-    return false;
+    return `shot from invalid position: ${dist.toFixed(2)} units from the barrel,`
+      + ` limit ${(barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE).toFixed(2)}`
+      + ` (extrapolated ${formatShotPoint(extrapolated.x, extrapolated.y, extrapolated.z)},`
+      + ` shot ${formatShotPoint(shotX, shotY, shotZ)})`;
   }
 
   let activeShotCount = 0;
@@ -1692,11 +1717,19 @@ function validateShot(player, shotX, shotY, shotZ) {
   });
 
   if (activeShotCount >= GAME_CONFIG.SHOT_MAX_ACTIVE) {
-    log(`Player "${player.name}" exceeded active shot slots (${activeShotCount}/${GAME_CONFIG.SHOT_MAX_ACTIVE})`);
-    return false;
+    return `exceeded active shot slots (${activeShotCount}/${GAME_CONFIG.SHOT_MAX_ACTIVE})`;
   }
 
-  return true;
+  return null;
+}
+
+function logShotRejection(player, reason, message) {
+  log(
+    `[SHOT_REJECT] player=${player.id} "${player.name}" reason=${reason}`
+    + ` at=${formatShotPoint(player.x, player.y, player.z)}`
+    + ` sent=${formatShotPoint(Number(message.x), Number(message.y), Number(message.z))}`
+    + ` dir=(${Number(message.dirX)},${Number(message.dirY)},${Number(message.dirZ)})`
+  );
 }
 
 function getAvailableShotSlot(playerId) {
@@ -3047,21 +3080,29 @@ wss.on('connection', (ws, req) => {
 
         case 'shoot': {
           // message: { type: 'shot', x, y, z, dirX, dirZ }
-          if (player.team === 'observer') break;
-          if (player.health <= 0) break; // Dead players can't shoot
-          if (!validateShot(player, message.x, message.y, message.z)) break;
+          const shotRejection = getShotRejection(player, message.x, message.y, message.z);
+          if (shotRejection) {
+            logShotRejection(player, shotRejection, message);
+            break;
+          }
           const rawDirX = Number(message.dirX);
           const rawDirZ = Number(message.dirZ);
           const rawDirY = Number(message.dirY);
-          if (!Number.isFinite(rawDirX) || !Number.isFinite(rawDirZ)) break;
+          if (!Number.isFinite(rawDirX) || !Number.isFinite(rawDirZ)) {
+            logShotRejection(player, 'shot direction is not a finite number', message);
+            break;
+          }
           const planarLength = Math.hypot(rawDirX, rawDirZ);
-          if (planarLength < 1e-6) break;
+          if (planarLength < 1e-6) {
+            logShotRejection(player, `shot direction has no horizontal component (${planarLength})`, message);
+            break;
+          }
           const shotDirX = rawDirX / planarLength;
           const shotDirZ = rawDirZ / planarLength;
           const shotDirY = Number.isFinite(rawDirY) ? rawDirY : 0;
           const shotSlot = getAvailableShotSlot(player.id);
           if (shotSlot < 0) {
-            log(`Player "${player.name}" had no free shot slot despite passing validation`);
+            logShotRejection(player, 'no free shot slot despite passing validation', message);
             break;
           }
           player.lastShot = Date.now();

@@ -10,11 +10,13 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { AnaglyphEffect } from './anaglyph.js';
 import { xrState } from './webxr.js';
 import {
-  createShootBuffer,
-  createExplosionBuffer,
-  createJumpBuffer,
-  createLandBuffer,
-  createProjectilePopBuffer,
+  GAME_SOUNDS,
+  GAME_SOUND_NAMES,
+  MASTER_VOLUME,
+  SOUND_DISTANCE_MODEL,
+  SOUND_REF_DISTANCE,
+  SOUND_ROLLOFF_FACTOR,
+  getSoundPath,
   loadAudioBuffer,
 } from './audio.js';
 import {
@@ -63,11 +65,59 @@ const BZFLAG_DUSK_ELEVATION = -0.17;
 const BZFLAG_TWILIGHT_ELEVATION = -0.087;
 const BZFLAG_DAWN_ELEVATION = 0.0;
 const BZFLAG_DAY_ELEVATION = 0.087;
+const BZFLAG_FLASH_TEXTURE = '/textures/blend_flash.png';
 const SHOT_EXPLOSION_TEXTURES = [
   '/textures/explode1.png',
   '/textures/explode2.png',
 ];
 const BZFLAG_TANK_LENGTH = 6.0;
+// Muzzle flash, mirroring StdShotEffect. It is a flared cone out of the barrel,
+// not a billboard: drawRingYZ() builds a frustum whose inner circle sits at the
+// muzzle with radius `radius`, flaring to `radius + topsideOffset` a distance
+// `z` forward, textured V 0.65..1.0 along its length. These figures are
+// hardcoded in effectsRenderer.cxx (ctor at :897, update at :931, draw at :935)
+// and are not BZDB-tunable, so they are constants here too.
+const BZFLAG_SHOT_FLASH_LIFETIME = 1.5;         // ctor
+const BZFLAG_SHOT_FLASH_START_RADIUS = 0.125;   // ctor
+const BZFLAG_SHOT_FLASH_GROWTH = 6.0;           // update(): radius += dt * 6
+const BZFLAG_SHOT_FLASH_LENGTH = 0.5;           // draw(): drawRingYZ z argument
+const BZFLAG_SHOT_FLASH_FLARE = 1.0;            // draw(): topsideOffset base
+const BZFLAG_SHOT_FLASH_FLARE_GROWTH = 5.0;     // draw(): topsideOffset age term
+const BZFLAG_SHOT_FLASH_START_ALPHA = 0.5;      // draw(): alpha = 0.5 - age/lifetime
+const BZFLAG_SHOT_FLASH_SEGMENTS = 32;          // drawRingYZ default
+const BZFLAG_SHOT_FLASH_UV_BOTTOM = 0.65;       // draw(): bottomUV
+// Jump jets, mirroring TankSceneNode. Four downward flames under the tank fire
+// on a jump and fade as the tank rises.
+//   TankSceneNode.cxx:1430  jumpJetsModel[4][3], the jet offsets
+//   TankSceneNode.cxx:1448  the flame triangle and its texture coordinates
+//   TankSceneNode.cxx:419   per-jet random length, roughly +/-25%
+//   Player.cxx:447          jetTime = 0.5 * (jumpVelocity / gravity)
+//   Player.cxx:847          fireJumpJets() sets the scale to 1
+// Upstream offsets are BZFlag tank-local (+X forward, +Y left, +Z up). bzo tank
+// models are BZFlag-sized but face -Z with +Y up, so bzf(x,y,z) -> bzo(-y,z,-x).
+const BZFLAG_JUMPJET_TEXTURE = '/textures/jumpjets.png';
+const BZFLAG_JUMPJET_OFFSETS = [
+  { x: +0.6, y: 0.25, z: +1.5 },
+  { x: -0.6, y: 0.25, z: +1.5 },
+  { x: +0.6, y: 0.25, z: -1.5 },
+  { x: -0.6, y: 0.25, z: -1.5 },
+];
+const BZFLAG_JUMPJET_HALF_WIDTH = 0.3;   // triangle half width at the nozzle
+const BZFLAG_JUMPJET_LENGTH = 1.0;       // triangle length before scaling
+const BZFLAG_JUMPJET_ALPHA = 0.5;        // myColor4f(1,1,1,0.5)
+const BZFLAG_JUMPJET_LIGHT_COLOR = { r: 1.5, g: 1.0, b: 0.5 };
+
+// Shot teleport, mirroring StdShotTeleportEffect (effectsRenderer.cxx:1665).
+// A small six-segment collar that rides along with the shot, spinning about the
+// shot axis while its length pulses on a one second sawtooth. Radius is fixed --
+// upstream's growth line is commented out -- and alpha stays at 1.
+const BZFLAG_SHOT_TELEPORT_TEXTURE = '/textures/dusty_flare.png';
+const BZFLAG_SHOT_TELEPORT_LIFETIME = 4.0;      // ctor
+const BZFLAG_SHOT_TELEPORT_RADIUS = 0.25;       // ctor
+const BZFLAG_SHOT_TELEPORT_FLARE = 0.125;       // draw(): topsideOffset
+const BZFLAG_SHOT_TELEPORT_SPIN = 90;           // draw(): glRotatef(age*90, 1,0,0)
+const BZFLAG_SHOT_TELEPORT_SEGMENTS = 6;        // draw(): segments argument
+const BZFLAG_SHOT_TELEPORT_UV_TOP = 0.8;        // draw(): topUV
 const BZFLAG_SHOT_EXPLOSION_SIZE = 1.2 * BZFLAG_TANK_LENGTH;
 const BZFLAG_SHOT_EXPLOSION_DURATION = 0.8;
 const BZFLAG_SHOT_EXPLOSION_LIGHT_FADE_START_RATIO = 0.7;
@@ -311,12 +361,8 @@ class RenderManager {
     this.renderer = null;
     this.labelRenderer = null;
     this.audioListener = null;
-    // Shared audio buffers
-    this.shootBuffer = null;
-    this.explosionBuffer = null;
-    this.jumpBuffer = null;
-    this.landBuffer = null;
-    this.teleportBuffer = null;
+    // Gameplay sample buffers, keyed by GAME_SOUNDS name.
+    this.soundBuffers = new Map();
     this.container = null;
 
     this.ground = null;
@@ -435,13 +481,7 @@ class RenderManager {
 
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
-    const audioContext = this.audioListener.context;
-    // Create and store shared buffers
-    this.shootBuffer = createShootBuffer(audioContext);
-    this.explosionBuffer = createExplosionBuffer(audioContext);
-    this.jumpBuffer = createJumpBuffer(audioContext);
-    this.landBuffer = createLandBuffer(audioContext);
-    this.projectilePopBuffer = createProjectilePopBuffer(audioContext);
+    // Sample buffers are filled by preloadGameplayAudio() on map entry.
 
     this._initDynamicLights();
 
@@ -483,13 +523,51 @@ class RenderManager {
     return promise;
   }
 
+  // Load every gameplay sample up front, on map entry. Both halves of the game
+  // ship from this repo, so a missing file is a broken build: let it reject.
   async preloadGameplayAudio() {
-    const [teleportBuffer] = await Promise.all([
-      this.preloadAudioBuffer('/teleport.wav'),
-    ]);
-    this.teleportBuffer = teleportBuffer;
-    return {
-      teleportBuffer,
+    const buffers = await Promise.all(
+      GAME_SOUND_NAMES.map((name) => this.preloadAudioBuffer(getSoundPath(name)))
+    );
+    GAME_SOUND_NAMES.forEach((name, index) => {
+      this.soundBuffers.set(name, buffers[index]);
+    });
+    return this.soundBuffers;
+  }
+
+  // One positional one-shot. Attenuation mirrors BZFlag: inverse rolloff at a
+  // reference distance of 20 tank radii, and no per-sound gain, so the samples
+  // keep the relative balance they were recorded with.
+  playSound(name, position) {
+    const buffer = this.soundBuffers.get(name);
+    if (!GAME_SOUNDS[name] || !buffer || !this.audioListener) return;
+
+    const sound = new THREE.PositionalAudio(this.audioListener);
+    sound.setBuffer(buffer);
+    sound.setDistanceModel(SOUND_DISTANCE_MODEL);
+    sound.setRefDistance(SOUND_REF_DISTANCE);
+    sound.setRolloffFactor(SOUND_ROLLOFF_FACTOR);
+    sound.setVolume(MASTER_VOLUME);
+    if (position) sound.position.copy(position);
+    this.worldGroup.add(sound);
+    sound.play();
+    sound.source.onended = () => { this.worldGroup.remove(sound); };
+  }
+
+  // Non-positional variant, for sounds made by the player's own tank. BZFlag
+  // plays these with distance 0, which means no attenuation at all.
+  playLocalSound(name) {
+    const buffer = this.soundBuffers.get(name);
+    if (!GAME_SOUNDS[name] || !buffer || !this.audioListener) return;
+
+    const sound = new THREE.Audio(this.audioListener);
+    sound.setBuffer(buffer);
+    sound.setVolume(MASTER_VOLUME);
+    this.camera.add(sound);
+    sound.play();
+    sound.source.onended = () => {
+      this.camera.remove(sound);
+      sound.disconnect();
     };
   }
 
@@ -2994,84 +3072,28 @@ class RenderManager {
     if (shield.material) shield.material.dispose();
   }
 
-  playShootSound(position) {
-    if (!this.shootBuffer) return;
-    const sound = new THREE.PositionalAudio(this.audioListener);
-    sound.setBuffer(this.shootBuffer);
-    sound.setRefDistance(10);
-    sound.setVolume(0.5);
-    if (position) sound.position.copy(position);
-    this.worldGroup.add(sound);
-    sound.play();
-    // Remove from scene after playback
-    sound.source.onended = () => { this.worldGroup.remove(sound); };
-  }
+  playShootSound(position) { this.playSound('fire', position); }
 
-  playExplosionSound(position) {
-    if (!this.explosionBuffer) return;
-    const sound = new THREE.PositionalAudio(this.audioListener);
-    sound.setBuffer(this.explosionBuffer);
-    sound.setRefDistance(15);
-    sound.setVolume(0.7);
-    if (position) sound.position.copy(position);
-    this.worldGroup.add(sound);
-    sound.play();
-    sound.source.onended = () => { this.worldGroup.remove(sound); };
-  }
+  playExplosionSound(position) { this.playSound('explosion', position); }
 
-  playLocalJumpSound(position) {
-    if (!this.jumpBuffer) return;
-    const sound = new THREE.PositionalAudio(this.audioListener);
-    sound.setBuffer(this.jumpBuffer);
-    sound.setRefDistance(8);
-    sound.setVolume(0.4);
-    if (position) sound.position.copy(position);
-    this.worldGroup.add(sound);
-    sound.play();
-    sound.source.onended = () => { this.worldGroup.remove(sound); };
-  }
+  playLocalJumpSound(position) { this.playSound('jump', position); }
 
-  playLandSound(position) {
-    if (!this.landBuffer) return;
-    const sound = new THREE.PositionalAudio(this.audioListener);
-    sound.setBuffer(this.landBuffer);
-    sound.setRefDistance(8);
-    sound.setVolume(0.9);
-    if (position) sound.position.copy(position);
-    this.worldGroup.add(sound);
-    sound.play();
-    sound.source.onended = () => { this.worldGroup.remove(sound); };
-  }
+  playLandSound(position) { this.playSound('land', position); }
 
-  playTeleportSound(position) {
-    if (!this.teleportBuffer) return;
-    const sound = new THREE.PositionalAudio(this.audioListener);
-    sound.setBuffer(this.teleportBuffer);
-    sound.setRefDistance(12);
-    sound.setVolume(0.6);
-    if (position) sound.position.copy(position);
-    this.worldGroup.add(sound);
-    sound.play();
-    sound.source.onended = () => { this.worldGroup.remove(sound); };
-  }
+  playTeleportSound(position) { this.playSound('teleport', position); }
 
-  playLocalLandSound(intensity = 1) {
-    if (!this.landBuffer) return;
-    const sound = new THREE.Audio(this.audioListener);
-    sound.setBuffer(this.landBuffer);
-    sound.setVolume(Math.max(0.45, Math.min(1.25, 0.55 + (intensity || 1) * 0.35)));
-    this.camera.add(sound);
-    sound.play();
-    sound.source.onended = () => {
-      this.camera.remove(sound);
-      sound.disconnect();
-    };
+  playSpawnSound(position) { this.playSound('pop', position); }
+
+  // BZFlag has no per-sound gain, so landing volume does not vary with impact
+  // speed. The intensity argument still drives the visual landing effect.
+  playLocalLandSound() {
+    this.playLocalSound('land');
   }
 
   createLandingEffect(position, intensity = 1, { local = false } = {}) {
     if (!this.scene || !position) return;
     const clampedIntensity = Math.max(0.4, Math.min(1.6, intensity || 1));
-    if (local) this.playLocalLandSound(clampedIntensity);
+    if (local) this.playLocalLandSound();
     else this.playLandSound(position);
 
     const ringGeometry = new THREE.RingGeometry(0.5, 0.9, 48);
@@ -3104,6 +3126,7 @@ class RenderManager {
 
   createSpawnEffect(position, color = 0x4caf50) {
     if (!this.scene || !position) return;
+    this.playSpawnSound(position);
 
     const tint = new THREE.Color(typeof color === 'number' ? color : 0x4caf50)
       .lerp(new THREE.Color(0xffffff), 0.35);
@@ -3243,6 +3266,7 @@ class RenderManager {
     }
     this.worldGroup.add(projectile);
     this.playShootSound(projectile.position);
+    this.createMuzzleFlash(projectile.position, dir);
     return projectile;
   }
 
@@ -3251,21 +3275,8 @@ class RenderManager {
     if (reason === 0) {
       this.createShotImpact(projectile.position);
     }
-    // Play pop sound at projectile's last position
-    if (this.audioListener && this.projectilePopBuffer && projectile.position) {
-      const popSound = new THREE.PositionalAudio(this.audioListener);
-      popSound.setBuffer(this.projectilePopBuffer);
-      popSound.setRefDistance(8);
-      popSound.setVolume(0.7);
-      popSound.position.copy(projectile.position);
-      this.worldGroup.add(popSound);
-      popSound.play();
-      // Remove sound from scene after it finishes
-      popSound.source.onended = () => {
-        this.worldGroup.remove(popSound);
-        popSound.disconnect();
-      };
-    }
+    // BZFlag plays SFX_SHOT_BOOM when a shot ends.
+    this.playSound('shotBoom', projectile.position);
     // Remove point light from scene if present
     if (this.projectileLights && this.projectileLights.has(projectile)) {
       const light = this.projectileLights.get(projectile);
@@ -3677,6 +3688,282 @@ class RenderManager {
       mesh.children.forEach((child) => {
         mesh.remove(child);
       });
+    }
+  }
+
+  _getFlashTexture() {
+    if (!this._flashTexture) {
+      this._flashTexture = this._createSharedImageTexture(BZFLAG_FLASH_TEXTURE);
+    }
+    return this._flashTexture;
+  }
+
+  // EffectsRenderer::addShotEffect / StdShotEffect. drawRingYZ() sweeps a
+  // frustum: the inner circle sits at the muzzle, the outer one flares out a
+  // fixed distance forward, and both grow with age. BZFlag forces the colour to
+  // white regardless of the shot colour.
+  _buildMuzzleFlashGeometry(age) {
+    const innerRadius = BZFLAG_SHOT_FLASH_START_RADIUS + (age * BZFLAG_SHOT_FLASH_GROWTH);
+    const flare = BZFLAG_SHOT_FLASH_FLARE + (age * BZFLAG_SHOT_FLASH_FLARE_GROWTH);
+    const geometry = new THREE.CylinderGeometry(
+      innerRadius + flare,           // outer circle, a length forward of the muzzle
+      innerRadius,                   // inner circle, at the muzzle
+      BZFLAG_SHOT_FLASH_LENGTH,
+      BZFLAG_SHOT_FLASH_SEGMENTS,
+      1,
+      true                           // open ended, like the triangle strip upstream
+    );
+    // CylinderGeometry runs along +Y; point it along the barrel and slide the
+    // inner circle to the muzzle rather than straddling it.
+    geometry.rotateX(Math.PI / 2);
+    geometry.translate(0, 0, BZFLAG_SHOT_FLASH_LENGTH / 2);
+    // Match drawRingYZ's V range so the texture reads along the flare.
+    const uv = geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i += 1) {
+      const v = uv.getY(i);
+      uv.setY(i, BZFLAG_SHOT_FLASH_UV_BOTTOM + v * (1 - BZFLAG_SHOT_FLASH_UV_BOTTOM));
+    }
+    uv.needsUpdate = true;
+    return geometry;
+  }
+
+  createMuzzleFlash(position, direction) {
+    if (!this.scene || !position || !direction) return;
+
+    const material = new THREE.MeshBasicMaterial({
+      map: this._getFlashTexture(),
+      color: 0xffffff,
+      transparent: true,
+      opacity: BZFLAG_SHOT_FLASH_START_ALPHA,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(this._buildMuzzleFlashGeometry(0), material);
+    mesh.position.copy(position);
+    mesh.lookAt(
+      position.x + direction.x,
+      position.y + direction.y,
+      position.z + direction.z
+    );
+    this.worldGroup.add(mesh);
+
+    if (!this.muzzleFlashes) this.muzzleFlashes = [];
+    this.muzzleFlashes.push({ mesh, material, age: 0 });
+  }
+
+  updateMuzzleFlashes(deltaTime) {
+    if (!this.muzzleFlashes?.length || deltaTime <= 0) return;
+    for (let i = this.muzzleFlashes.length - 1; i >= 0; i -= 1) {
+      const flash = this.muzzleFlashes[i];
+      flash.age += deltaTime;
+
+      // draw(): alpha = 0.5 - age/lifetime, so it is invisible well before the
+      // lifetime elapses. Retire it once it is no longer worth drawing.
+      const alpha = BZFLAG_SHOT_FLASH_START_ALPHA - (flash.age / BZFLAG_SHOT_FLASH_LIFETIME);
+      if (alpha <= 0.001) {
+        this.worldGroup.remove(flash.mesh);
+        flash.mesh.geometry.dispose();
+        flash.material.dispose();
+        this.muzzleFlashes.splice(i, 1);
+        continue;
+      }
+
+      flash.mesh.geometry.dispose();
+      flash.mesh.geometry = this._buildMuzzleFlashGeometry(flash.age);
+      flash.material.opacity = alpha;
+    }
+  }
+
+  _getJumpJetTexture() {
+    if (!this._jumpJetTexture) {
+      this._jumpJetTexture = this._createSharedImageTexture(BZFLAG_JUMPJET_TEXTURE);
+    }
+    return this._jumpJetTexture;
+  }
+
+  // TankSceneNode.cxx:1448 -- a triangle hanging below the nozzle, wide at the
+  // top and coming to a point, with the texture mapped across it.
+  _createJumpJetMesh() {
+    const geometry = new THREE.BufferGeometry();
+    const w = BZFLAG_JUMPJET_HALF_WIDTH;
+    const l = BZFLAG_JUMPJET_LENGTH;
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      +w, 0, 0,
+      -w, 0, 0,
+      0, -l, 0,
+    ], 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+      0, 1,
+      1, 1,
+      0.5, 0,
+    ], 2));
+
+    const material = new THREE.MeshBasicMaterial({
+      map: this._getJumpJetTexture(),
+      color: 0xffffff,
+      transparent: true,
+      opacity: BZFLAG_JUMPJET_ALPHA,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    return new THREE.Mesh(geometry, material);
+  }
+
+  _ensureJumpJets(tank) {
+    if (tank.userData.jumpJets) return tank.userData.jumpJets;
+    const jets = BZFLAG_JUMPJET_OFFSETS.map((offset) => {
+      const mesh = this._createJumpJetMesh();
+      mesh.position.set(offset.x, offset.y, offset.z);
+      mesh.visible = false;
+      tank.add(mesh);
+      return { mesh, length: 1 };
+    });
+    tank.userData.jumpJets = jets;
+    return jets;
+  }
+
+  // Player::fireJumpJets()
+  fireTankJumpJets(tank) {
+    if (!tank) return;
+    const jets = this._ensureJumpJets(tank);
+    tank.userData.jumpJetsScale = 1;
+    // TankSceneNode.cxx:419 -- each jet gets its own length so they flicker
+    // independently rather than moving as one block.
+    for (const jet of jets) {
+      jet.length = 1 - (0.5 * (0.5 - Math.random()));
+    }
+  }
+
+  updateJumpJets(tanks, deltaTime, gameConfig) {
+    if (!tanks || deltaTime <= 0) return;
+
+    const jumpVelocity = gameConfig?.JUMP_VELOCITY || 19;
+    const gravity = gameConfig?.GRAVITY || 9.8;
+    const jetTime = 0.5 * (jumpVelocity / gravity);
+
+    tanks.forEach((tank) => {
+      const scale = tank?.userData?.jumpJetsScale;
+      if (!Number.isFinite(scale) || scale <= 0) return;
+
+      const nextScale = Math.max(0, scale - (deltaTime / jetTime));
+      tank.userData.jumpJetsScale = nextScale;
+
+      for (const jet of tank.userData.jumpJets) {
+        if (nextScale <= 0) {
+          jet.mesh.visible = false;
+          continue;
+        }
+        jet.mesh.visible = true;
+        jet.mesh.scale.set(1, nextScale * jet.length, 1);
+        // executeBillboard() upstream. Turning about the tank's up axis keeps
+        // the flame hanging downward while still facing the camera.
+        this._faceJetToCamera(tank, jet.mesh);
+      }
+
+      this._updateJumpJetLight(tank, nextScale);
+    });
+  }
+
+  // Turn the flame about the tank's up axis so it faces the camera while still
+  // hanging straight down. The jet's own position is already tank-local, so
+  // bringing the camera into that frame makes this a single atan2.
+  _faceJetToCamera(tank, mesh) {
+    if (!this.camera) return;
+    const cameraLocal = tank.worldToLocal(this.camera.getWorldPosition(new THREE.Vector3()));
+    mesh.rotation.y = Math.atan2(
+      cameraLocal.x - mesh.position.x,
+      cameraLocal.z - mesh.position.z
+    );
+  }
+
+  // TankSceneNode.cxx:308 -- one warm light at the tank while the jets burn.
+  _updateJumpJetLight(tank, scale) {
+    if (!this.dynamicLightingEnabled) {
+      if (tank.userData.jumpJetLight) tank.userData.jumpJetLight.visible = false;
+      return;
+    }
+    if (!tank.userData.jumpJetLight) {
+      const { r, g, b } = BZFLAG_JUMPJET_LIGHT_COLOR;
+      const peak = Math.max(r, g, b);
+      const light = new THREE.PointLight(new THREE.Color(r / peak, g / peak, b / peak), 0, 30, 2);
+      tank.add(light);
+      tank.userData.jumpJetLight = light;
+    }
+    const light = tank.userData.jumpJetLight;
+    light.visible = scale > 0;
+    light.intensity = scale * 2;
+  }
+
+  _getShotTeleportTexture() {
+    if (!this._shotTeleportTexture) {
+      this._shotTeleportTexture = this._createSharedImageTexture(BZFLAG_SHOT_TELEPORT_TEXTURE);
+    }
+    return this._shotTeleportTexture;
+  }
+
+  // draw(): length is 0.5 + mod*0.5 where mod is a one second sawtooth centred
+  // on zero, so the collar stretches between 0.25 and 0.75 as it travels.
+  _buildShotTeleportGeometry(age) {
+    const sawtooth = (age - Math.floor(age)) - 0.5;
+    const length = 0.5 + (sawtooth * 0.5);
+    const geometry = new THREE.CylinderGeometry(
+      BZFLAG_SHOT_TELEPORT_RADIUS + BZFLAG_SHOT_TELEPORT_FLARE,
+      BZFLAG_SHOT_TELEPORT_RADIUS,
+      length,
+      BZFLAG_SHOT_TELEPORT_SEGMENTS,
+      1,
+      true
+    );
+    geometry.rotateX(Math.PI / 2);
+    geometry.translate(0, 0, length / 2);
+    const uv = geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i += 1) {
+      uv.setY(i, uv.getY(i) * BZFLAG_SHOT_TELEPORT_UV_TOP);
+    }
+    uv.needsUpdate = true;
+    return geometry;
+  }
+
+  // EffectsRenderer::addShotTeleportEffect. Upstream advances the effect by
+  // position + velocity*age, so it rides with the shot; parenting it to the
+  // projectile does the same thing and disposes with it.
+  createShotTeleportEffect(projectile) {
+    if (!this.scene || !projectile) return;
+
+    const material = new THREE.MeshBasicMaterial({
+      map: this._getShotTeleportTexture(),
+      color: 0xffffff,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(this._buildShotTeleportGeometry(0), material);
+    projectile.add(mesh);
+
+    if (!this.shotTeleportEffects) this.shotTeleportEffects = [];
+    this.shotTeleportEffects.push({ mesh, material, projectile, age: 0 });
+  }
+
+  updateShotTeleportEffects(deltaTime) {
+    if (!this.shotTeleportEffects?.length || deltaTime <= 0) return;
+    for (let i = this.shotTeleportEffects.length - 1; i >= 0; i -= 1) {
+      const effect = this.shotTeleportEffects[i];
+      effect.age += deltaTime;
+
+      // Drop it once it expires, or once the shot it rides on is gone.
+      if (effect.age >= BZFLAG_SHOT_TELEPORT_LIFETIME || !effect.mesh.parent) {
+        effect.mesh.parent?.remove(effect.mesh);
+        effect.mesh.geometry.dispose();
+        effect.material.dispose();
+        this.shotTeleportEffects.splice(i, 1);
+        continue;
+      }
+
+      effect.mesh.geometry.dispose();
+      effect.mesh.geometry = this._buildShotTeleportGeometry(effect.age);
+      // glRotatef(age*90, 1, 0, 0): spin about the shot axis.
+      effect.mesh.rotation.z = THREE.MathUtils.degToRad(effect.age * BZFLAG_SHOT_TELEPORT_SPIN);
     }
   }
 

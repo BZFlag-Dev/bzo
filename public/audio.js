@@ -5,91 +5,68 @@
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
-// audio.js - Handles sound buffer creation and exposes buffers for positional audio
+// audio.js - Gameplay sound manifest and loading.
+//
+// Samples come from upstream BZFlag (bzflag/data/*.wav) so bzo sounds like the
+// game it mirrors. The `sfx` column below is BZFlag's sound code from
+// src/bzflag/sound.h, resolved through the soundFiles[] table in
+// src/bzflag/sound.cxx.
+//
+// Both the server and the client ship from this repo, so these files are always
+// present. Do not add fallbacks for missing audio -- a failed load is a broken
+// build and should surface as an error.
 
-// Pop/Mini-explosion for projectile removal
-export function createProjectilePopBuffer(audioContext) {
-  const sampleRate = audioContext.sampleRate;
-  const duration = 0.11; // still very brief, but a bit longer for impact
-  const length = Math.floor(sampleRate * duration);
-  const buffer = audioContext.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    // Impact: burst of white noise with a sharp, fast decay
-    const decay = Math.exp(-t * 32);
-    const noise = (Math.random() * 2 - 1) * decay * 0.85;
-    // Add a low, quick thump for body
-    const thump = Math.sin(2 * Math.PI * 90 * t) * Math.exp(-t * 22) * 0.4;
-    // Add a little high-frequency crack for sharpness
-    const crack = Math.sin(2 * Math.PI * 1800 * t) * Math.exp(-t * 40) * 0.18;
-    data[i] = noise + thump + crack;
-  }
-  return buffer;
+export const AUDIO_BASE_PATH = '/audio';
+
+// BZFlag's attenuation, from getWorldStuff()/recalcEventDistance() in
+// src/bzflag/sound.cxx:
+//
+//   minEventDist = 20.0f * 4.32f            // 20 tank radii = 86.4
+//   amplitude = (d < minEventDist) ? 1.0f : minEventDist / d
+//
+// That is inverse-distance rolloff with a rolloff factor of 1, clamped to full
+// volume inside the reference distance -- exactly the Web Audio "inverse"
+// distance model. bzo's world is 1:1 with BZFlag's (both 800 units across), so
+// the constant transfers unchanged. Note it is deliberately BZFlag's tank
+// radius of 4.32 and not bzo's 2: the figure scales with the world, not with
+// the vehicle, so a shot 200 units away sounds the same in both games.
+export const SOUND_REF_DISTANCE = 20 * 4.32;
+export const SOUND_ROLLOFF_FACTOR = 1;
+export const SOUND_DISTANCE_MODEL = 'inverse';
+
+// BZFlag has no per-sound volume. Every sample plays at its recorded level,
+// scaled only by the global setting (volumeAtten in sound.cxx) and by distance.
+// The samples are pre-mixed relative to each other, so adding per-sound gain
+// here would undo that balance. Adjust this one number, not the table below.
+export const MASTER_VOLUME = 1;
+
+export const GAME_SOUNDS = Object.freeze({
+  // A shot is fired.
+  fire: { file: 'fire.wav', sfx: 'SFX_FIRE' },
+  // A shot expires or hits an obstacle.
+  shotBoom: { file: 'boom.wav', sfx: 'SFX_SHOT_BOOM' },
+  // A tank is destroyed.
+  explosion: { file: 'explosion.wav', sfx: 'SFX_EXPLOSION' },
+  // A tank jumps.
+  jump: { file: 'jump.wav', sfx: 'SFX_JUMP' },
+  // A tank lands.
+  land: { file: 'land.wav', sfx: 'SFX_LAND' },
+  // A tank passes through a teleporter.
+  teleport: { file: 'teleport.wav', sfx: 'SFX_TELEPORT' },
+  // A tank appears. BZFlag's SFX_POP is the tank-appeared sound.
+  pop: { file: 'pop.wav', sfx: 'SFX_POP' },
+});
+
+export const GAME_SOUND_NAMES = Object.freeze(Object.keys(GAME_SOUNDS));
+
+export function getSoundPath(name) {
+  const sound = GAME_SOUNDS[name];
+  if (!sound) throw new Error(`Unknown sound "${name}"`);
+  return `${AUDIO_BASE_PATH}/${sound.file}`;
 }
 
-export function createShootBuffer(audioContext) {
-  const sampleRate = audioContext.sampleRate;
-  const duration = 0.2;
-  const length = sampleRate * duration;
-  const buffer = audioContext.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    const frequency = 800 - (t * 3000);
-    const decay = Math.exp(-t * 15);
-    data[i] = Math.sin(2 * Math.PI * frequency * t) * decay * 0.3;
-  }
-  return buffer;
-}
-
-export function createExplosionBuffer(audioContext) {
-  const sampleRate = audioContext.sampleRate;
-  const duration = 0.5;
-  const length = sampleRate * duration;
-  const buffer = audioContext.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    const frequency = 100 - (t * 80);
-    const decay = Math.exp(-t * 5);
-    const noise = (Math.random() * 2 - 1) * 0.3;
-    const tone = Math.sin(2 * Math.PI * frequency * t) * 0.7;
-    data[i] = (tone + noise) * decay * 0.4;
-  }
-  return buffer;
-}
-
-export function createJumpBuffer(audioContext) {
-  const sampleRate = audioContext.sampleRate;
-  const duration = 0.15;
-  const length = sampleRate * duration;
-  const buffer = audioContext.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    const frequency = 200 + (t * 400);
-    const envelope = Math.sin((t / duration) * Math.PI);
-    data[i] = Math.sin(2 * Math.PI * frequency * t) * envelope * 0.2;
-  }
-  return buffer;
-}
-
-export function createLandBuffer(audioContext) {
-  const sampleRate = audioContext.sampleRate;
-  const duration = 0.16;
-  const length = Math.floor(sampleRate * duration);
-  const buffer = audioContext.createBuffer(1, length, sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) {
-    const t = i / sampleRate;
-    const body = Math.sin(2 * Math.PI * (118 - t * 120) * t) * Math.exp(-t * 18) * 0.58;
-    const thump = Math.sin(2 * Math.PI * (72 - t * 48) * t) * Math.exp(-t * 24) * 0.45;
-    const smack = (Math.random() * 2 - 1) * Math.exp(-t * 34) * 0.22;
-    const click = Math.sin(2 * Math.PI * 700 * t) * Math.exp(-t * 42) * 0.05;
-    data[i] = (body + thump + smack + click) * 0.92;
-  }
-  return buffer;
+export function getSoundPaths() {
+  return GAME_SOUND_NAMES.map(getSoundPath);
 }
 
 export async function loadAudioBuffer(audioContext, url) {

@@ -17,6 +17,36 @@ Useful subtrees: `src/obstacle/` (obstacle geometry and collision),
 
 Prefer upstream naming too -- see `docs/tank-model-format.md` for tank part names.
 
+### Intentional deviations from BZFlag
+
+These are deliberate. Do not "fix" them without being asked.
+
+- **Clients rejoin without waiting for a click.** BZFlag makes the player
+  confirm before respawning; bzo respawns automatically after the same 5 second
+  delay.
+- **Clients reconnect directly when the server restarts**, rather than dropping
+  to a menu.
+
+- **bzo does not mirror BZFlag's client display options.** Upstream exposes
+  `useFancyEffects`, `spawnEffect`, `shotEffect`, `deathEffect`, `landEffect`,
+  `ricoEffect`, `tpEffect` and friends as ReadWrite BZDB, largely so the game
+  degrades on old hardware. bzo needs hardware-accelerated WebGL to run at all,
+  so that tradeoff does not apply. **Implement upstream's default variant and
+  no setting.** Add a toggle only when a measured frame-rate impact justifies
+  it, not for parity with the upstream options list.
+- **Tanks are selectable OBJ models, not one compiled-in model.** BZFlag ships a
+  single tank in `src/geometry/models/tank/` at three LODs, varied only by the
+  `animatedTreads` and `treadStyle` settings. bzo loads several models from
+  `public/obj/` and lets the player choose; `docs/tank-model-format.md` defines
+  the part-naming contract, which keeps upstream's `body`/`turret`/`barrel`/
+  `ltread`/`rtread` names. The death explosion throws the tank's own parts, so
+  it differs from upstream's as a consequence. Accepted for now -- do not report
+  the model set or the explosion as parity gaps.
+
+The first two exist so a test session can be driven from the server alone. Re-testing
+otherwise means walking to every browser, phone, and headset and clicking. They
+may change once that stops being the dominant cost.
+
 ## Memory Policy
 
 - When the user asks to remember something, record it in this file so other
@@ -38,6 +68,12 @@ Prefer upstream naming too -- see `docs/tank-model-format.md` for tank part name
   fallbacks or default values for packet fields that the shipped `client.js` +
   `server.js` protocol guarantees. Prefer explicit failure or direct field use
   over silent fallback behavior.
+- **Version control is for history; source comments and documentation are not.**
+  Describe what the code does now, never what it used to do. Do not write "this
+  used to be X", "renamed from Y", "previously Z", or contrast the current
+  behavior with an older version -- `git log` and `CHANGELOG.md` already hold
+  that, and a note about code that no longer exists is noise a reader has to
+  disprove. The same applies to commented-out code: delete it.
 - **Preserve the AGPL license header** that already appears at the top of major
   source files when creating or modifying files.
 
@@ -121,6 +157,86 @@ how `render.js` draws obstacles (`mesh.rotation.y = obs.rotation`).
 already drifted. When touching any of them, change both sides in the same edit;
 the fix is to move each into the `collision-geometry` pair, matching upstream
 BZFlag, with fuzz coverage -- as the pyramid path already has.
+
+## Visual effects
+
+Effects mirror BZFlag's, taking geometry and timing from upstream rather than
+approximating the look. Read the relevant `draw()` before building one: several
+of these are not what their names suggest. The muzzle flash is a flared cone out
+of the barrel, not a billboard; the shot teleport effect is a spinning collar
+that rides along with the shot for four seconds, not a flash at the portal.
+
+| bzo | upstream | source |
+|---|---|---|
+| muzzle flash | `StdShotEffect` | `effectsRenderer.cxx:897` |
+| shot teleport collar | `StdShotTeleportEffect` | `effectsRenderer.cxx:1665` |
+| jump jets | `TankSceneNode::renderJumpJets` | `TankSceneNode.cxx:1438` |
+| spawn grow-in | `Player::spawnEffect` | `Player.cxx:1056` |
+| landing squish | `Player::setLandingSpeed` | `Player.cxx:1015` |
+
+Textures come from `$HOME/bzflag/data/` into `public/textures/`, and belong in
+the map-entry preload list in `public/client.js`. Effect timings are hardcoded
+constants upstream, so keep them as constants here, each annotated with the
+upstream line it came from.
+
+## Shot timing
+
+BZFlag derives shot timing from `_reloadTime`, which itself defaults to
+`_shotRange / _shotSpeed`:
+
+- `ShotPath.cxx:48` — a shot's lifetime is `_reloadTime`
+- `LocalPlayer.cxx:1311` — a slot reloads after `_reloadTime / numShots`
+
+So firing continuously sustains exactly `maxShots` shots in flight. bzo derives
+`SHOT_RELOAD_TIME` the same way, after the `server.json` overrides are applied,
+so changing `shotMaxActive`, `shotSpeed`, or `shotDistance` keeps the relation
+intact. With the defaults and five slots that is 700ms.
+
+`shotReloadTime` in `server.json` pins the value and disables the derivation.
+Leave it unset unless an operator deliberately wants a non-BZFlag fire rate --
+in particular do not add it to `example-server.json`, which is copied to
+`server.json` on first start.
+
+## Audio
+
+Gameplay samples live in `public/audio/` and come from upstream BZFlag
+(`$HOME/bzflag/data/*.wav`), so bzo sounds like the game it mirrors. The
+manifest in `public/audio.js` maps each logical name to its file, its BZFlag
+`SFX_*` code, and its distance/volume; `render.js` plays everything through
+`playSound()` / `playLocalSound()` rather than bespoke per-sound methods.
+
+All samples are preloaded by `preloadGameplayAudio()` during map entry. **Both
+halves of the game ship from this repo, so the files are always present. Do not
+add fallbacks for missing audio** -- a failed load is a broken build and should
+surface as an error, not a silent degradation.
+
+| bzo name | file | BZFlag SFX | event |
+|---|---|---|---|
+| `fire` | `fire.wav` | `SFX_FIRE` | a shot is fired |
+| `shotBoom` | `boom.wav` | `SFX_SHOT_BOOM` | a shot expires or hits an obstacle |
+| `explosion` | `explosion.wav` | `SFX_EXPLOSION`, `SFX_DIE` | a tank is destroyed |
+| `jump` | `jump.wav` | `SFX_JUMP` | a tank jumps |
+| `land` | `land.wav` | `SFX_LAND` | a tank lands |
+| `teleport` | `teleport.wav` | `SFX_TELEPORT` | a tank passes through a teleporter |
+| `pop` | `pop.wav` | `SFX_POP` | a tank appears (spawn) |
+
+**Levels mirror BZFlag exactly, and there is no per-sound volume.** BZFlag scales
+every sample only by distance and one global setting; the samples are pre-mixed
+relative to each other, so adding per-sound gain undoes that balance. Its
+attenuation, from `getWorldStuff()` in `src/bzflag/sound.cxx`, is
+`amplitude = d < 86.4 ? 1 : 86.4 / d`, where `86.4` is 20 BZFlag tank radii
+(`20 * 4.32`). That is the Web Audio `inverse` distance model with
+`refDistance = 86.4` and `rolloffFactor = 1`, which reproduces the curve exactly.
+The constant scales with the world, not the vehicle, so it stays `4.32` even
+though a bzo tank has radius 2. Tune `MASTER_VOLUME` in `public/audio.js`, not
+individual sounds.
+
+Every remaining BZFlag sound is gated on a feature bzo does not have yet:
+`ricochet` and `bounce` need bouncing shots, `flag_*`/`teamgrab`/`thief` need
+flags, and `laser`/`shock`/`missile`/`burrow`/`phantom`/`steamroller`/`lock`
+need superflags. When adding one of those features, take its sound from upstream
+at the same time. The BZFlag sound codes are in `src/bzflag/sound.h`, resolved
+through the `soundFiles[]` table in `src/bzflag/sound.cxx`.
 
 ## Dev Workflow
 
@@ -233,8 +349,11 @@ authentication succeeds.
   `ws.send(JSON.stringify({ type: 'debug', message: 'your debug info' }))` and
   they appear in `server.log`. This is especially useful on headsets like Quest 2
   where browser console access is limited.
-- **NEVER use `tail`, `grep`, or other terminal commands on `server.log`.** It is
-  always open in the editor; read it with `read_file` instead.
+- **Do not `grep`, `tail`, or `cat` `server.log` for its contents.** It is always
+  open in the editor as an addressable buffer, so read it with `read_file` and an
+  offset. Repeatedly grepping it wastes tokens re-reading text that can be
+  addressed directly. Cheap metadata commands are fine -- `wc -l` to watch it
+  grow is useful.
 - `server.log` is the primary runtime output surface during development. Assume
   it is already open and read it directly whenever runtime diagnostics are
   needed. Do not ask the user to re-open it.

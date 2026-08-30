@@ -32,7 +32,6 @@
   "shotRange": 350,
   "shotDuration": 3.5,
   "shotDistance": 350,
-  "shotReloadTime": 1000,
   "shotMaxActive": 1,
   "shotRadius": 0.5,
   "shotTailLength": 4.0,
