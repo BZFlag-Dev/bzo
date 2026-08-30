@@ -4,6 +4,11 @@
 #
 # This is a team play world
 
+options
+	-c
+	-mp 10,10,10,10,10,10
+end
+
 # Typical World definition
 #
 #world

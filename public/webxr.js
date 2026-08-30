@@ -459,14 +459,29 @@ export function updateXRControllerInput() {
       const axes = inputSource.gamepad.axes || [];
       const buttons = inputSource.gamepad.buttons || [];
 
+      if (buttons[0]) {
+        controller.trigger = buttons[0].value;
+        controller.triggerPressed = buttons[0].pressed || false;
+      }
+      if (buttons[1]) {
+        controller.grip = buttons[1].value;
+        controller.buttonGrip = buttons[1].pressed || false;
+      }
+      if (buttons[4]) {
+        controller.buttonA = buttons[4].pressed || false;
+      }
+      if (buttons[5]) {
+        controller.buttonB = buttons[5].pressed || false;
+      }
+      if (buttons[3]) {
+        controller.buttonThumbstick = buttons[3].pressed || false;
+      }
+
       // Left controller: thumbstick for movement (axes 0, 1)
       if (handedness === 'left') {
         const stick = readThumbstickAxes(axes, [0, 1]);
         controller.thumbstick.x = stick.x;
         controller.thumbstick.y = stick.y;
-        if (buttons[3]) {
-          controller.buttonThumbstick = buttons[3].pressed || false;
-        }
         if (frameCounter % 60 === 0) {
           debugLog(`Left: axes.length=${axes.length}, [0]=${axes[0]?.toFixed(2)}, [1]=${axes[1]?.toFixed(2)}`);
         }
@@ -478,30 +493,6 @@ export function updateXRControllerInput() {
         controller.thumbstick.x = stick.x;
         controller.thumbstick.y = stick.y;
 
-        // Trigger button (index 0) for shooting
-        if (buttons[0]) {
-          controller.trigger = buttons[0].value; // 0-1
-          controller.triggerPressed = buttons[0].pressed || false;
-        }
-
-        // Side grip/squeeze button (index 1) for jumping
-        if (buttons[1]) {
-          controller.grip = buttons[1].value; // 0-1
-          controller.buttonGrip = buttons[1].pressed || false;
-        }
-
-        // A button (index 4) for firing
-        if (buttons[4]) {
-          controller.buttonA = buttons[4].pressed || false;
-        }
-
-        // B button (index 5) for jumping
-        if (buttons[5]) {
-          controller.buttonB = buttons[5].pressed || false;
-        }
-        if (buttons[3]) {
-          controller.buttonThumbstick = buttons[3].pressed || false;
-        }
         if (frameCounter % 60 === 0) {
           debugLog(`Right: axes[2]=${axes[2]?.toFixed(2)}, axes[3]=${axes[3]?.toFixed(2)}, A=${controller.buttonA}, B=${controller.buttonB}, btnCount=${buttons.length}`);
         }
@@ -526,7 +517,9 @@ export function getXRControllerInput() {
     rightThumbstick: { x: 0, y: 0 },
     leftThumbstickPressed: false,
     rightThumbstickPressed: false,
+    leftTrigger: 0,
     rightTrigger: 0,
+    leftGrip: 0,
     rightGrip: 0,
     buttonA: false,
     buttonB: false,
@@ -537,6 +530,11 @@ export function getXRControllerInput() {
     const leftController = xrState.controllers.get('left');
     input.leftThumbstick = { ...leftController.thumbstick };
     input.leftThumbstickPressed = leftController.buttonThumbstick || false;
+    input.leftTrigger = leftController.trigger || 0;
+    input.leftGrip = leftController.grip || 0;
+    input.buttonA = input.buttonA || leftController.buttonA || false;
+    input.buttonB = input.buttonB || leftController.buttonB || false;
+    input.buttonGrip = input.buttonGrip || leftController.buttonGrip || false;
   }
 
   if (xrState.controllers.get('right')) {
@@ -544,9 +542,9 @@ export function getXRControllerInput() {
     input.rightThumbstick = { ...rightController.thumbstick };
     input.rightTrigger = rightController.trigger || 0;
     input.rightGrip = rightController.grip || 0;
-    input.buttonA = rightController.buttonA || false;
-    input.buttonB = rightController.buttonB || false;
-    input.buttonGrip = rightController.buttonGrip || false;
+    input.buttonA = input.buttonA || rightController.buttonA || false;
+    input.buttonB = input.buttonB || rightController.buttonB || false;
+    input.buttonGrip = input.buttonGrip || rightController.buttonGrip || false;
     input.rightThumbstickPressed = rightController.buttonThumbstick || false;
   }
 

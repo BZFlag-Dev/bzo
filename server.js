@@ -11,6 +11,14 @@ const logPath = require('path').join(__dirname, 'server.log');
 require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
 const { normalizeShotSlotCount } = require('./server/shot-limits.cjs');
+const {
+  normalizePlayerTeamSelection,
+  parseBZWTeamMode,
+  resolveTeamMode,
+  selectPlayerTeam,
+  getPlayerTeamColor,
+  getInitialPlayerColor,
+} = require('./server/player-teams.cjs');
 const path = require('path');
 const fs = require('fs');
 
@@ -467,6 +475,7 @@ if (MAP_SOURCE !== 'random') {
 function parseBZWMap(filename) {
   const text = fs.readFileSync(filename, 'utf8');
   const lines = text.split(/\r?\n/);
+  const teamMode = parseBZWTeamMode(lines);
   const obstacles = [];
   const teleporters = [];
   const parsedLinks = [];
@@ -760,6 +769,7 @@ function parseBZWMap(filename) {
   return {
     obstacles,
     teleporterGraph,
+    teamMode,
   };
 }
 
@@ -861,6 +871,7 @@ function generateObstacles() {
 
 let OBSTACLES;
 let TELEPORTER_GRAPH = { teleporters: [], links: [] };
+let mapTeamMode = null;
 if (MAP_SOURCE === 'random') {
   OBSTACLES = generateObstacles();
   TELEPORTER_GRAPH = { teleporters: [], links: [] };
@@ -869,9 +880,16 @@ if (MAP_SOURCE === 'random') {
   const mapData = parseBZWMap(mapPath);
   OBSTACLES = mapData.obstacles;
   TELEPORTER_GRAPH = mapData.teleporterGraph;
+  mapTeamMode = mapData.teamMode;
   log(`Loaded ${OBSTACLES.length} obstacles from ${mapPath}`);
   log(`Loaded ${TELEPORTER_GRAPH.links.length} teleporter face links from ${mapPath}`);
 }
+const configuredMaxPlayers = Number(serverConfig.maxPlayers);
+const defaultTeamLimit = Number.isInteger(configuredMaxPlayers) && configuredMaxPlayers > 0
+  ? configuredMaxPlayers
+  : 16;
+const TEAM_MODE = resolveTeamMode(serverConfig.teamMode, mapTeamMode, defaultTeamLimit);
+log(`Team mode: ${TEAM_MODE.enabled ? 'enabled' : 'disabled'}; autoTeam=${TEAM_MODE.autoTeam}; teams=${TEAM_MODE.teams.map((team) => `${team}:${TEAM_MODE.limits[team]}`).join(',')}`);
 log(OBSTACLES);
 
 let TELEPORTER_OBSTACLES_BY_INDEX = new Map();
@@ -991,12 +1009,10 @@ class Player {
     this.lastJumpTime = 0;
     this.onObstacle = false;
     this.connectDate = new Date();
-    // Spread new tank colors away from currently connected players.
-    this.color = Player.pickDistinctColor();
     this.tankModel = 'bzflag';
-    // Roles are server-authoritative. A player remains active unless joinGame
-    // explicitly requests the receive-only spectator role.
-    this.role = 'active';
+    // Teams are server-authoritative. Observer is receive-only and non-combatant.
+    this.team = 'rogue';
+    this.color = getInitialPlayerColor(TEAM_MODE, this.team, () => Player.pickDistinctColor());
     this.joined = false;
     this.voiceMicEnabled = false;
     this.voiceRosterSignature = '';
@@ -1202,7 +1218,7 @@ class Player {
       connectDate: this.connectDate ? this.connectDate.toISOString() : undefined,
       color: this.color,
       tankModel: this.tankModel,
-      role: this.role,
+      team: this.team,
       voiceMicEnabled: this.voiceMicEnabled,
       teleportCooldownUntil: this.teleportCooldownUntil,
     };
@@ -1792,8 +1808,8 @@ function getVoicePeerState(peer) {
   return {
     id: peer.id,
     name: peer.name,
-    role: peer.role,
-    micEnabled: peer.role === 'active' && peer.voiceMicEnabled === true,
+    team: peer.team,
+    micEnabled: peer.team !== 'observer' && peer.voiceMicEnabled === true,
   };
 }
 
@@ -1802,7 +1818,7 @@ function sendVoiceRoster(player, force = false) {
 
   const peers = getNearbyVoicePeers(player);
   const signature = peers
-    .map((peer) => `${peer.id}:${peer.role}:${peer.voiceMicEnabled === true ? 1 : 0}`)
+    .map((peer) => `${peer.id}:${peer.team}:${peer.voiceMicEnabled === true ? 1 : 0}`)
     .join('|');
   if (!force && player.voiceRosterSignature === signature) return;
 
@@ -1826,8 +1842,8 @@ function sendNearbyVoiceState(player) {
     type: 'voiceState',
     channel: VOICE_CHANNEL,
     playerId: player.id,
-    role: player.role,
-    enabled: player.role === 'active' && player.voiceMicEnabled === true,
+    team: player.team,
+    enabled: player.team !== 'observer' && player.voiceMicEnabled === true,
   };
   sendToPlayer(player, stateMessage);
   getNearbyVoicePeers(player).forEach((peer) => sendToPlayer(peer, stateMessage));
@@ -1873,7 +1889,7 @@ function getVoiceCandidate(message) {
 
 function forwardVoiceSignal(player, message) {
   if (!player.joined) return;
-  if (message.type === 'voiceOffer' && player.role === 'spectator') return;
+  if (message.type === 'voiceOffer' && player.team === 'observer') return;
 
   const targetId = normalizePlayerId(message.targetId ?? message.to);
   const target = targetId ? players.get(targetId) : null;
@@ -2471,7 +2487,7 @@ function simulateProjectilesStep(stepSeconds, now) {
     // Check collision with players using extrapolated positions
     players.forEach((player) => {
       if (player.id === proj.playerId) return; // Can't hit yourself
-      if (player.role === 'spectator') return; // Spectators are non-combatants
+      if (player.team === 'observer') return; // Observers are non-combatants
       if (player.paused) return; // Can't hit paused players
       if (player.health <= 0) return; // Can't hit dead players
 
@@ -2706,6 +2722,7 @@ wss.on('connection', (ws, req) => {
     player: player.getState(),
     players: Array.from(players.values()).map(p => p.getState()),
     config: GAME_CONFIG,
+    teamMode: TEAM_MODE,
     voiceRtcConfig: { iceServers: VOICE_ICE_SERVERS },
     obstacles: OBSTACLES,
     teleporterGraph: TELEPORTER_GRAPH,
@@ -2789,9 +2806,9 @@ wss.on('connection', (ws, req) => {
           if (!player.joined) break;
           if (message.channel && message.channel !== VOICE_CHANNEL) break;
 
-          // Spectators are receive-only, so the server never stores an enabled
+          // Observers are receive-only, so the server never stores an enabled
           // microphone state for them even if a client sends enabled: true.
-          player.voiceMicEnabled = player.role === 'active' && message.enabled === true;
+          player.voiceMicEnabled = player.team !== 'observer' && message.enabled === true;
           sendNearbyVoiceState(player);
           refreshVoiceRosters();
           break;
@@ -2811,7 +2828,7 @@ wss.on('connection', (ws, req) => {
           break;
         }
         case 'tp': {
-          if (player.role === 'spectator') break;
+          if (player.team === 'observer') break;
 
           const now = Date.now();
           const sourceState = {
@@ -2871,7 +2888,7 @@ wss.on('connection', (ws, req) => {
           break;
         }
         case 'm': {
-          if (player.role === 'spectator') break;
+          if (player.team === 'observer') break;
 
           const now = Date.now();
           // Calculate deltaTime based on server's last update time
@@ -3053,7 +3070,7 @@ wss.on('connection', (ws, req) => {
 
         case 'shoot': {
           // message: { type: 'shot', x, y, z, dirX, dirZ }
-          if (player.role === 'spectator') break;
+          if (player.team === 'observer') break;
           if (player.health <= 0) break; // Dead players can't shoot
           if (!validateShot(player, message.x, message.y, message.z)) break;
           const rawDirX = Number(message.dirX);
@@ -3106,7 +3123,7 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'selfDestruct': {
-          if (player.role === 'spectator') break;
+          if (player.team === 'observer') break;
           if (player.health <= 0) break;
           player.health = 0;
           player.deaths++;
@@ -3137,14 +3154,31 @@ wss.on('connection', (ws, req) => {
           const requestedTankModel = typeof message.tankModel === 'string'
             ? normalizeTankModelId(message.tankModel)
             : 'bzflag';
-          const requestedRole = typeof message.role === 'string'
-            ? message.role.trim().toLowerCase()
-            : 'active';
+          const requestedTeam = normalizePlayerTeamSelection(message.team);
+          if (requestedTeam !== 'automatic' && !TEAM_MODE.teams.includes(requestedTeam)) {
+            ws.send(JSON.stringify({ error: `Team is not available: ${requestedTeam}` }));
+            break;
+          }
+          const teamCounts = {};
+          const teamScores = {};
+          players.forEach((candidate) => {
+            if (!candidate.joined || candidate.id === player.id) return;
+            teamCounts[candidate.team] = (teamCounts[candidate.team] || 0) + 1;
+            teamScores[candidate.team] = (teamScores[candidate.team] || 0) + candidate.kills - candidate.deaths;
+          });
+          const assignedTeam = selectPlayerTeam(requestedTeam, TEAM_MODE, teamCounts, teamScores);
+          if (!assignedTeam) {
+            ws.send(JSON.stringify({ error: `Team is full: ${requestedTeam}` }));
+            break;
+          }
           player.name = joinName;
           player.tankModel = isAllowedTankModel(requestedTankModel)
             ? requestedTankModel
             : 'bzflag';
-          player.role = requestedRole === 'spectator' ? 'spectator' : 'active';
+          player.team = assignedTeam;
+          if (TEAM_MODE.enabled) {
+            player.color = getPlayerTeamColor(player.team);
+          }
           player.voiceMicEnabled = false;
           player.joined = true;
           player.voiceRosterSignature = '';
@@ -3171,9 +3205,9 @@ wss.on('connection', (ws, req) => {
           player.deaths = 0;
           player.kills = 0;
           if (message.isMobile) {
-            log(`Player ${player.id} joining game as "${joinName}" [${player.role.toUpperCase()}] [MOBILE]`);
+            log(`Player ${player.id} joining game as "${joinName}" [${player.team.toUpperCase()}] [MOBILE]`);
           } else {
-            log(`Player ${player.id} joining game as "${joinName}" [${player.role.toUpperCase()}]`);
+            log(`Player ${player.id} joining game as "${joinName}" [${player.team.toUpperCase()}]`);
           }
 
           // broadcast join to all (full player info)
@@ -3205,7 +3239,7 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'pause':
-          if (player.role === 'spectator') break;
+          if (player.team === 'observer') break;
           if (!player.paused && player.pauseCountdownStart === 0) {
             // Start pause countdown
             player.pauseCountdownStart = Date.now();

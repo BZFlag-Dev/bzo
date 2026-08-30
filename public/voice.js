@@ -9,8 +9,9 @@
 // WebSocket is used only for signaling and state; audio bytes never go through
 // the WebSocket connection.
 
+import { isObserverTeam, normalizePlayerTeam } from './player-teams.mjs';
+
 const VOICE_CHANNEL = 'nearby';
-const SPECTATOR_ROLES = new Set(['spectator', 'observer']);
 
 function normalizePlayerId(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -20,10 +21,6 @@ function normalizePlayerId(value) {
 function normalizeDeviceId(value) {
   if (value === null || value === undefined || value === '') return null;
   return String(value);
-}
-
-function normalizeRole(value) {
-  return SPECTATOR_ROLES.has(String(value || '').toLowerCase()) ? 'spectator' : 'active';
 }
 
 function comparePlayerIds(left, right) {
@@ -104,7 +101,7 @@ function createVoiceError(code, message, cause) {
  * @param {object} options
  * @param {Function} options.sendToServer Sends one JSON-serializable message.
  * @param {string|number} options.localPlayerId The server-assigned player ID.
- * @param {string} [options.role='active'] Either active or spectator.
+ * @param {string} [options.team='rogue'] Player team.
  * @param {object} [options.callbacks] State, peer, audio, device, and error callbacks.
  * @param {RTCConfiguration} [options.rtcConfig] RTCPeerConnection configuration.
  * @param {RTCPeerConnection} [options.RTCPeerConnection] Test/browser constructor override.
@@ -125,7 +122,7 @@ export function createVoiceManager(options = {}) {
   let started = false;
   let closed = false;
   let localPlayerId = normalizePlayerId(options.localPlayerId);
-  let role = normalizeRole(options.role);
+  let team = normalizePlayerTeam(options.team);
   let inputDeviceId = normalizeDeviceId(options.inputDeviceId);
   let audioConstraints = {
     channelCount: 1,
@@ -159,7 +156,7 @@ export function createVoiceManager(options = {}) {
   }
 
   function getTransmitting() {
-    return role !== 'spectator'
+    return !isObserverTeam(team)
       && serverAllowsTransmission
       && microphoneEnabled
       && Boolean(localStream && localStream.getAudioTracks().length);
@@ -169,9 +166,9 @@ export function createVoiceManager(options = {}) {
     return {
       started,
       localPlayerId,
-      role,
+      team,
       channel: VOICE_CHANNEL,
-      canTransmit: role !== 'spectator' && serverAllowsTransmission,
+      canTransmit: !isObserverTeam(team) && serverAllowsTransmission,
       transmitting: getTransmitting(),
       microphoneEnabled,
       microphonePermission,
@@ -201,7 +198,7 @@ export function createVoiceManager(options = {}) {
     sendToServer({
       type: 'voiceState',
       channel: VOICE_CHANNEL,
-      role,
+      team,
       enabled: getTransmitting(),
       transmitting: getTransmitting(),
     });
@@ -279,7 +276,7 @@ export function createVoiceManager(options = {}) {
 
   function setTransceiverDirection(entry) {
     if (!entry.transceiver) return;
-    const direction = role === 'spectator' ? 'recvonly' : 'sendrecv';
+    const direction = isObserverTeam(team) ? 'recvonly' : 'sendrecv';
     try {
       entry.transceiver.direction = direction;
     } catch (error) {
@@ -316,8 +313,8 @@ export function createVoiceManager(options = {}) {
   }
 
   function shouldInitiateOffer(peerId, metadata = {}) {
-    if (role === 'spectator') return false;
-    if (normalizeRole(metadata.role) === 'spectator') return true;
+    if (isObserverTeam(team)) return false;
+    if (isObserverTeam(metadata.team)) return true;
     return comparePlayerIds(localPlayerId, peerId) < 0;
   }
 
@@ -423,15 +420,15 @@ export function createVoiceManager(options = {}) {
     pc.onnegotiationneeded = () => {
       // The lower player ID owns initial offer creation. This deterministic
       // rule avoids both active peers racing to create the first offer. An
-      // active player must initiate when the other peer is a receive-only
-      // spectator, regardless of the numeric player ID.
+      // A combatant must initiate when the other peer is a receive-only
+      // observer, regardless of the numeric player ID.
       if (shouldInitiateOffer(peerId, entry.metadata)) void createOffer(entry);
     };
 
     if (typeof pc.addTransceiver === 'function') {
       try {
         entry.transceiver = pc.addTransceiver('audio', {
-          direction: role === 'spectator' ? 'recvonly' : 'sendrecv',
+          direction: isObserverTeam(team) ? 'recvonly' : 'sendrecv',
         });
         preferOpusCodec(entry.transceiver);
         entry.sender = entry.transceiver.sender || null;
@@ -604,11 +601,11 @@ export function createVoiceManager(options = {}) {
   function handleVoiceState(message) {
     const peerId = getMessagePeerId(message);
     if (!peerId || peerId === localPlayerId) {
-      if (message && message.role !== undefined) {
-        const nextRole = normalizeRole(message.role);
-        if (nextRole !== role) {
-          role = nextRole;
-          if (role === 'spectator') void stopLocalStream({ notify: false });
+      if (message && message.team !== undefined) {
+        const nextTeam = normalizePlayerTeam(message.team);
+        if (nextTeam !== team) {
+          team = nextTeam;
+          if (isObserverTeam(team)) void stopLocalStream({ notify: false });
           void replaceLocalTrack();
         }
       }
@@ -638,8 +635,8 @@ export function createVoiceManager(options = {}) {
   }
 
   async function requestMicrophone({ enable = false } = {}) {
-    if (role === 'spectator') {
-      const error = createVoiceError('spectator_microphone_denied', 'Spectators can listen but cannot use a microphone.');
+    if (isObserverTeam(team)) {
+      const error = createVoiceError('observer_microphone_denied', 'Observers can listen but cannot use a microphone.');
       reportError(error);
       return false;
     }
@@ -705,7 +702,7 @@ export function createVoiceManager(options = {}) {
 
   async function setInputDevice(deviceId) {
     inputDeviceId = normalizeDeviceId(deviceId);
-    if (!localStream || role === 'spectator') {
+    if (!localStream || isObserverTeam(team)) {
       emitState();
       return true;
     }
@@ -720,7 +717,7 @@ export function createVoiceManager(options = {}) {
       noiseSuppression: nextConstraints.noiseSuppression !== false,
       autoGainControl: nextConstraints.autoGainControl !== false,
     };
-    if (!localStream || role === 'spectator') {
+    if (!localStream || isObserverTeam(team)) {
       emitState();
       return true;
     }
@@ -728,8 +725,8 @@ export function createVoiceManager(options = {}) {
   }
 
   async function toggleMicrophone(forceState) {
-    if (role === 'spectator') {
-      const error = createVoiceError('spectator_microphone_denied', 'Spectators can listen but cannot use a microphone.');
+    if (isObserverTeam(team)) {
+      const error = createVoiceError('observer_microphone_denied', 'Observers can listen but cannot use a microphone.');
       reportError(error);
       return false;
     }
@@ -777,20 +774,20 @@ export function createVoiceManager(options = {}) {
     emitState();
   }
 
-  function updateLocalIdentity(identity = {}, nextRole) {
+  function updateLocalIdentity(identity = {}, nextTeam) {
     const requestedId = typeof identity === 'object' ? identity.localPlayerId ?? identity.playerId : identity;
-    const requestedRole = typeof identity === 'object' ? identity.role : nextRole;
+    const requestedTeam = typeof identity === 'object' ? identity.team : nextTeam;
     const normalizedId = requestedId === undefined ? localPlayerId : normalizePlayerId(requestedId);
     if (normalizedId !== localPlayerId) {
       Array.from(peers.keys()).forEach(closePeer);
       roster.clear();
       localPlayerId = normalizedId;
     }
-    if (requestedRole !== undefined) {
-      const next = normalizeRole(requestedRole);
-      if (next !== role) {
-        role = next;
-        if (role === 'spectator') void stopLocalStream({ notify: false });
+    if (requestedTeam !== undefined) {
+      const next = normalizePlayerTeam(requestedTeam);
+      if (next !== team) {
+        team = next;
+        if (isObserverTeam(team)) void stopLocalStream({ notify: false });
         void replaceLocalTrack();
       }
     }

@@ -6,6 +6,28 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.36] - 2026-08-30
+
+### Added
+- Added shared dialog navigation and input ownership for keyboard, mouse, touch, gamepad, and XR controllers.
+- Added a BZFlag-style Team selector with Automatic, Rogue, Observer, and enabled color teams.
+- Added authoritative team-mode configuration through server JSON and BZW `-c`, `-offa`, `-autoTeam`, and six-team `-mp` options.
+- Added an immersive XR Settings panel opened by either controller stick, with `Exit VR` as the first choice.
+- Added focused input-context, player-team, team-mode, and shot-limit checks to the release validation suite.
+
+### Changed
+- Updated HiX to enable team play with ten slots each for Rogue, Red, Green, Blue, Purple, and Observer.
+- Updated XR controls so either controller can navigate menus, activate actions, fire, and jump.
+- Updated Settings, Help, Voice, Operator, and Entry dialogs to use a consistent responsive presentation and shared navigation behavior.
+- Updated player and voice state terminology from role/spectator to team/observer.
+
+### Fixed
+- Fixed dialog input leaking into gameplay and stale controls continuing after input-context changes.
+- Fixed the Entry Team selector being skipped by Tab after reopening the join dialog.
+- Fixed automatic team assignment, per-team capacity enforcement, and BZFlag-compatible balancing behavior.
+- Fixed team colors not propagating to reused tank and ghost meshes after joining or changing teams.
+- Fixed team mode temporarily assigning random tank colors before join confirmation; random pastel colors are now limited to non-team-mode Rogues.
+
 ## [1.0.35] - 2026-08-29
 
 ### Added

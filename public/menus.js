@@ -1,0 +1,269 @@
+/*
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/timriker/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
+const DIALOG_ROOT_IDS = [
+  'settingsHud',
+  'voiceOverlay',
+  'helpPanel',
+  'operatorOverlay',
+  'entryDialog',
+];
+
+const FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  '[href]',
+  'input:not([type="hidden"]):not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"]):not([disabled])',
+].join(', ');
+
+const dialogReturnFocus = new Map();
+const controllerNavigationState = {
+  direction: 0,
+  nextRepeatAt: 0,
+  activatePressed: false,
+  backPressed: false,
+};
+
+function isElementVisible(element) {
+  if (!element) return false;
+  const style = window.getComputedStyle(element);
+  return style.display !== 'none' && style.visibility !== 'hidden';
+}
+
+function getDialogRoots(dialogIds = DIALOG_ROOT_IDS) {
+  return dialogIds.map((dialogId) => document.getElementById(dialogId)).filter(Boolean);
+}
+
+function getFocusableElements(dialog) {
+  if (!dialog) return [];
+  return Array.from(dialog.querySelectorAll(FOCUSABLE_SELECTOR)).filter((element) => {
+    if (!element || !isElementVisible(element)) return false;
+    if (element.hasAttribute('disabled')) return false;
+    return true;
+  });
+}
+
+function focusElement(element) {
+  if (!element || typeof element.focus !== 'function') return false;
+  element.focus();
+  if (typeof element.select === 'function' && (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA')) {
+    element.select();
+  }
+  return true;
+}
+
+function rememberReturnFocus(dialog) {
+  const activeElement = document.activeElement;
+  if (!dialog || !activeElement || dialog.contains(activeElement)) return;
+  dialogReturnFocus.set(dialog.id, activeElement);
+}
+
+function restoreReturnFocus(dialog) {
+  if (!dialog) return false;
+  const target = dialogReturnFocus.get(dialog.id);
+  dialogReturnFocus.delete(dialog.id);
+  if (!target || !document.contains(target)) return false;
+  return focusElement(target);
+}
+
+export function getVisibleDialogRoot(dialogIds = DIALOG_ROOT_IDS) {
+  return getDialogRoots(dialogIds).find((dialog) => isElementVisible(dialog)) || null;
+}
+
+export function focusFirstDialogControl(dialog) {
+  const focusables = getFocusableElements(dialog);
+  if (!focusables.length) {
+    return focusElement(dialog);
+  }
+
+  const preferred = focusables.find((element) => !element.classList.contains('closeBtn')) || focusables[0];
+  return focusElement(preferred);
+}
+
+export function showDialog(dialog, { focusTarget } = {}) {
+  if (!dialog) return false;
+  rememberReturnFocus(dialog);
+  dialog.style.display = 'block';
+  if (typeof focusTarget === 'function') {
+    return Boolean(focusTarget(dialog));
+  }
+  return focusFirstDialogControl(dialog);
+}
+
+export function hideDialog(dialog, { restoreFocus = true } = {}) {
+  if (!dialog) return false;
+  dialog.style.display = 'none';
+  return restoreFocus ? restoreReturnFocus(dialog) : true;
+}
+
+function focusLastDialogControl(dialog) {
+  const focusables = getFocusableElements(dialog);
+  if (!focusables.length) {
+    return focusElement(dialog);
+  }
+  return focusElement(focusables[focusables.length - 1]);
+}
+
+function moveDialogFocus(dialog, currentElement, direction) {
+  const focusables = getFocusableElements(dialog);
+  if (!focusables.length) return false;
+
+  const currentIndex = focusables.findIndex((element) => element === currentElement || element.contains(currentElement));
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + direction + focusables.length) % focusables.length;
+  return focusElement(focusables[nextIndex]);
+}
+
+function canCycleWithArrowKeys(activeElement) {
+  if (!activeElement) return false;
+  if (activeElement.tagName === 'BUTTON') return true;
+  if (activeElement.classList && activeElement.classList.contains('closeBtn')) return true;
+  if (activeElement.getAttribute && activeElement.getAttribute('role') === 'button') return true;
+  return activeElement.tabIndex >= 0 && activeElement.tagName !== 'INPUT' && activeElement.tagName !== 'TEXTAREA' && activeElement.tagName !== 'SELECT';
+}
+
+function getOpenDialogForElement(activeElement) {
+  if (!activeElement) return null;
+  return getDialogRoots().find((dialog) => isElementVisible(dialog) && dialog.contains(activeElement)) || null;
+}
+
+function dismissVisibleDialog(dismissDialog, dialog) {
+  if (typeof dismissDialog !== 'function' || !dialog) return false;
+  return Boolean(dismissDialog(dialog.id, dialog));
+}
+
+function activateFocusedControl(dialog) {
+  const activeElement = document.activeElement;
+  const target = dialog.contains(activeElement) ? activeElement : null;
+  if (!target) {
+    return focusFirstDialogControl(dialog);
+  }
+  if (typeof target.click === 'function') {
+    target.click();
+    return true;
+  }
+  return false;
+}
+
+function adjustFocusedControl(dialog, direction) {
+  const activeElement = document.activeElement;
+  const target = dialog.contains(activeElement) ? activeElement.closest?.('[data-menu-row]') : null;
+  if (!target) return false;
+  target.dispatchEvent(new window.CustomEvent('menuadjust', {
+    bubbles: true,
+    detail: { direction },
+  }));
+  return true;
+}
+
+export function handleDialogControllerInput(input, { dismissDialog, now = performance.now() } = {}) {
+  const openDialog = getVisibleDialogRoot();
+  if (!openDialog) {
+    controllerNavigationState.direction = 0;
+    controllerNavigationState.activatePressed = false;
+    controllerNavigationState.backPressed = false;
+    return false;
+  }
+
+  const horizontal = Number(input?.horizontal) || 0;
+  const vertical = Number(input?.vertical) || 0;
+  const useVertical = Math.abs(vertical) >= Math.abs(horizontal);
+  const dominantAxis = useVertical ? vertical : horizontal;
+  const direction = dominantAxis > 0.6 ? 1 : dominantAxis < -0.6 ? -1 : 0;
+  const navigationToken = direction === 0 ? '' : `${useVertical ? 'vertical' : 'horizontal'}:${direction}`;
+
+  if (direction === 0) {
+    controllerNavigationState.direction = 0;
+    controllerNavigationState.nextRepeatAt = 0;
+  } else if (navigationToken !== controllerNavigationState.direction || now >= controllerNavigationState.nextRepeatAt) {
+    const activeElement = document.activeElement;
+    if (!useVertical && adjustFocusedControl(openDialog, direction)) {
+      controllerNavigationState.direction = navigationToken;
+    } else {
+      moveDialogFocus(openDialog, activeElement, direction);
+      controllerNavigationState.direction = navigationToken;
+    }
+    controllerNavigationState.nextRepeatAt = now + 250;
+  }
+
+  const activatePressed = Boolean(input?.activate);
+  if (activatePressed && !controllerNavigationState.activatePressed) {
+    activateFocusedControl(openDialog);
+  }
+  controllerNavigationState.activatePressed = activatePressed;
+
+  const backPressed = Boolean(input?.back);
+  if (backPressed && !controllerNavigationState.backPressed) {
+    dismissVisibleDialog(dismissDialog, openDialog);
+  }
+  controllerNavigationState.backPressed = backPressed;
+  return true;
+}
+
+export function handleDialogKeydown(event, { dismissDialog } = {}) {
+  const activeElement = document.activeElement;
+  const openDialog = getOpenDialogForElement(activeElement) || getVisibleDialogRoot();
+  if (!openDialog) return false;
+
+  if (event.key === 'Escape') {
+    if (dismissVisibleDialog(dismissDialog, openDialog)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+    return false;
+  }
+
+  const focusables = getFocusableElements(openDialog);
+  if (!focusables.length) return false;
+
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    moveDialogFocus(openDialog, activeElement, event.shiftKey ? -1 : 1);
+    return true;
+  }
+
+  if (!canCycleWithArrowKeys(activeElement)) {
+    return false;
+  }
+
+  if (event.key === 'Home') {
+    event.preventDefault();
+    focusElement(focusables[0]);
+    return true;
+  }
+
+  if (event.key === 'End') {
+    event.preventDefault();
+    focusLastDialogControl(openDialog);
+    return true;
+  }
+
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    const direction = event.key === 'ArrowLeft' ? -1 : 1;
+    if (adjustFocusedControl(openDialog, direction)) {
+      event.preventDefault();
+      return true;
+    }
+  }
+
+  if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+    event.preventDefault();
+    moveDialogFocus(openDialog, activeElement, -1);
+    return true;
+  }
+
+  if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    moveDialogFocus(openDialog, activeElement, 1);
+    return true;
+  }
+
+  return false;
+}

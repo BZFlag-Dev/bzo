@@ -9,6 +9,9 @@
 // Exports: setupInputHandlers, virtualInput, keys
 
 import { getXRControllerInput, xrState } from './webxr.js';
+import { focusFirstDialogControl, getVisibleDialogRoot, handleDialogControllerInput, handleDialogKeydown, hideDialog, showDialog } from './menus.js';
+import { initSettingsMenu } from './settings-menu.js';
+import { INPUT_CONTEXT, InputContextManager } from './input-context.mjs';
 
 // Shared virtual input state exposed to the game loop.
 export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
@@ -32,6 +35,9 @@ let gamepadListenersAttached = false;
 let inputHandlersAttached = false;
 let lifecycleListenersAttached = false;
 let resetTouchState = () => {};
+const gameplayInputResetHandlers = new Set();
+let gamepadGameplayArmed = true;
+let xrGameplayArmed = true;
 
 function resetInputValues(inputState) {
   inputState.forward = 0;
@@ -77,6 +83,42 @@ function clearTransientInput() {
   resetXRInput();
   resetTouchState();
   syncVirtualInput();
+  gameplayInputResetHandlers.forEach((handler) => handler());
+}
+
+const inputContextManager = new InputContextManager({
+  resetGameplayInput: clearTransientInput,
+});
+
+export function getInputContext() {
+  return inputContextManager.getContext();
+}
+
+export function isGameplayInputActive() {
+  return inputContextManager.isGameplayActive();
+}
+
+export function setInputContext(context) {
+  const changed = inputContextManager.setContext(context);
+  if (changed) {
+    gamepadGameplayArmed = false;
+    xrGameplayArmed = false;
+  }
+  return changed;
+}
+
+export function registerGameplayInputReset(handler) {
+  if (typeof handler !== 'function') {
+    throw new TypeError('Gameplay input reset handler must be a function');
+  }
+  gameplayInputResetHandlers.add(handler);
+  return () => gameplayInputResetHandlers.delete(handler);
+}
+
+export function setGameplayKeyState(code, pressed) {
+  if (pressed && !isGameplayInputActive()) return false;
+  keys[code] = Boolean(pressed);
+  return true;
 }
 
 function setupInputLifecycleListeners() {
@@ -165,6 +207,29 @@ export function updateVirtualInputFromGamepad() {
 
   const axes = gamepad.axes;
   const buttons = gamepad.buttons;
+
+  if (!isGameplayInputActive()) {
+    handleDialogControllerInput({
+      horizontal: axes[0] || 0,
+      vertical: axes[1] || 0,
+      activate: Boolean(buttons[0]?.pressed || buttons[7]?.pressed),
+      back: Boolean(buttons[1]?.pressed || buttons[6]?.pressed),
+    }, { dismissDialog: dismissVisibleDialog });
+    resetInputValues(gamepadInput);
+    syncVirtualInput();
+    return;
+  }
+
+  if (!gamepadGameplayArmed) {
+    const axesNeutral = Math.abs(axes[0] || 0) < 0.2 && Math.abs(axes[1] || 0) < 0.2;
+    const buttonsNeutral = !buttons.some((button) => button?.pressed);
+    if (!axesNeutral || !buttonsNeutral) {
+      resetInputValues(gamepadInput);
+      syncVirtualInput();
+      return;
+    }
+    gamepadGameplayArmed = true;
+  }
 
   // Apply deadzone to prevent drift
   const deadzone = 0.2;
@@ -281,6 +346,7 @@ export function setupInputHandlers() {
     if (knob) knob.style.transform = `translate(${x * 35}px, ${y * 35}px)`;
   }
   function handleJoystickStart(e) {
+    if (!isGameplayInputActive()) return;
     if (e.touches && e.touches.length > 0) {
       for (let i = 0; i < e.touches.length; i++) {
         const touch = e.touches[i];
@@ -307,7 +373,7 @@ export function setupInputHandlers() {
     }
   }
   function handleJoystickMove(e) {
-    if (!joystickActive) return;
+    if (!isGameplayInputActive() || !joystickActive) return;
     let clientX, clientY;
     if (e.touches && e.touches.length > 0) {
       let found = false;
@@ -373,9 +439,9 @@ export function setupInputHandlers() {
       if (pressed) fireBtn.classList.add('pressed');
       else fireBtn.classList.remove('pressed');
     };
-    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); touchInput.fire = true; syncVirtualInput(); setFirePressed(true); });
+    fireBtn.addEventListener('touchstart', e => { e.preventDefault(); if (!isGameplayInputActive()) return; touchInput.fire = true; syncVirtualInput(); setFirePressed(true); });
     fireBtn.addEventListener('touchend', e => { e.preventDefault(); touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
-    fireBtn.addEventListener('mousedown', e => { e.preventDefault(); touchInput.fire = true; syncVirtualInput(); setFirePressed(true); });
+    fireBtn.addEventListener('mousedown', e => { e.preventDefault(); if (!isGameplayInputActive()) return; touchInput.fire = true; syncVirtualInput(); setFirePressed(true); });
     fireBtn.addEventListener('mouseup', e => { e.preventDefault(); touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
     fireBtn.addEventListener('mouseleave', () => { touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
     fireBtn.addEventListener('touchcancel', () => { touchInput.fire = false; syncVirtualInput(); setFirePressed(false); });
@@ -385,27 +451,14 @@ export function setupInputHandlers() {
       if (pressed) jumpBtn.classList.add('pressed');
       else jumpBtn.classList.remove('pressed');
     };
-    jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); touchInput.jump = true; syncVirtualInput(); setJumpPressed(true); });
+    jumpBtn.addEventListener('touchstart', e => { e.preventDefault(); if (!isGameplayInputActive()) return; touchInput.jump = true; syncVirtualInput(); setJumpPressed(true); });
     jumpBtn.addEventListener('touchend', e => { e.preventDefault(); touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
-    jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); touchInput.jump = true; syncVirtualInput(); setJumpPressed(true); });
+    jumpBtn.addEventListener('mousedown', e => { e.preventDefault(); if (!isGameplayInputActive()) return; touchInput.jump = true; syncVirtualInput(); setJumpPressed(true); });
     jumpBtn.addEventListener('mouseup', e => { e.preventDefault(); touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
     jumpBtn.addEventListener('mouseleave', () => { touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
     jumpBtn.addEventListener('touchcancel', () => { touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
   }
 
-  // Keyboard
-  document.addEventListener('keydown', (e) => {
-    const activeElement = document.activeElement;
-    if (isOperatorPanelVisible()) return;
-    if (isEditableElement(activeElement)) return;
-    keys[e.code] = true;
-  });
-  document.addEventListener('keyup', (e) => {
-    const activeElement = document.activeElement;
-    if (isOperatorPanelVisible()) return;
-    if (isEditableElement(activeElement)) return;
-    keys[e.code] = false;
-  });
 }
 
 // Update virtualInput from XR controller input
@@ -420,6 +473,40 @@ export function updateVirtualInputFromXR() {
   const controllerInput = getXRControllerInput();
   const leftThumbstick = controllerInput.leftThumbstick || { x: 0, y: 0 };
   const rightThumbstick = controllerInput.rightThumbstick || { x: 0, y: 0 };
+
+  if (!isGameplayInputActive()) {
+    const navigationStick = Math.abs(rightThumbstick.y || 0) >= Math.abs(leftThumbstick.y || 0)
+      ? rightThumbstick
+      : leftThumbstick;
+    handleDialogControllerInput({
+      horizontal: navigationStick.x || 0,
+      vertical: navigationStick.y || 0,
+      activate: controllerInput.leftTrigger > 0.5 || controllerInput.rightTrigger > 0.5 || controllerInput.buttonA,
+      back: controllerInput.buttonB || controllerInput.buttonGrip,
+    }, { dismissDialog: dismissVisibleDialog });
+    resetInputValues(xrInputState);
+    syncVirtualInput();
+    return;
+  }
+
+
+  if (!xrGameplayArmed) {
+    const sticksNeutral = Math.abs(leftThumbstick.x || 0) < 0.15 &&
+      Math.abs(leftThumbstick.y || 0) < 0.15 &&
+      Math.abs(rightThumbstick.x || 0) < 0.15 &&
+      Math.abs(rightThumbstick.y || 0) < 0.15;
+    const buttonsNeutral = controllerInput.rightTrigger <= 0.5 &&
+      controllerInput.leftTrigger <= 0.5 &&
+      !controllerInput.buttonA &&
+      !controllerInput.buttonB &&
+      !controllerInput.buttonGrip;
+    if (!sticksNeutral || !buttonsNeutral) {
+      resetInputValues(xrInputState);
+      syncVirtualInput();
+      return;
+    }
+    xrGameplayArmed = true;
+  }
 
   const deadzone = 0.15;
   const applyDeadzone = (value) => {
@@ -441,8 +528,8 @@ export function updateVirtualInputFromXR() {
   // Prefer right-stick X for turning, with left-stick X fallback.
   xrInputState.turn = -(Math.abs(rightX) > 0 ? rightX : leftX);
 
-  // Right trigger OR A button: fire
-  xrInputState.fire = controllerInput.rightTrigger > 0.5 || controllerInput.buttonA;
+  // Either trigger or primary face button: fire
+  xrInputState.fire = controllerInput.leftTrigger > 0.5 || controllerInput.rightTrigger > 0.5 || controllerInput.buttonA;
 
   // B button OR side grip button: jump
   xrInputState.jump = controllerInput.buttonB || controllerInput.buttonGrip;
@@ -485,6 +572,7 @@ const defaultHudContext = {
   getScene: () => null,
   toggleEntryDialog: () => {},
   getChatInput: () => null,
+  handleGameplayKeydown: () => false,
 };
 
 let hudContext = { ...defaultHudContext };
@@ -519,6 +607,14 @@ let orientationMode = null;
 let orientationListenersAttached = false;
 let keyboardListenerAttached = false;
 let orientationDebugInitialized = false;
+let settingsMenu = null;
+const XR_SETTINGS_EXCLUDED_IDS = new Set([
+  'voiceBtn',
+  'helpBtn',
+  'operatorBtn',
+  'xrBtn',
+  'closeSettingsHud',
+]);
 
 function isEditableElement(element) {
   return Boolean(element && (
@@ -641,6 +737,49 @@ function refreshHudButtons() {
     cameraBtn: domRefs.cameraBtn,
     cameraMode: hudContext.getCameraMode(),
   });
+  settingsMenu?.refresh();
+}
+
+function getSettingsMenuValue(id, item) {
+  if (id === 'cameraBtn') return cameraModeLabel(hudContext.getCameraMode());
+  if (id === 'radarZoomBtn') {
+    const match = item.button.title.match(/Radar range preset:\s*(.+)/i);
+    return match?.[1] || 'Long';
+  }
+  if (id === 'fullscreenBtn') return document.fullscreenElement ? 'On' : 'Off';
+  if (id === 'wireframeBtn') return wireframeEnabled ? 'On' : 'Off';
+  if (id === 'xrBtn') {
+    if (item.button.disabled) return 'Unavailable';
+    return /exit/i.test(item.button.title) ? 'Exit VR' : 'Enter VR';
+  }
+  if (item.kind === 'toggle') return item.button.classList.contains('active') ? 'On' : 'Off';
+  if (item.kind === 'submenu') return 'Open >';
+  if (id === 'closeSettingsHud') return '';
+  return 'Activate';
+}
+
+export function getXRSettingsMenuItems() {
+  const items = settingsMenu?.items || [];
+  return [
+    { id: 'exitXR', label: 'Exit VR', value: '' },
+    ...items
+      .filter((item) => !XR_SETTINGS_EXCLUDED_IDS.has(item.id))
+      .map((item) => ({
+        id: item.id,
+        label: item.label,
+        value: getSettingsMenuValue(item.id, item),
+        disabled: item.button.disabled,
+      })),
+    { id: 'closeXRMenu', label: 'Close', value: '' },
+  ];
+}
+
+export function activateXRSettingsMenuItem(id) {
+  const item = settingsMenu?.items.find((candidate) => candidate.id === id);
+  if (!item || item.button.disabled) return false;
+  item.button.click();
+  settingsMenu.refresh();
+  return true;
 }
 
 function setWireframeMode(enabled) {
@@ -671,15 +810,32 @@ function updateSettingsBtn() {
 function toggleSettingsHud() {
   if (!domRefs.settingsHud) return;
   const visible = domRefs.settingsHud.style.display === 'block';
-  domRefs.settingsHud.style.display = visible ? 'none' : 'block';
+  if (visible) {
+    hideDialog(domRefs.settingsHud);
+  } else {
+    setInputContext(INPUT_CONTEXT.DIALOG);
+    settingsMenu?.refresh();
+    showDialog(domRefs.settingsHud);
+  }
+  if (visible) syncInputContextFromUi();
   hudContext.showMessage(visible ? 'Settings: Hidden' : 'Settings: Shown');
   updateSettingsBtn();
+}
+
+export function openSettingsDialog() {
+  if (!domRefs.settingsHud || domRefs.settingsHud.style.display === 'block') return;
+  toggleSettingsHud();
+}
+
+export function closeSettingsDialog() {
+  if (!domRefs.settingsHud || domRefs.settingsHud.style.display !== 'block') return;
+  toggleSettingsHud();
 }
 
 function hideSettingsHudSilently() {
   if (!domRefs.settingsHud) return;
   if (domRefs.settingsHud.style.display === 'block') {
-    domRefs.settingsHud.style.display = 'none';
+    hideDialog(domRefs.settingsHud, { restoreFocus: false });
     updateSettingsBtn();
   }
 }
@@ -695,11 +851,13 @@ function toggleVoiceOverlay() {
   if (!domRefs.voiceOverlay) return;
   const visible = domRefs.voiceOverlay.style.display === 'block';
   if (visible) {
-    domRefs.voiceOverlay.style.display = 'none';
+    hideDialog(domRefs.voiceOverlay);
+    syncInputContextFromUi();
     hudContext.showMessage('Voice Settings: Hidden');
   } else {
     hideSettingsHudSilently();
-    domRefs.voiceOverlay.style.display = 'block';
+    setInputContext(INPUT_CONTEXT.DIALOG);
+    showDialog(domRefs.voiceOverlay);
     hudContext.showMessage('Voice Settings: Shown');
   }
   updateVoiceBtn();
@@ -716,11 +874,13 @@ function toggleHelpPanel() {
   if (!domRefs.helpPanel) return;
   const visible = domRefs.helpPanel.style.display === 'block';
   if (visible) {
-    domRefs.helpPanel.style.display = 'none';
+    hideDialog(domRefs.helpPanel);
+    syncInputContextFromUi();
     hudContext.showMessage('Help Panel: Hidden');
   } else {
     hideSettingsHudSilently();
-    domRefs.helpPanel.style.display = 'block';
+    setInputContext(INPUT_CONTEXT.DIALOG);
+    showDialog(domRefs.helpPanel);
     hudContext.showMessage('Help Panel: Shown');
   }
   updateHelpBtn();
@@ -867,24 +1027,67 @@ export function toggleOperatorPanel() {
   if (!domRefs.operatorOverlay) return;
   const currentVisible = isOperatorPanelVisible();
   if (currentVisible) {
-    domRefs.operatorOverlay.style.setProperty('display', 'none');
-    clearKeyboardInput();
+    hideDialog(domRefs.operatorOverlay);
+    syncInputContextFromUi();
     hudContext.showMessage('Operator Panel: Hidden');
   } else {
     hideSettingsHudSilently();
-    domRefs.operatorOverlay.style.setProperty('display', 'block');
-    clearKeyboardInput();
+    setInputContext(INPUT_CONTEXT.DIALOG);
+    showDialog(domRefs.operatorOverlay, {
+      focusTarget: (dialog) => {
+        const motdInput = dialog.querySelector('#motdInput');
+        if (motdInput && typeof motdInput.focus === 'function') {
+          motdInput.focus();
+          if (typeof motdInput.select === 'function') motdInput.select();
+          return true;
+        }
+        return focusFirstDialogControl(dialog);
+      },
+    });
     hudContext.showMessage('Operator Panel: Shown');
     const requestId = Math.floor(Math.random() * 1e9);
     hudContext.sendToServer({ type: 'getMaps', requestId });
     window._operatorMapReqId = requestId;
-    const motdInput = document.getElementById('motdInput');
-    if (motdInput) {
-      motdInput.focus();
-      motdInput.select();
-    }
   }
   updateOperatorBtn();
+}
+
+export function syncInputContextFromUi() {
+  const visibleDialog = getVisibleDialogRoot();
+  if (visibleDialog?.id === 'entryDialog') {
+    setInputContext(INPUT_CONTEXT.ENTRY);
+    return;
+  }
+  if (visibleDialog) {
+    setInputContext(INPUT_CONTEXT.DIALOG);
+    return;
+  }
+  const chatInput = hudContext.getChatInput ? hudContext.getChatInput() : null;
+  setInputContext(document.activeElement === chatInput ? INPUT_CONTEXT.CHAT : INPUT_CONTEXT.GAMEPLAY);
+}
+
+function dismissVisibleDialog(dialogId) {
+  if (dialogId === 'settingsHud') {
+    toggleSettingsHud();
+    return true;
+  }
+  if (dialogId === 'voiceOverlay') {
+    toggleVoiceOverlay();
+    return true;
+  }
+  if (dialogId === 'helpPanel') {
+    toggleHelpPanel();
+    return true;
+  }
+  if (dialogId === 'operatorOverlay') {
+    toggleOperatorPanel();
+    return true;
+  }
+  if (dialogId === 'entryDialog' && typeof hudContext.toggleEntryDialog === 'function') {
+    hudContext.toggleEntryDialog();
+    return true;
+  }
+  return false;
 }
 
 function bindHudElements() {
@@ -1077,11 +1280,19 @@ function bindHudElements() {
     document.addEventListener('keydown', (e) => {
       const activeElement = document.activeElement;
       const chatInput = hudContext.getChatInput ? hudContext.getChatInput() : null;
+      const visibleDialog = getVisibleDialogRoot();
+      if (handleDialogKeydown(e, { dismissDialog: dismissVisibleDialog })) {
+        return;
+      }
       if (activeElement === chatInput) return;
       const entryInput = document.getElementById('entryInput');
       if (activeElement === entryInput) return;
       if (isOperatorPanelVisible()) return;
+      if (visibleDialog) return;
       if (isEditableElement(activeElement)) return;
+
+      setGameplayKeyState(e.code, true);
+      if (hudContext.handleGameplayKeydown(e)) return;
 
       if (e.key === 'm' || e.key === 'M') {
         toggleMouseMode();
@@ -1108,6 +1319,9 @@ function bindHudElements() {
         toggleHelpPanel();
       }
     });
+    document.addEventListener('keyup', (e) => {
+      setGameplayKeyState(e.code, false);
+    });
     keyboardListenerAttached = true;
   }
 
@@ -1133,6 +1347,10 @@ function bindHudElements() {
   updateOperatorBtn();
   updateVirtualControlsBtn();
   refreshHudButtons();
+  settingsMenu = initSettingsMenu({
+    root: domRefs.settingsHud,
+    getValue: getSettingsMenuValue,
+  });
 }
 
 export function initHudControls(context) {

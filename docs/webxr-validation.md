@@ -29,13 +29,27 @@ or deployment configuration.
 
 ## Controller mapping
 
-- Move the left thumbstick forward and backward; the tank should move along its
-  current heading.
-- Move the right thumbstick left and right; the tank should rotate without
-  changing its heading from head movement.
-- Press the right trigger or A button to fire.
-- Press the B button or grip button to jump.
+- Move either thumbstick forward and backward; the tank should move along its
+  current heading, with the right stick preferred when both are active.
+- Move either thumbstick left and right; the tank should rotate without
+  changing its heading from head movement, with the right stick preferred.
+- Press either trigger or either primary face button to fire.
+- Press either secondary face button or either grip button to jump.
 - Release every control and confirm that no stale input continues to act.
+
+## XR Settings menu
+
+- Press either controller thumbstick and confirm that Settings opens without
+  ending the XR session.
+- Confirm that `Exit VR` is the first selected row and `Close` is the last row.
+- Navigate up and down with either thumbstick.
+- Activate a setting with either trigger and either primary face button.
+- Close Settings with either grip, either secondary face button, or another
+  thumbstick press.
+- Confirm that movement, firing, and jumping remain neutral until all controls
+  are released after closing.
+- Reopen Settings, activate `Exit VR`, and confirm that the normal desktop
+  render loop resumes.
 
 ## Session lifecycle
 

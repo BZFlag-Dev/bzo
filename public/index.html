@@ -53,9 +53,10 @@
     </div>
   </div>
 
-  <div id="settingsHud">
+  <div id="settingsHud" class="dialog" role="dialog" aria-modal="true" aria-labelledby="settingsMenuTitle">
+    <div id="settingsMenuTitle" class="dialogTitle">Settings</div>
     <div class="settingsHudContent">
-      <div class="hudButtons">
+      <div class="settingsMenuList" role="menu">
         <button id="virtualControlsBtn" class="settingsHudBtn">Virtual Controls</button>
         <button id="mouseBtn" class="settingsHudBtn">Mouse Mode</button>
         <button id="fullscreenBtn" class="settingsHudBtn">Fullscreen</button>
@@ -162,18 +163,10 @@
       <span id="serverMotd"></span>
     </div>
     <input type="text" id="entryInput" maxlength="20" placeholder="Enter your name">
-    <fieldset id="entryRoleSelector" class="entryRoleSelector" aria-describedby="entryRoleDescription">
-      <legend>Play mode</legend>
-      <p id="entryRoleDescription">Active players can move and speak. Spectators can only watch and listen.</p>
-      <label for="entryRoleActive">
-        <input id="entryRoleActive" type="radio" name="entryRole" value="active" checked>
-        Active player
-      </label>
-      <label for="entryRoleSpectator">
-        <input id="entryRoleSpectator" type="radio" name="entryRole" value="spectator">
-        Spectator
-      </label>
-    </fieldset>
+    <button id="entryTeamSelector" class="entryTeamSelector" type="button" data-team="automatic" data-menu-row="team" data-menu-kind="choice">
+      <span class="entryTeamLabel">Team:</span>
+      <span id="entryTeamValue" class="entryTeamValue">Automatic</span>
+    </button>
     <div id="tankSelector">
       <div id="tankSelectorTitle">Choose Tank</div>
       <div id="tankSelectorCarousel">
@@ -252,8 +245,8 @@
       <h2>Nearby Voice</h2>
       <ul>
         <li><strong>B</strong> — <b>Toggle Microphone</b></li>
-        <li>Nearby voice is available to active players after microphone permission is granted.</li>
-        <li>Spectators can listen but cannot transmit.</li>
+        <li>Nearby voice is available to combatants after microphone permission is granted.</li>
+        <li>Observers can listen but cannot transmit.</li>
       </ul>
 
       <h2>3D Viewing Modes</h2>

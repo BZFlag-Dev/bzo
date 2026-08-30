@@ -73,13 +73,21 @@ import {
   initHudControls,
   latestOrientation,
   toggleMouseMode,
-  hideHelpPanel,
   isMobile,
   updateVirtualInputFromXR,
   updateVirtualInputFromGamepad,
   isGamepadConnected,
-  getGamepadInfo
+  getGamepadInfo,
+  isGameplayInputActive,
+  activateXRSettingsMenuItem,
+  closeSettingsDialog,
+  getXRSettingsMenuItems,
+  registerGameplayInputReset,
+  setGameplayKeyState,
+  setInputContext,
+  syncInputContextFromUi
 } from './input.js';
+import { XRMenuRenderer } from './xr-menu.js';
 import {
   updateDebugDisplay,
   updateHudButtons,
@@ -101,6 +109,16 @@ import {
   setNormalAnimationLoop,
   isXREnabled,
 } from './webxr.js';
+import { INPUT_CONTEXT } from './input-context.mjs';
+import {
+  PLAYER_TEAM,
+  PLAYER_TEAMS,
+  PLAYER_TEAM_LABELS,
+  getPlayerTeamSelections,
+  isObserverTeam,
+  normalizePlayerTeam,
+  normalizePlayerTeamSelection,
+} from './player-teams.mjs';
 import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shot-limits.mjs';
 
@@ -179,14 +197,23 @@ let initSequence = 0;
 let activeInitSequence = 0;
 let xrSettingsShortcutLatched = false;
 let xrSettingsShortcutInFlight = false;
+let xrSettingsMenuOpen = false;
+let xrSettingsMenuRenderer = null;
+let xrSettingsMenuSelectedIndex = 0;
+let xrSettingsMenuNavigationDirection = 0;
+let xrSettingsMenuNextRepeatAt = 0;
+let xrSettingsMenuActivateLatched = false;
+let xrSettingsMenuBackLatched = false;
 let nextAllowedShotAt = 0;
-let playerRole = 'active';
+let playerTeam = PLAYER_TEAM.ROGUE;
+let selectedPlayerTeam = PLAYER_TEAM.AUTOMATIC;
+let availablePlayerTeams = [PLAYER_TEAM.ROGUE, PLAYER_TEAM.OBSERVER];
 let selectedVoiceInputDeviceId = '';
 let voiceRtcConfig = { iceServers: [] };
 let voiceManager = null;
 let voiceManagerState = {
   channel: 'nearby',
-  role: 'active',
+  team: PLAYER_TEAM.ROGUE,
   microphonePermission: 'prompt',
   microphoneEnabled: false,
   transmitting: false,
@@ -196,29 +223,49 @@ let voiceManagerState = {
 };
 
 const VOICE_CHANNEL = 'nearby';
-
-function normalizePlayerRole(role) {
-  return String(role || '').toLowerCase() === 'spectator' ? 'spectator' : 'active';
+function getSelectedPlayerTeam() {
+  const teamSelector = document.getElementById('entryTeamSelector');
+  return teamSelector ? normalizePlayerTeamSelection(teamSelector.dataset.team) : selectedPlayerTeam;
 }
 
-function getSelectedPlayerRole() {
-  const selectedRole = document.querySelector('input[name="entryRole"]:checked');
-  return normalizePlayerRole(selectedRole ? selectedRole.value : playerRole);
+function syncPlayerTeamSelector() {
+  const teamSelector = document.getElementById('entryTeamSelector');
+  const teamValue = document.getElementById('entryTeamValue');
+  const label = PLAYER_TEAM_LABELS[selectedPlayerTeam];
+  if (teamSelector) {
+    teamSelector.dataset.team = selectedPlayerTeam;
+    teamSelector.setAttribute('aria-label', `Team: ${label}`);
+  }
+  if (teamValue) teamValue.textContent = label;
 }
 
-function syncPlayerRoleSelector() {
-  const selector = document.querySelector(`input[name="entryRole"][value="${playerRole}"]`);
-  if (selector) selector.checked = true;
+function updatePlayerTeamSelectorAvailability() {
+  const teamSelector = document.getElementById('entryTeamSelector');
+  if (teamSelector) teamSelector.disabled = gameplayJoinConfirmed;
 }
 
-function updatePlayerRoleSelectorAvailability() {
-  document.querySelectorAll('input[name="entryRole"]').forEach((input) => {
-    input.disabled = gameplayJoinConfirmed;
-  });
+function setAvailablePlayerTeams(teams) {
+  availablePlayerTeams = PLAYER_TEAMS.filter((team) => teams.includes(team));
+  if (selectedPlayerTeam !== PLAYER_TEAM.AUTOMATIC && !availablePlayerTeams.includes(selectedPlayerTeam)) {
+    selectedPlayerTeam = PLAYER_TEAM.AUTOMATIC;
+  }
+  syncPlayerTeamSelector();
 }
 
-function isSpectatorRole() {
-  return playerRole === 'spectator';
+function selectRelativePlayerTeam(direction) {
+  if (gameplayJoinConfirmed) {
+    syncPlayerTeamSelector();
+    return;
+  }
+  const teamSelections = getPlayerTeamSelections(availablePlayerTeams);
+  const currentIndex = teamSelections.indexOf(selectedPlayerTeam);
+  const nextIndex = (currentIndex + direction + teamSelections.length) % teamSelections.length;
+  selectedPlayerTeam = teamSelections[nextIndex];
+  syncPlayerTeamSelector();
+}
+
+function isObserver() {
+  return isObserverTeam(playerTeam);
 }
 
 function normalizeRadarZoomLevel(value) {
@@ -361,11 +408,11 @@ function updateVoiceHud(nextState = null) {
   const inputDevice = document.getElementById('voiceInputDevice');
   const channelSelect = document.getElementById('voiceChannelSelect');
 
-  const role = normalizePlayerRole(state.role || playerRole);
+  const team = normalizePlayerTeam(state.team || playerTeam);
   const transmitting = Boolean(state.transmitting);
   const permission = state.microphonePermission || 'prompt';
   let status = 'Microphone off';
-  if (role === 'spectator') {
+  if (isObserverTeam(team)) {
     status = 'Receive only';
   } else if (transmitting) {
     status = 'Microphone on';
@@ -389,19 +436,19 @@ function updateVoiceHud(nextState = null) {
     channelSelect.disabled = true;
   }
   if (permissionButton) {
-    permissionButton.disabled = role === 'spectator';
+    permissionButton.disabled = isObserverTeam(team);
     permissionButton.textContent = permission === 'granted' ? 'Microphone permission granted' : 'Enable microphone';
   }
   if (microphoneButton) {
     const permissionGranted = permission === 'granted';
-    microphoneButton.disabled = role === 'spectator' || (!permissionGranted && !state.hasLocalStream);
+    microphoneButton.disabled = isObserverTeam(team) || (!permissionGranted && !state.hasLocalStream);
     microphoneButton.textContent = transmitting ? 'Microphone on' : 'Microphone off';
     microphoneButton.setAttribute('aria-pressed', transmitting ? 'true' : 'false');
   }
-  if (inputDevice) inputDevice.disabled = role === 'spectator';
+  if (inputDevice) inputDevice.disabled = isObserverTeam(team);
   if (permissionStatus) {
-    if (role === 'spectator') {
-      permissionStatus.textContent = 'Spectators can listen but cannot use a microphone.';
+    if (isObserverTeam(team)) {
+      permissionStatus.textContent = 'Observers can listen but cannot use a microphone.';
     } else if (permission === 'granted') {
       permissionStatus.textContent = transmitting ? 'Microphone is transmitting on the Nearby channel.' : 'Microphone permission granted; transmission is off.';
     } else if (permission === 'denied') {
@@ -427,7 +474,7 @@ function initializeVoiceManager() {
   voiceManager = createVoiceManager({
     sendToServer,
     localPlayerId: myPlayerId,
-    role: playerRole,
+    team: playerTeam,
     inputDeviceId: selectedVoiceInputDeviceId,
     rtcConfig: voiceRtcConfig,
     audioConstraints: getVoiceAudioSettings(),
@@ -446,7 +493,7 @@ function updateVoiceIdentity() {
   if (!voiceManager) return;
   callVoiceManager('updateLocalIdentity', {
     localPlayerId: myPlayerId,
-    role: playerRole,
+    team: playerTeam,
   });
   updateVoiceHud();
 }
@@ -462,8 +509,8 @@ async function resetVoiceManagerForReconnect() {
 }
 
 function requestVoicePermission() {
-  if (isSpectatorRole()) {
-    updateVoiceHud({ role: playerRole });
+  if (isObserver()) {
+    updateVoiceHud({ team: playerTeam });
     return;
   }
   const result = callVoiceManager('requestMicrophone', { enable: false });
@@ -473,8 +520,8 @@ function requestVoicePermission() {
 }
 
 function toggleVoiceMicrophone() {
-  if (isSpectatorRole()) {
-    updateVoiceHud({ role: playerRole });
+  if (isObserver()) {
+    updateVoiceHud({ team: playerTeam });
     return;
   }
   const result = callVoiceManager('toggleMicrophone');
@@ -484,20 +531,16 @@ function toggleVoiceMicrophone() {
 }
 
 function bindVoiceControls() {
-  const roleInputs = document.querySelectorAll('input[name="entryRole"]');
-  roleInputs.forEach((input) => {
-    input.addEventListener('change', () => {
-      if (gameplayJoinConfirmed) {
-        syncPlayerRoleSelector();
-        return;
-      }
-      playerRole = getSelectedPlayerRole();
-      if (voiceManager) updateVoiceIdentity();
-      updateVoiceHud({ role: playerRole });
+  const teamSelector = document.getElementById('entryTeamSelector');
+  if (teamSelector) {
+    teamSelector.addEventListener('click', () => selectRelativePlayerTeam(1));
+    teamSelector.addEventListener('menuadjust', (event) => {
+      const direction = Number(event.detail?.direction) < 0 ? -1 : 1;
+      selectRelativePlayerTeam(direction);
     });
-  });
-  syncPlayerRoleSelector();
-  updatePlayerRoleSelectorAvailability();
+  }
+  syncPlayerTeamSelector();
+  updatePlayerTeamSelectorAvailability();
 
   const inputDevice = document.getElementById('voiceInputDevice');
   if (inputDevice) {
@@ -563,19 +606,19 @@ function setPendingJoinRequest(name) {
     name,
     isMobile,
     tankModel: selectedTankModelId,
-    role: getSelectedPlayerRole(),
+    team: getSelectedPlayerTeam(),
   };
 }
 
 function maybeSendPendingJoinRequest() {
   if (!renderReadyForJoin || gameplayJoinConfirmed || !pendingJoinRequest) return;
-  pendingJoinRequest.role = getSelectedPlayerRole();
+  pendingJoinRequest.team = getSelectedPlayerTeam();
   sendToServer({
     type: 'joinGame',
     name: pendingJoinRequest.name,
     isMobile: pendingJoinRequest.isMobile,
     tankModel: pendingJoinRequest.tankModel,
-    role: pendingJoinRequest.role,
+    team: pendingJoinRequest.team,
   });
 }
 
@@ -1025,7 +1068,13 @@ function toggleEntryDialog(name = '') {
   const entryInput = document.getElementById('entryInput');
   if (!entryDialog || !entryInput) return;
   const entryDialogWillOpen = entryDialog.style.display !== 'block';
+  if (entryDialogWillOpen) {
+    setInputContext(INPUT_CONTEXT.ENTRY);
+  }
   entryDialog.style.display = entryDialogWillOpen ? 'block' : 'none';
+  if (!entryDialogWillOpen) {
+    syncInputContextFromUi();
+  }
   if (entryDialogWillOpen) {
     startTankPreviewAnimation();
   } else {
@@ -1033,6 +1082,8 @@ function toggleEntryDialog(name = '') {
   }
   isPaused = entryDialogWillOpen;
   if (entryDialogWillOpen) {
+    gameplayJoinConfirmed = false;
+    updatePlayerTeamSelectorAvailability();
     if (name === '') name = myPlayerName;
     entryDialogReturnCameraMode = cameraMode;
     cameraMode = 'overview';
@@ -1082,6 +1133,10 @@ function updateDeathCameraHudVisibility() {
 let mouseControlEnabled = false;
 let mouseX = 0; // Percentage from center (-1 to 1)
 let mouseY = 0; // Percentage from center (-1 to 1)
+registerGameplayInputReset(() => {
+  mouseX = 0;
+  mouseY = 0;
+});
 
 const DEFAULT_TANK_MODEL_ID = 'bzflag';
 
@@ -2026,6 +2081,97 @@ function getDebugState() {
   };
 }
 
+function handleGameplayKeydown(event) {
+  if (event.code === 'KeyP') {
+    sendToServer({ type: 'pause' });
+    event.preventDefault();
+    return true;
+  }
+
+  if (event.key === 'n' || event.key === 'N') {
+    focusChatWithTarget(CHAT_TARGET_ALL);
+    event.preventDefault();
+    return true;
+  }
+
+  if (event.code === 'Period' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    handleReplyToLastSender();
+    event.preventDefault();
+    return true;
+  }
+
+  if (event.code === 'Comma' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    handleMessageNemesisTarget();
+    event.preventDefault();
+    return true;
+  }
+
+  const chatTabsByCode = {
+    Digit1: 'all',
+    Digit2: 'chat',
+    Digit3: 'server',
+    Digit4: 'misc',
+    Digit5: 'debug',
+  };
+  const tabId = chatTabsByCode[event.code];
+  if (tabId) {
+    if (setActiveChatTab(tabId)) event.preventDefault();
+    return true;
+  }
+
+  if (event.code === 'BracketLeft' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    cycleChatTab(-1);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'BracketRight' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    cycleChatTab(1);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'PageUp' || event.key === 'PageUp') {
+    scrollChatPage(1);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'PageDown' || event.key === 'PageDown') {
+    scrollChatPage(-1);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'End' || event.key === 'End') {
+    scrollChatToNewest();
+    event.preventDefault();
+    return true;
+  }
+  if ((event.code === 'Equal' && event.shiftKey) || event.code === 'NumpadAdd') {
+    adjustRadarZoom(1);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'Minus' || event.code === 'NumpadSubtract') {
+    adjustRadarZoom(-1);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'Backslash') {
+    setRadarZoomLevel(1.0);
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'KeyQ' && ws && ws.readyState === WebSocket.OPEN) {
+    sendToServer({ type: 'selfDestruct' });
+    event.preventDefault();
+    return true;
+  }
+  if (event.code === 'Escape') {
+    mouseControlEnabled = false;
+    showMessage('Controls: Keyboard');
+    return true;
+  }
+  return false;
+}
+
 initHudControls({
   showMessage,
   updateHudButtons,
@@ -2062,6 +2208,7 @@ initHudControls({
   getScene: () => scene,
   getChatInput: () => chatInput,
   toggleEntryDialog,
+  handleGameplayKeydown,
 });
 
 // --- Debug Labels Button Wiring ---
@@ -2230,6 +2377,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // Initialize WebXR support
   window.addEventListener('webxrsessionchange', event => {
     if (event.detail?.enabled) return;
+    closeXRSettingsMenu();
     xrSettingsShortcutLatched = false;
     setXRButtonState(false);
   });
@@ -2257,6 +2405,7 @@ window.addEventListener('DOMContentLoaded', () => {
         const result = await toggleXRSession(renderer, animate);
         if (result || isXREnabled()) {
           setXRButtonState(true);
+          closeSettingsDialog();
           // Force first-person camera when entering VR
           cameraMode = 'first-person';
           showMessage('✓ WebXR VR Mode: ON');
@@ -2387,20 +2536,19 @@ function init() {
         chatInput.value = '';
       }
       chatInput.blur();
-      // Re-enable movement keys
-      Object.keys(keys).forEach(k => keys[k] = false);
     } else if (e.key === 'Escape') {
       chatInput.blur();
-      Object.keys(keys).forEach(k => keys[k] = false);
     }
   });
 
   // Prevent mouse/game events when chat input is focused or clicked
   chatInput.addEventListener('focus', () => {
     chatActive = true;
+    setInputContext(INPUT_CONTEXT.CHAT);
   });
   chatInput.addEventListener('blur', () => {
     chatActive = false;
+    syncInputContextFromUi();
   });
   chatInput.addEventListener('mousedown', (e) => {
     chatActive = true;
@@ -2486,191 +2634,10 @@ function init() {
     updateChatLayoutForDebugOverlap();
   });
 
-  function getUiKeyboardLockState() {
-    const activeElement = document.activeElement;
-    const entryDialog = document.getElementById('entryDialog');
-    const operatorOverlay = document.getElementById('operatorOverlay');
-    const isentryDialogOpen = entryDialog && entryDialog.style.display === 'block';
-    const isOperatorPanelOpen = operatorOverlay && operatorOverlay.style.display === 'block';
-    const isChatFocused = chatActive || activeElement === chatInput;
-    const isTypingInEditable = Boolean(activeElement && (
-      activeElement.tagName === 'INPUT' ||
-      activeElement.tagName === 'TEXTAREA' ||
-      activeElement.tagName === 'SELECT' ||
-      activeElement.isContentEditable
-    ));
-    return {
-      isentryDialogOpen,
-      isOperatorPanelOpen,
-      isChatFocused,
-      isTypingInEditable,
-    };
-  }
-
-  document.addEventListener('keydown', (e) => {
-    const entryDialog = document.getElementById('entryDialog');
-    const helpPanel = document.getElementById('helpPanel');
-    const {
-      isentryDialogOpen,
-      isOperatorPanelOpen,
-      isChatFocused,
-      isTypingInEditable,
-    } = getUiKeyboardLockState();
-
-    if (isOperatorPanelOpen) {
-      return;
-    }
-
-    if (isentryDialogOpen) {
-      return;
-    }
-
-    // Allow pause/unpause with P key even when paused
-    if (e.code === 'KeyP') {
-      sendToServer({ type: 'pause' });
-      // Don't block other UI, but don't process further game input
-      e.preventDefault();
-      return;
-    }
-
-    // Activate chat with n, but NOT if name dialog is open
-    if (!chatActive && !isentryDialogOpen && (e.key === 'n' || e.key === 'N')) {
-      focusChatWithTarget(CHAT_TARGET_ALL);
-      e.preventDefault();
-      return;
-    }
-
-    if (!chatActive && !isentryDialogOpen && e.code === 'Period' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      handleReplyToLastSender();
-      e.preventDefault();
-      return;
-    }
-
-    if (!chatActive && !isentryDialogOpen && e.code === 'Comma' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      handleMessageNemesisTarget();
-      e.preventDefault();
-      return;
-    }
-
-    if (!chatActive && !isentryDialogOpen) {
-      if (e.code === 'Digit1') {
-        if (setActiveChatTab('all')) e.preventDefault();
-        return;
-      }
-      if (e.code === 'Digit2') {
-        if (setActiveChatTab('chat')) e.preventDefault();
-        return;
-      }
-      if (e.code === 'Digit3') {
-        if (setActiveChatTab('server')) e.preventDefault();
-        return;
-      }
-      if (e.code === 'Digit4') {
-        if (setActiveChatTab('misc')) e.preventDefault();
-        return;
-      }
-      if (e.code === 'Digit5') {
-        if (setActiveChatTab('debug')) e.preventDefault();
-        return;
-      }
-      if (e.code === 'BracketLeft' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        cycleChatTab(-1);
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'BracketRight' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        cycleChatTab(1);
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'PageUp' || e.key === 'PageUp') {
-        scrollChatPage(1);
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'PageDown' || e.key === 'PageDown') {
-        scrollChatPage(-1);
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'End' || e.key === 'End') {
-        scrollChatToNewest();
-        e.preventDefault();
-        return;
-      }
-      if ((e.code === 'Equal' && e.shiftKey) || e.code === 'NumpadAdd') {
-        adjustRadarZoom(1);
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
-        adjustRadarZoom(-1);
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'Backslash') {
-        setRadarZoomLevel(1.0);
-        e.preventDefault();
-        return;
-      }
-    }
-
-    if (isChatFocused || isTypingInEditable) {
-      // Disable all movement/game keys while chat is active
-      e.preventDefault();
-      return;
-    }
-
-    if (!isentryDialogOpen && e.code === 'KeyQ' && ws && ws.readyState === WebSocket.OPEN) {
-      sendToServer({ type: 'selfDestruct' });
-      e.preventDefault();
-      return;
-    }
-
-    // Register game keys only when no text-entry dialogs are active.
-    keys[e.code] = true;
-    // Prevent tab key default behavior
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      return;
-    }
-
-    // Switch to keyboard controls with Escape key (also closes dialogs)
-    if (e.code === 'Escape') {
-      // Close name dialog if open
-      if (isentryDialogOpen) {
-        entryDialog.style.display = 'none';
-        stopTankPreviewAnimation();
-        return;
-      }
-      // Close help dialog if open
-      if (helpPanel.style.display === 'block') {
-        hideHelpPanel();
-        return;
-      }
-
-      mouseControlEnabled = false;
-      showMessage(`Controls: Keyboard`);
-    }
-  });
-  document.addEventListener('keyup', (e) => {
-    const {
-      isentryDialogOpen,
-      isOperatorPanelOpen,
-      isChatFocused,
-      isTypingInEditable,
-    } = getUiKeyboardLockState();
-
-    // Only clear keys if no UI element currently owns keyboard focus.
-    if (!isentryDialogOpen && !isOperatorPanelOpen && !isChatFocused && !isTypingInEditable) {
-      keys[e.code] = false;
-    }
-  });
-
   // Mouse movement for analog control
   // Mouse analog control using position relative to center (cursor always visible)
   document.addEventListener('mousemove', (e) => {
-    if (!mouseControlEnabled) return;
+    if (!isGameplayInputActive() || !mouseControlEnabled) return;
     // Allow mouse movement even if chat is active or chatInput is focused
     const centerX = window.innerWidth / 2;
     const centerY = window.innerHeight / 2;
@@ -2684,6 +2651,7 @@ function init() {
   // Mouse click to shoot (or enable mouse controls on first click)
   let justActivatedMouseControl = false;
   document.addEventListener('mousedown', (e) => {
+    if (!isGameplayInputActive()) return;
     // Only block mouse actions if the click is on the chat input itself
     if (e.target === chatInput) return;
 
@@ -2711,29 +2679,13 @@ function init() {
         justActivatedMouseControl = false;
         return;
       }
-      keys['Space'] = true;
+      setGameplayKeyState('Space', true);
     }
   });
 
   document.addEventListener('mouseup', (e) => {
     if (e.button === 0) {
-      keys['Space'] = false;
-    }
-  });
-
-  // Exit mouse mode on Escape
-  document.addEventListener('keydown', (e) => {
-    const {
-      isentryDialogOpen,
-      isOperatorPanelOpen,
-      isChatFocused,
-      isTypingInEditable,
-    } = getUiKeyboardLockState();
-    if (isOperatorPanelOpen || isentryDialogOpen || isChatFocused || isTypingInEditable) return;
-    if (e.code === 'Escape' && mouseControlEnabled) {
-      mouseControlEnabled = false;
-      showMessage('Controls: Keyboard');
-      if (typeof updateHudButtons === 'function') updateHudButtons();
+      setGameplayKeyState('Space', false);
     }
   });
 
@@ -2851,7 +2803,7 @@ function connectToServer() {
   ws.onclose = (event) => {
     renderReadyForJoin = false;
     gameplayJoinConfirmed = false;
-    updatePlayerRoleSelectorAvailability();
+    updatePlayerTeamSelectorAvailability();
     activeInitSequence = 0;
     hideLoadingOverlay();
     let kills = 0;
@@ -2911,7 +2863,7 @@ function handleServerMessage(message) {
       activeInitSequence = sequenceId;
       renderReadyForJoin = false;
       gameplayJoinConfirmed = false;
-      updatePlayerRoleSelectorAvailability();
+      updatePlayerTeamSelectorAvailability();
       pendingJoinRequest = null;
 
       // Show server info in entryDialog
@@ -2954,11 +2906,12 @@ function handleServerMessage(message) {
 
       myPlayerId = message.player.id;
       gameConfig = message.config;
+      setAvailablePlayerTeams(message.teamMode.teams);
       if (message.voiceRtcConfig && typeof message.voiceRtcConfig === 'object') {
         voiceRtcConfig = message.voiceRtcConfig;
         callVoiceManager('setRtcConfig', voiceRtcConfig);
       }
-      // Keep the requested role until the server confirms the joined player.
+      // Keep the requested team until the server confirms the joined player.
       // The initial handshake describes the temporary connection player.
       updateVoiceIdentity();
       renderManager._applyFogConfig(gameConfig);
@@ -2999,9 +2952,9 @@ function handleServerMessage(message) {
     case 'playerJoined':
       if (message.player.id === myPlayerId) {
         gameplayJoinConfirmed = true;
-        updatePlayerRoleSelectorAvailability();
-        playerRole = normalizePlayerRole(message.player.role || playerRole);
-        syncPlayerRoleSelector();
+        updatePlayerTeamSelectorAvailability();
+        playerTeam = normalizePlayerTeam(message.player.team);
+        syncPlayerTeamSelector();
         updateVoiceIdentity();
         const wasAliveBefore = !!(myTank && myTank.userData?.playerState?.health > 0);
         addPlayer(message.player);
@@ -3100,9 +3053,9 @@ function handleServerMessage(message) {
         addPlayer(message.player);
         if (message.player.id === myPlayerId) {
           myTank = tanks.get(myPlayerId);
-          if (message.player.role !== undefined) {
-            playerRole = normalizePlayerRole(message.player.role);
-            syncPlayerRoleSelector();
+          if (message.player.team !== undefined) {
+            playerTeam = normalizePlayerTeam(message.player.team);
+            syncPlayerTeamSelector();
             updateVoiceIdentity();
           }
         }
@@ -3335,7 +3288,8 @@ function addPlayer(player) {
   const playerTankModelPath = getTankModelPathById(playerTankModelId);
   let tank = tanks.get(player.id);
 
-  if (tank && tank.userData && tank.userData.tankModel !== playerTankModelId) {
+  const tankColorChanged = tank?.userData?.playerState?.color !== player.color;
+  if (tank && tank.userData && (tank.userData.tankModel !== playerTankModelId || tankColorChanged)) {
     if (tank.userData.ghostMesh) {
       renderManager.getWorldGroup().remove(tank.userData.ghostMesh);
       tank.userData.ghostMesh = null;
@@ -3346,9 +3300,7 @@ function addPlayer(player) {
   }
 
   if (!tank) {
-    // Use player.color if present, else fallback to green
-    const tankColor = (typeof player.color === 'number') ? player.color : 0x4caf50;
-    tank = renderManager.createTank(tankColor, player.name, playerTankModelPath);
+    tank = renderManager.createTank(player.color, player.name, playerTankModelPath);
     renderManager.getWorldGroup().add(tank);
     tanks.set(player.id, tank);
 
@@ -5210,8 +5162,12 @@ function handleInputEvents() {
   intendedY = 0;
   jumpTriggered = false;
 
+  updateVirtualInputFromXR();
+  updateVirtualInputFromGamepad();
+
   if (!myTank || !gameConfig) return;
-  if (isSpectatorRole()) return;
+  if (isObserver()) return;
+  if (!isGameplayInputActive()) return;
 
   // Keep the tank snapped to a valid support surface under its center. This
   // stabilizes step/pyramid support without loosening side-contact ontop tests.
@@ -5245,12 +5201,6 @@ function handleInputEvents() {
   isInAir = !onGround && !onObstacle;
 
   if (isPaused || pauseCountdownStart > 0) return;
-
-  // Update virtual input from XR controller if available
-  updateVirtualInputFromXR();
-
-  // Update virtual input from gamepad/joystick if available
-  updateVirtualInputFromGamepad();
 
   // Gather intended input from controls
   if (isInAir) {
@@ -5298,7 +5248,7 @@ function handleInputEvents() {
 
 function handleMotion(deltaTime) {
   if (!myTank || !gameConfig) return;
-  if (isSpectatorRole()) return;
+  if (isObserver()) return;
   if (isPaused || pauseCountdownStart > 0) return;
 
   let forceMoveSend = false;
@@ -5786,7 +5736,7 @@ function handleMotion(deltaTime) {
 }
 
 function shoot() {
-  if (isSpectatorRole()) return false;
+  if (isObserver()) return false;
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
 
   const dirX = -Math.sin(playerRotation);
@@ -6200,7 +6150,7 @@ function ensureXRRadarTexture() {
   xrRadarTextureMesh.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
   xrRadarTextureMesh.position.set(targetX, targetY, XR_HUD_PLANE_Z);
   xrRadarTextureMesh.rotation.set(0, 0, 0);
-  xrRadarTextureMesh.visible = isXREnabled();
+  xrRadarTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
 
   if (isXREnabled()) {
     xrRadarTexture.needsUpdate = true;
@@ -6317,7 +6267,7 @@ function ensureXRChatOverlay() {
   xrChatTextureMesh.geometry = new THREE.PlaneGeometry(chatPlaneWidth, chatPlaneHeight);
   xrChatTextureMesh.position.set(chatCenterX, chatCenterY, XR_HUD_PLANE_Z);
   xrChatTextureMesh.rotation.set(0, 0, 0);
-  xrChatTextureMesh.visible = isXREnabled();
+  xrChatTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
 }
 
 function ensureXRShotStatusOverlay() {
@@ -6424,7 +6374,7 @@ function ensureXRShotStatusOverlay() {
   xrShotStatusTextureMesh.geometry = new THREE.PlaneGeometry(shotWidth, shotHeight);
   xrShotStatusTextureMesh.position.set(shotX, 0.02, XR_HUD_PLANE_Z);
   xrShotStatusTextureMesh.rotation.set(0, 0, 0);
-  xrShotStatusTextureMesh.visible = isXREnabled();
+  xrShotStatusTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
 }
 
 function ensureXRScoreboardOverlay() {
@@ -6549,7 +6499,7 @@ function ensureXRScoreboardOverlay() {
   const scoreboardCenterY = 0.42 - (baseHeight / 2);
   xrScoreboardTextureMesh.position.set(scoreboardCenterX, scoreboardCenterY, XR_HUD_PLANE_Z);
   xrScoreboardTextureMesh.rotation.set(0, 0, 0);
-  xrScoreboardTextureMesh.visible = isXREnabled();
+  xrScoreboardTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
 }
 
 const RADAR_WORLD_INSET_PX = 10;
@@ -7023,37 +6973,46 @@ function setXRButtonState(enabled) {
   }
 }
 
-function openSettingsHud() {
-  const settingsHud = document.getElementById('settingsHud');
-  if (settingsHud && settingsHud.style.display === 'block') return;
-
-  const settingsBtn = document.getElementById('settingsBtn');
-  if (settingsBtn) {
-    settingsBtn.click();
-  } else if (settingsHud) {
-    settingsHud.style.display = 'block';
-  }
+function closeXRSettingsMenu() {
+  if (!xrSettingsMenuOpen) return;
+  xrSettingsMenuOpen = false;
+  xrSettingsMenuRenderer?.hide();
+  syncInputContextFromUi();
 }
 
-async function exitXRAndOpenSettings() {
+function toggleXRSettingsMenu() {
+  if (xrSettingsMenuOpen) {
+    closeXRSettingsMenu();
+    return;
+  }
+  xrSettingsMenuOpen = true;
+  xrSettingsMenuSelectedIndex = 0;
+  xrSettingsMenuNavigationDirection = 0;
+  xrSettingsMenuNextRepeatAt = 0;
+  xrSettingsMenuActivateLatched = true;
+  xrSettingsMenuBackLatched = true;
+  setInputContext(INPUT_CONTEXT.DIALOG);
+}
+
+async function exitXRFromMenu() {
   if (xrSettingsShortcutInFlight) return;
   xrSettingsShortcutInFlight = true;
   try {
     const renderer = renderManager.getRenderer();
     if (!renderer) return;
 
+    closeXRSettingsMenu();
     await toggleXRSession(renderer, animate);
     setXRButtonState(false);
     showMessage('WebXR VR Mode: OFF');
-    openSettingsHud();
-    showMessage('Settings: Shown');
   } finally {
     xrSettingsShortcutInFlight = false;
   }
 }
 
-function handleXRSettingsShortcut() {
+function handleXRSettingsMenuInput(now = performance.now()) {
   if (!isXREnabled()) {
+    closeXRSettingsMenu();
     xrSettingsShortcutLatched = false;
     return;
   }
@@ -7062,10 +7021,60 @@ function handleXRSettingsShortcut() {
   const pressed = Boolean(xrInput.leftThumbstickPressed || xrInput.rightThumbstickPressed);
   if (pressed && !xrSettingsShortcutLatched) {
     xrSettingsShortcutLatched = true;
-    void exitXRAndOpenSettings();
+    toggleXRSettingsMenu();
   } else if (!pressed) {
     xrSettingsShortcutLatched = false;
   }
+
+  if (!xrSettingsMenuOpen) return;
+
+  const items = getXRSettingsMenuItems();
+  xrSettingsMenuSelectedIndex = Math.min(xrSettingsMenuSelectedIndex, Math.max(0, items.length - 1));
+  const leftY = xrInput.leftThumbstick?.y || 0;
+  const rightY = xrInput.rightThumbstick?.y || 0;
+  const navigationY = Math.abs(rightY) >= Math.abs(leftY) ? rightY : leftY;
+  const direction = navigationY > 0.6 ? 1 : navigationY < -0.6 ? -1 : 0;
+
+  if (direction === 0) {
+    xrSettingsMenuNavigationDirection = 0;
+    xrSettingsMenuNextRepeatAt = 0;
+  } else if (direction !== xrSettingsMenuNavigationDirection || now >= xrSettingsMenuNextRepeatAt) {
+    xrSettingsMenuSelectedIndex = (
+      xrSettingsMenuSelectedIndex + direction + items.length
+    ) % items.length;
+    xrSettingsMenuNavigationDirection = direction;
+    xrSettingsMenuNextRepeatAt = now + 250;
+  }
+
+  const activatePressed = xrInput.leftTrigger > 0.5 || xrInput.rightTrigger > 0.5 || xrInput.buttonA;
+  if (activatePressed && !xrSettingsMenuActivateLatched) {
+    const selectedItem = items[xrSettingsMenuSelectedIndex];
+    if (selectedItem?.id === 'exitXR') {
+      void exitXRFromMenu();
+    } else if (selectedItem?.id === 'closeXRMenu') {
+      closeXRSettingsMenu();
+    } else if (selectedItem && !selectedItem.disabled) {
+      activateXRSettingsMenuItem(selectedItem.id);
+    }
+  }
+  xrSettingsMenuActivateLatched = activatePressed;
+
+  const backPressed = xrInput.buttonB || xrInput.buttonGrip;
+  if (backPressed && !xrSettingsMenuBackLatched) {
+    closeXRSettingsMenu();
+  }
+  xrSettingsMenuBackLatched = backPressed;
+}
+
+function ensureXRSettingsMenu() {
+  if (!xrSettingsMenuRenderer) {
+    xrSettingsMenuRenderer = new XRMenuRenderer();
+  }
+  xrSettingsMenuRenderer.update(renderManager.getCamera(), {
+    visible: isXREnabled() && xrSettingsMenuOpen,
+    items: getXRSettingsMenuItems(),
+    selectedIndex: xrSettingsMenuSelectedIndex,
+  });
 }
 
 function updateChatWindow() {
@@ -7219,10 +7228,13 @@ function animate() {
   worldTime = (worldTime + 20 * deltaTime) % 24000;
   renderManager.setWorldTime(worldTime);
 
+  updateXRControllerInput();
+  handleXRSettingsMenuInput(now);
   ensureXRRadarTexture();
   ensureXRShotStatusOverlay();
   ensureXRChatOverlay();
   ensureXRScoreboardOverlay();
+  ensureXRSettingsMenu();
 
   // Debug: log game state in XR once on entry
   if (isXREnabled() && !window.xrDebugLogged) {
@@ -7239,8 +7251,6 @@ function animate() {
   updateDegreeBar({ myTank, playerRotation });
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
 
-  updateXRControllerInput();
-  handleXRSettingsShortcut();
   handleInputEvents();
   handleMotion(deltaTime);
 

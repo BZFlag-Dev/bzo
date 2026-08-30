@@ -5,6 +5,19 @@
   "motd": "Welcome to the test server!",
   "maxPlayers": 16,
   "port": 3000,
+  "teamMode": {
+    "enabled": false,
+    "autoTeam": false,
+    "teams": ["rogue", "observer", "red", "blue", "green", "purple"],
+    "limits": {
+      "rogue": 10,
+      "observer": 10,
+      "red": 10,
+      "blue": 10,
+      "green": 10,
+      "purple": 10
+    }
+  },
   "tankSpeed": 25.0,
   "tankRotationSpeed": 0.785398,
   "reverseSpeedRatio": 0.5,

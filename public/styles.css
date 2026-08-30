@@ -499,14 +499,6 @@ body {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 200;
-  background: rgba(0, 0, 0, 0.95);
-  padding: 30px;
-  border-radius: 15px;
-  border: 2px solid #4CAF50;
-  width: min(760px, calc(100vw - 32px));
-  max-height: min(90vh, 860px);
-  overflow-y: auto;
-  box-sizing: border-box;
   display: none;
 }
 
@@ -547,7 +539,7 @@ body {
 
 #helpPanel p {
   margin: 8px 0;
-  font-size: 14px;
+  font-size: 17px;
   line-height: 1.6;
 }
 
@@ -584,10 +576,6 @@ body {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 300;
-  background: rgba(0, 0, 0, 0.95);
-  padding: 30px;
-  border-radius: 15px;
-  border: 2px solid #4CAF50;
   display: none;
 }
 
@@ -597,14 +585,6 @@ body {
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 310;
-  background: rgba(0, 0, 0, 0.95);
-  padding: 30px;
-  border-radius: 15px;
-  border: 2px solid #4CAF50;
-  width: min(520px, calc(100vw - 32px));
-  max-height: min(90vh, 760px);
-  overflow-y: auto;
-  box-sizing: border-box;
   display: none;
 }
 
@@ -638,8 +618,8 @@ body {
 
 #operatorOverlay input[type="number"] {
   width: 100%;
-  padding: 8px;
-  font-size: 15px;
+  padding: 10px;
+  font-size: 17px;
   border: 2px solid #4CAF50;
   border-radius: 5px;
   background: rgba(0, 0, 0, 0.5);
@@ -662,8 +642,8 @@ body {
 
 #operatorOverlay input[type="text"] {
   width: 100%;
-  padding: 8px;
-  font-size: 15px;
+  padding: 10px;
+  font-size: 17px;
   border: 2px solid #4CAF50;
   border-radius: 5px;
   background: rgba(0, 0, 0, 0.5);
@@ -678,8 +658,8 @@ body {
 }
 
 #operatorOverlay button {
-  padding: 8px 16px;
-  font-size: 14px;
+  padding: 10px 18px;
+  font-size: 16px;
   font-weight: bold;
   border: 2px solid #4CAF50;
   border-radius: 5px;
@@ -699,21 +679,32 @@ body {
   background: rgba(76, 175, 80, 0.6);
 }
 
+#settingsHud button:focus-visible,
+#settingsHud input:focus-visible,
+#settingsHud select:focus-visible,
+#voiceOverlay button:focus-visible,
+#voiceOverlay input:focus-visible,
+#voiceOverlay select:focus-visible,
+#helpPanel button:focus-visible,
+#helpPanel input:focus-visible,
+#helpPanel select:focus-visible,
+#operatorOverlay button:focus-visible,
+#operatorOverlay input:focus-visible,
+#operatorOverlay select:focus-visible,
+#entryDialog button:focus-visible,
+#entryDialog input:focus-visible,
+#entryDialog select:focus-visible {
+  outline: 2px solid var(--color-btn-bg-focus);
+  outline-offset: 2px;
+}
+
 #entryDialog {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 300;
-  background: rgba(0, 0, 0, 0.95);
-  padding: 30px;
-  border-radius: 15px;
-  border: 2px solid #4CAF50;
   display: none;
-  width: min(460px, calc(100vw - 32px));
-  max-height: min(90vh, 760px);
-  overflow-y: auto;
-  box-sizing: border-box;
 }
 
 #loadingOverlay {
@@ -809,46 +800,57 @@ body {
   border-color: #66bb6a;
 }
 
-.entryRoleSelector {
-  margin: 0 0 1rem;
-  padding: 0.75rem 0.9rem 0.9rem;
-  border: 1px solid rgba(76, 175, 80, 0.65);
-  border-radius: 0.6rem;
-  color: var(--color-fg);
-}
-
-.entryRoleSelector legend {
-  padding: 0 0.35rem;
-  color: var(--color-accent-light);
-  font-weight: bold;
-}
-
-.entryRoleSelector p {
-  margin: 0 0 0.65rem;
-  color: rgba(255, 255, 255, 0.75);
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-
-.entryRoleSelector label {
-  display: inline-flex;
+.entryTeamSelector {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 1fr);
   align-items: center;
-  gap: 0.45rem;
-  margin-right: 1rem;
+  gap: 24px;
+  width: min(100%, 560px);
+  min-height: 46px;
+  margin: 0 auto 20px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
   color: var(--color-fg);
+  font: inherit;
   cursor: pointer;
 }
 
-.entryRoleSelector input {
-  accent-color: var(--color-accent);
-  inline-size: 1rem;
-  block-size: 1rem;
-  margin: 0;
+.entryTeamLabel {
+  font-weight: bold;
+  text-align: right;
 }
 
-.entryRoleSelector input:focus-visible {
-  outline: 2px solid var(--color-btn-bg-focus);
-  outline-offset: 2px;
+.entryTeamValue {
+  color: var(--color-accent-light);
+  font-weight: bold;
+  text-align: left;
+}
+
+.entryTeamSelector[data-team="rogue"] .entryTeamValue { color: #ffff00; }
+.entryTeamSelector[data-team="observer"] .entryTeamValue { color: #ffffff; }
+.entryTeamSelector[data-team="red"] .entryTeamValue { color: #ff3333; }
+.entryTeamSelector[data-team="blue"] .entryTeamValue { color: #6680ff; }
+.entryTeamSelector[data-team="green"] .entryTeamValue { color: #33dd55; }
+.entryTeamSelector[data-team="purple"] .entryTeamValue { color: #ff55ff; }
+
+.entryTeamValue::before {
+  content: "‹ ";
+}
+
+.entryTeamValue::after {
+  content: " ›";
+}
+
+.entryTeamSelector:hover,
+.entryTeamSelector:focus-visible {
+  border-color: var(--color-accent);
+}
+
+.entryTeamSelector:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 #tankSelector {
@@ -1227,68 +1229,128 @@ canvas {
   }
 }
 
+#settingsHud,
+#helpPanel,
+#voiceOverlay,
+#operatorOverlay,
+#entryDialog {
+  width: min(820px, calc(100vw - 32px));
+  height: min(86vh, 900px);
+  padding: 24px;
+  border: 1px solid rgba(76, 175, 80, 0.72);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.82);
+  box-shadow: 0 12px 36px #0009;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: 17px;
+}
+
 #settingsHud {
   position: fixed;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  background: var(--color-panel-bg-solid);
-  border-radius: 4vw;
-  padding: 4vw 3vw;
   z-index: 1000;
-  box-shadow: 0 0.5vw 2vw #0008;
-  min-width: 40vw;
-  min-height: 20vh;
-  width: 80vw;
-  height: 40vh;
-  max-width: 95vw;
-  max-height: 80vh;
-  text-align: center;
+  text-align: left;
   display: none;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  overflow-y: auto;
-  overflow-x: auto;
 }
 
-@media (orientation: portrait) {
-  #settingsHud {
-    width: 90vw;
-    height: 70vh;
-    min-width: 60vw;
-    min-height: 20vh;
-    max-width: 98vw;
-    max-height: 60vh;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: stretch;
-    justify-content: center;
-  }
-  .settingsHudContent {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 3vw;
-    width: 100%;
-    justify-content: center;
-    align-items: center;
-  }
-  .settingsHudBtn {
-    width: 40vw;
-    min-width: 30vw;
-    max-width: 45vw;
-    height: 12vw;
-    font-size: 1.2em;
-  }
+#settingsHud .dialogTitle,
+#helpPanel .dialogTitle,
+#voiceOverlay .dialogTitle,
+#operatorOverlay .dialogTitle,
+#entryDialog h2 {
+  margin: 0 0 18px;
+  color: var(--color-accent-light);
+  font-size: 1.6rem;
+  font-weight: bold;
+  text-align: center;
 }
+
 .settingsHudContent {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 2vw;
   width: 100%;
+}
+
+.settingsMenuList {
+  display: grid;
+  gap: 3px;
+  width: min(100%, 560px);
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.settingsMenuRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 24px;
+  align-items: center;
+  width: 100%;
+  min-height: 46px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-fg);
+  font: inherit;
+  text-align: left;
+}
+
+.settingsMenuRow:hover,
+.settingsMenuRow:focus-visible {
+  border-color: var(--color-accent);
+  background: transparent;
+}
+
+.settingsMenuRow:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.settingsMenuLabel,
+.settingsMenuValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settingsMenuLabel {
+  text-align: right;
+}
+
+.settingsMenuValue {
+  color: var(--color-accent-light);
+  font-weight: bold;
+  text-align: left;
+}
+
+.settingsMenuRow.active .settingsMenuValue {
+  color: var(--color-fg);
+}
+
+@media (max-width: 600px) {
+  #settingsHud,
+  #helpPanel,
+  #voiceOverlay,
+  #operatorOverlay,
+  #entryDialog {
+    width: calc(100vw - 16px);
+    height: min(88vh, 900px);
+    padding: 16px;
+    font-size: 16px;
+  }
+
+  .settingsMenuRow {
+    grid-template-columns: minmax(0, 1fr) minmax(7rem, auto);
+    column-gap: 16px;
+    width: 100%;
+    min-height: 48px;
+    padding: 8px 10px;
+  }
+
+  .settingsMenuList {
+    width: 100%;
+  }
 }
 
 .voiceSettings {
@@ -1424,8 +1486,8 @@ canvas {
 }
 
 .settingsHudBtn {
-  font-size: 1.2em;
-  border-radius: 2vw;
+  font-size: 1em;
+  border-radius: 4px;
   border: none;
   background: #444;
   color: #fff;
@@ -1433,8 +1495,15 @@ canvas {
   transition: background 0.2s;
   box-sizing: border-box;
 }
+
+#settingsHud .settingsMenuRow,
+#settingsHud .settingsMenuRow:hover,
+#settingsHud .settingsMenuRow:focus-visible,
+#settingsHud .settingsMenuRow.active {
+  background: transparent;
+}
 @media (max-width: 600px) {
-  .settingsHudBtn {
+  .settingsHudBtn:not(.settingsMenuRow) {
     min-width: 60vw;
     max-width: 98vw;
     min-height: 40px;
@@ -1508,8 +1577,8 @@ canvas {
     font-size: 0.72rem;
   }
 
-  .entryRoleSelector label {
-    display: flex;
-    margin: 0.45rem 0 0;
+  .entryTeamSelector {
+    grid-template-columns: minmax(0, 1fr) minmax(8rem, 1fr);
+    gap: 16px;
   }
 }

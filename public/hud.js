@@ -131,32 +131,6 @@ export function toggleDebugHud({ debugEnabled, setDebugEnabled, updateHudButtons
   showMessage(`Debug Mode: ${!debugEnabled ? 'ON' : 'OFF'}`);
 }
 
-// Toggle settings HUD
-export function toggleSettingsHud({ settingsHud, showMessage, updateSettingsBtn }) {
-  if (!settingsHud) return;
-  if (settingsHud.style.display === 'block') {
-    settingsHud.style.display = 'none';
-    showMessage('Settings: Hidden');
-  } else {
-    settingsHud.style.display = 'block';
-    showMessage('Settings: Shown');
-  }
-  updateSettingsBtn();
-}
-
-// Toggle help panel
-export function toggleHelpPanel({ helpPanel, showMessage, updateHelpBtn }) {
-  if (!helpPanel) return;
-  if (helpPanel.style.display === 'block') {
-    helpPanel.style.display = 'none';
-    showMessage('Help Panel: Hidden');
-  } else {
-    helpPanel.style.display = 'block';
-    showMessage('Help Panel: Shown');
-  }
-  updateHelpBtn();
-}
-
 // Formats world time (0-23999 ticks) as HH:MM. Minecraft: 0 = 6:00, 6000 = noon.
 function formatWorldTime(worldTime) {
   if (typeof worldTime !== 'number') return '';
