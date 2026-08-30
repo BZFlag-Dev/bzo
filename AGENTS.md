@@ -95,6 +95,15 @@ same reference implementation.
 
 `scripts/test-collision-geometry.mjs` fuzzes the two copies against each other.
 
+**The server must be strictly more permissive than the client.** Move packets
+quantize position with `toFixed(2)`, so a transmitted position can sit ~0.007
+further into an obstacle than where the client actually stood -- far more than
+the ~0.001 margin the client keeps while sliding along a surface. The server
+therefore tests a slightly smaller radius (`antiCheat.collisionSlack`, default
+`0.05`). Without it the server rejects most frames of a slide and the player
+rubber-bands down every slope. Slack may only ever remove collisions, never add
+them; do not apply it to heights or to the teleporter portal interior.
+
 bzo is BZFlag's world relabeled for Three.js: `bzo(x, y, z) = bzf(x, z, -y)`.
 That is a proper rotation, not a mirror. Because the ordered pair `(x, z)` seen
 from `+Y` has the opposite orientation to `(x, y)` seen from `+Z`, a Three.js
@@ -154,6 +163,15 @@ compatibility matrix.
 There is no automated browser or gameplay test. Manual play sessions remain the
 regression check for rendering, prediction, and XR. Use
 `docs/webxr-validation.md` for XR changes.
+
+## Committing
+
+**Do not `git commit` or `git push` unless explicitly asked.** Make the changes,
+run `npm run check`, and stop, leaving the working tree for the user to review
+and play-test. Say plainly that the work is uncommitted.
+
+The one standing exception is an explicit release request, below -- that is
+itself an instruction to commit, tag, and push.
 
 ## Release Process
 

@@ -257,6 +257,13 @@ const ANTICHEAT_CONFIG = {
   linearDriftThreshold: serverConfig.antiCheat?.linearDriftThreshold || 3.0,
   linearDriftThresholdVelocityChanged: serverConfig.antiCheat?.linearDriftThresholdVelocityChanged || 20.0,
   angularDriftThreshold: serverConfig.antiCheat?.angularDriftThreshold || 0.5,
+  // The server must be strictly more permissive than the client, or it rejects
+  // moves an unmodified client legitimately made. Move packets quantize
+  // position to 0.01 (client.js sends toFixed(2)), which is ~0.007 of radial
+  // error in the XZ plane -- far more than the ~0.001 margin the client keeps
+  // when it slides along a surface. Without slack the server rejects most of a
+  // slide and the player rubber-bands down every slope.
+  collisionSlack: serverConfig.antiCheat?.collisionSlack ?? 0.05,
 };
 
 // Optional gameplay overrides from server config
@@ -1405,6 +1412,11 @@ function getCollisionColliders() {
 function checkCollision(x, y, z, tankRadius = 2, options = {}) {
   const ignoreTeleporters = options.ignoreTeleporters === true;
   const suppressLog = options.suppressLog === true;
+  // Shrinks the tested radius only. Height is untouched, and the teleporter
+  // portal interior keeps the full radius so slack can never make a portal
+  // harder to pass through.
+  const slack = Math.max(0, Math.min(options.slack || 0, tankRadius));
+  const effectiveRadius = tankRadius - slack;
   for (const obs of getCollisionColliders()) {
     if (ignoreTeleporters && obs?.kind === 'teleporter') continue;
     const obstacleHeight = obs.h || 4;
@@ -1428,7 +1440,7 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
       if (obs?.kind === 'teleporter') {
         const dims = getShotTeleporterDims(obs);
         const outerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.halfD);
-        if (outerDistSquared < tankRadius * tankRadius) {
+        if (outerDistSquared < effectiveRadius * effectiveRadius) {
           const innerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.activeHalfD);
           const activeBaseY = obstacleBase;
           const activeTopY = obstacleBase + dims.activeH;
@@ -1445,7 +1457,7 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
         }
       } else {
         const distSquared = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
-        if (distSquared < tankRadius * tankRadius) {
+        if (distSquared < effectiveRadius * effectiveRadius) {
           if (!suppressLog) {
             log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
           }
@@ -1458,7 +1470,7 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
       // The previous 8-point sample never consulted obs.inverted, so the server
       // treated every inverted pyramid as upright and disagreed with the client
       // about roughly a fifth of the volume around it.
-      if (pyramidIntersectsCylinder(obs, x, y, z, tankRadius, tankHeight)) {
+      if (pyramidIntersectsCylinder(obs, x, y, z, effectiveRadius, tankHeight)) {
         if (!suppressLog) {
           log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         }
@@ -1625,7 +1637,10 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
 
   // Check collision against the unified collider set (map objects + border colliders).
   const ignoreTeleporters = options.ignoreTeleporters === true;
-  let collision = checkCollision(newX, newY, newZ, 2, { ignoreTeleporters });
+  let collision = checkCollision(newX, newY, newZ, 2, {
+    ignoreTeleporters,
+    slack: ANTICHEAT_CONFIG.collisionSlack
+  });
   if (collision) {
     if (collision === true) {
       // Should not happen, but fallback to safe rejection.

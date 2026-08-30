@@ -7,10 +7,14 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 ## [Unreleased]
 
 ### Fixed
+- Fixed players rubber-banding down pyramid slopes. The server rejected moves with no tolerance, but positions are sent rounded to 0.01, which is coarser than the margin the client keeps while sliding, so most frames of a slide were rejected and rolled back.
+- Fixed tanks being held in mid-air by a distant inverted pyramid, and being unable to fall anywhere on the map afterwards.
+- Fixed tanks freezing against steep pyramid faces, including in mid-air while falling, when no slide surface was reported.
 - Fixed inverted pyramid collision on the server, which treated every inverted pyramid as upright and disagreed with the client about roughly a fifth of the space around it.
 - Fixed tanks clipping into the edges of pyramids, where a tank whose centre sat outside the base footprint was not tested at all.
 
 ### Changed
+- Added `antiCheat.collisionSlack` so the server validates movement slightly more permissively than the client, as the protocol's rounded positions require.
 - Replaced both ad-hoc pyramid collision routines with shared geometry that mirrors BZFlag, so the client and server evaluate the same solid volume.
 
 ## [1.0.37] - 2026-08-30

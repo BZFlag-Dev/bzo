@@ -106,6 +106,68 @@ export function pyramidShrinkFactor(obs, y, height = 0) {
   return shrink;
 }
 
+// Local-space outward horizontal normal of an axis-aligned rectangle centered
+// at the origin, for a point inside OR outside it. Mirrors
+// src/game/Intersect.cxx getNormalOrigRect -- note that upstream always yields a
+// normal, which is why a pyramid can never report "no surface" to slide on.
+export function getOrigRectNormal(halfW, halfD, localX, localZ) {
+  const normalize = (x, z) => {
+    const length = Math.hypot(x, z);
+    return length > 0 ? { x: x / length, z: z / length } : { x: 1, z: 0 };
+  };
+
+  if (localX > halfW) {
+    if (localZ > halfD) return normalize(localX - halfW, localZ - halfD);
+    if (localZ < -halfD) return normalize(localX - halfW, localZ + halfD);
+    return { x: 1, z: 0 };
+  }
+  if (localX < -halfW) {
+    if (localZ > halfD) return normalize(localX + halfW, localZ - halfD);
+    if (localZ < -halfD) return normalize(localX + halfW, localZ + halfD);
+    return { x: -1, z: 0 };
+  }
+  if (localZ > halfD) return { x: 0, z: 1 };
+  if (localZ < -halfD) return { x: 0, z: -1 };
+
+  // Inside: pick the nearer wall, weighted by the rectangle's aspect so a long
+  // thin rib resolves to its long face rather than its end cap.
+  if (halfD * Math.abs(localX) >= halfW * Math.abs(localZ)) {
+    return { x: localX >= 0 ? 1 : -1, z: 0 };
+  }
+  return { x: 0, z: localZ >= 0 ? 1 : -1 };
+}
+
+// True when a point lies over the pyramid's base footprint.
+//
+// Colliding with a pyramid and being held up by one are different questions.
+// getPyramidFaceLocalNormal deliberately answers everywhere, so the slide
+// resolver always has a surface to work with. Support must additionally be
+// contained, or a tank can be "held up" by a pyramid it is nowhere near.
+export function isWithinPyramidFootprint(obs, x, z) {
+  const local = getColliderLocalPoint(x, z, obs);
+  return Math.abs(local.x) <= obs.w / 2 && Math.abs(local.z) <= obs.d / 2;
+}
+
+// Outward normal of a pyramid face at a point, in the obstacle's local frame,
+// including the tilt from the slope. Mirrors PyramidBuilding::getNormal and
+// getHitNormal: take the normal of the cross-section rectangle at the
+// occupant's height, then angle it by the slope of the wall.
+export function getPyramidFaceLocalNormal(obs, x, y, z, height = 0) {
+  const shrink = pyramidShrinkFactor(obs, y, height);
+  const local = getColliderLocalPoint(x, z, obs);
+  const flat = getOrigRectNormal((obs.w / 2) * shrink, (obs.d / 2) * shrink, local.x, local.z);
+
+  // Upstream notes this assumes a square base.
+  const pyramidHeight = getPyramidHeight(obs);
+  const baseHalfWidth = obs.w / 2;
+  const scale = 1 / (Math.hypot(pyramidHeight, baseHalfWidth) || 1);
+  return {
+    x: flat.x * scale * pyramidHeight,
+    y: (isPyramidFlatTop(obs) ? -1 : 1) * scale * baseHalfWidth,
+    z: flat.z * scale * pyramidHeight
+  };
+}
+
 // True when a cylinder of the given radius and height, whose base sits at y,
 // intersects the solid volume of a pyramid. Upstream PyramidBuilding::inBox,
 // with a circle footprint instead of a rotated rectangle.

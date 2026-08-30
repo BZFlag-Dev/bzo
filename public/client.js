@@ -124,7 +124,9 @@ import { CLIENT_VERSION } from './version.mjs';
 import {
   getColliderLocalPoint,
   getPyramidHeight,
+  getPyramidFaceLocalNormal,
   getPyramidSurfaceLocalHeight,
+  isWithinPyramidFootprint,
   pyramidIntersectsCylinder,
 } from './collision-geometry.mjs';
 
@@ -4578,11 +4580,11 @@ function resolveSurfaceSlide(obs, contact, x, y, z, deltaX, deltaY, deltaZ, cand
 
   if (!contact || !contact.normal) return null;
 
-  if (obs && obs.type === 'pyramid' && contact.climbable) {
+  if (obs && obs.type === 'pyramid' && contact.climbable && contact.withinFootprint) {
     const targetX = x + deltaX;
     const targetZ = z + deltaZ;
     const targetContact = getPyramidSurfaceContact(obs, targetX, y, targetZ);
-    if (targetContact && targetContact.climbable) {
+    if (targetContact && targetContact.climbable && targetContact.withinFootprint) {
       const targetY = Math.max(0, targetContact.surfaceY);
       const collisionWithoutPyramid = checkCollision(targetX, targetY, targetZ, tankRadius, new Set([obs]));
       if (!collisionWithoutPyramid || collisionWithoutPyramid.type === 'ontop') {
@@ -4714,27 +4716,30 @@ function getPyramidSurfaceContact(obs, worldX, worldY, worldZ) {
   const height = getPyramidHeight(obs);
   const tankHeight = 2;
   const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
-  if (Math.abs(localX) > halfW || Math.abs(localZ) > halfD) return null;
 
-  const nx = Math.abs(localX) / halfW;
-  const nz = Math.abs(localZ) / halfD;
-  const dominantAxis = nx >= nz ? 'x' : 'z';
-  const surfaceLocalHeight = getPyramidSurfaceLocalHeight(obs, localX, localZ);
-  if (surfaceLocalHeight === null) return null;
+  // Take the normal from the cross-section at the tank's height, the way
+  // BZFlag's PyramidBuilding::getNormal does. There is deliberately no
+  // "outside the base footprint" gate: a tank whose centre sits beyond the
+  // footprint can still have its radius inside the slope, and refusing to
+  // describe a surface there leaves the slide resolver with nothing to work
+  // with and freezes the tank -- in mid-air, if it was falling.
+  const localNormal = getPyramidFaceLocalNormal(obs, worldX, worldY, worldZ, tankHeight);
+  const dominantAxis = Math.abs(localNormal.x) >= Math.abs(localNormal.z) ? 'x' : 'z';
+
+  // Outside the footprint there is no sloped surface overhead, so the contact
+  // sits at the base (upright) or the flat top (inverted). Colliding and
+  // standing are different questions: a normal exists everywhere, so the slide
+  // resolver always has something to work with, but only a tank actually over
+  // the pyramid can be held up by it.
+  const withinFootprint = isWithinPyramidFootprint(obs, worldX, worldZ);
+  const surfaceLocalHeight = getPyramidSurfaceLocalHeight(obs, localX, localZ)
+    ?? (obs.inverted ? height : 0);
   const collisionSurfaceY = obstacleBase + surfaceLocalHeight;
   const supportSurfaceY = obs.inverted ? obstacleBase + height : collisionSurfaceY;
 
-  let localNormal;
-  let faceCenterLocal;
-  if (dominantAxis === 'x') {
-    const signX = localX >= 0 ? 1 : -1;
-    localNormal = { x: (height / halfW) * signX, y: obs.inverted ? -1 : 1, z: 0 };
-    faceCenterLocal = { x: signX * halfW * 0.5, z: 0 };
-  } else {
-    const signZ = localZ >= 0 ? 1 : -1;
-    localNormal = { x: 0, y: obs.inverted ? -1 : 1, z: (height / halfD) * signZ };
-    faceCenterLocal = { x: 0, z: signZ * halfD * 0.5 };
-  }
+  const faceCenterLocal = dominantAxis === 'x'
+    ? { x: (localNormal.x >= 0 ? 1 : -1) * halfW * 0.5, z: 0 }
+    : { x: 0, z: (localNormal.z >= 0 ? 1 : -1) * halfD * 0.5 };
 
   const worldNormal = toWorldNormal(obs, localNormal);
   const cosRot = Math.cos(obs.rotation || 0);
@@ -4745,7 +4750,7 @@ function getPyramidSurfaceContact(obs, worldX, worldY, worldZ) {
     z: obs.z - faceCenterLocal.x * sinRot + faceCenterLocal.z * cosRot
   };
   const climbable = !obs.inverted && worldNormal.y >= CLIMBABLE_SURFACE_NORMAL_Y;
-  const supportable = climbable || obs.inverted;
+  const supportable = withinFootprint && (climbable || obs.inverted);
   const penetrationDepth = obs.inverted
     ? Math.max(0, worldY + tankHeight - collisionSurfaceY)
     : Math.max(0, collisionSurfaceY - worldY);
@@ -4754,8 +4759,9 @@ function getPyramidSurfaceContact(obs, worldX, worldY, worldZ) {
     normal: worldNormal,
     climbable,
     supportable,
+    withinFootprint,
     faceAxis: dominantAxis,
-    faceSign: dominantAxis === 'x' ? (localX >= 0 ? 1 : -1) : (localZ >= 0 ? 1 : -1),
+    faceSign: dominantAxis === 'x' ? (localNormal.x >= 0 ? 1 : -1) : (localNormal.z >= 0 ? 1 : -1),
     surfaceY: collisionSurfaceY,
     supportSurfaceY,
     penetrationDepth,

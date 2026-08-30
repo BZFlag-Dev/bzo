@@ -47,6 +47,7 @@
     "mode": "strict",
     "linearDriftThreshold": 3.0,
     "linearDriftThresholdVelocityChanged": 20.0,
-    "angularDriftThreshold": 0.5
+    "angularDriftThreshold": 0.5,
+    "collisionSlack": 0.05
   }
 }
