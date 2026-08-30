@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.39] - 2026-08-30
+
 ### Added
 - Added the BZFlag tank-appeared sound when a tank spawns, which had no sound before.
 - Added BZFlag's spawn animation, growing a tank in from 1% to full size over 0.64 seconds.
@@ -19,6 +21,7 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 - Moved gameplay audio into `public/audio/` and preloaded every sample on map entry.
 - Matched BZFlag's sound attenuation, using inverse rolloff from a reference distance of 20 tank radii.
 - Removed per-sound volume levels, so samples keep the relative balance they were mixed with, as in BZFlag. Landing volume no longer varies with impact speed.
+- Logged every rejected shot as `[SHOT_REJECT]` with its reason. Observer, dead-player, and malformed-direction rejections previously failed silently, hiding exactly the cases where the client and server disagree.
 
 ## [1.0.38] - 2026-08-30
 
