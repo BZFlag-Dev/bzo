@@ -739,18 +739,19 @@ function refreshHudButtons() {
 }
 
 function getSettingsMenuValue(id, item) {
+  if (item.kind === 'select') return item.control.selectedOptions[0]?.textContent || '';
   if (id === 'cameraBtn') return cameraModeLabel(hudContext.getCameraMode());
   if (id === 'radarZoomBtn') {
-    const match = item.button.title.match(/Radar range preset:\s*(.+)/i);
+    const match = item.control.title.match(/Radar range preset:\s*(.+)/i);
     return match?.[1] || 'Long';
   }
   if (id === 'fullscreenBtn') return document.fullscreenElement ? 'On' : 'Off';
   if (id === 'wireframeBtn') return wireframeEnabled ? 'On' : 'Off';
   if (id === 'xrBtn') {
-    if (item.button.disabled) return 'Unavailable';
-    return /exit/i.test(item.button.title) ? 'Exit VR' : 'Enter VR';
+    if (item.control.disabled) return 'Unavailable';
+    return /exit/i.test(item.control.title) ? 'Exit VR' : 'Enter VR';
   }
-  if (item.kind === 'toggle') return item.button.classList.contains('active') ? 'On' : 'Off';
+  if (item.kind === 'toggle') return item.control.classList.contains('active') ? 'On' : 'Off';
   if (item.kind === 'submenu') return 'Open >';
   if (id === 'closeSettingsHud') return '';
   return 'Activate';
@@ -766,7 +767,7 @@ export function getXRSettingsMenuItems() {
         id: item.id,
         label: item.label,
         value: getSettingsMenuValue(item.id, item),
-        disabled: item.button.disabled,
+        disabled: item.control.disabled,
       })),
     { id: 'closeXRMenu', label: 'Close', value: '' },
   ];
@@ -774,8 +775,8 @@ export function getXRSettingsMenuItems() {
 
 export function activateXRSettingsMenuItem(id) {
   const item = settingsMenu?.items.find((candidate) => candidate.id === id);
-  if (!item || item.button.disabled) return false;
-  item.button.click();
+  if (!item || item.control.disabled) return false;
+  settingsMenu.activate(item);
   settingsMenu.refresh();
   return true;
 }

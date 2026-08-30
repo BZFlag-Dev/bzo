@@ -10,6 +10,13 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { AnaglyphEffect } from './anaglyph.js';
 import { xrState } from './webxr.js';
 import {
+  collectRenderQualityHints,
+  detectRenderCapabilities,
+  getInitialRendererOptions,
+  normalizeRenderQualityMode,
+  selectRenderQualityProfile,
+} from './render-quality.js';
+import {
   createShootBuffer,
   createExplosionBuffer,
   createJumpBuffer,
@@ -343,6 +350,21 @@ class RenderManager {
     this.activeSpawnEffects = [];
     this.activeShotExplosions = [];
 
+    // Quality policy is renderer-context aware but never creates a second GL context.
+    this.qualityMode = 'auto';
+    this.qualityHints = collectRenderQualityHints();
+    this.qualityCapabilities = null;
+    this.qualityProfile = selectRenderQualityProfile(this.qualityMode, this.qualityHints);
+    this.frameMetrics = { averageFrameMs: null, frameCount: 0, lastFrameTime: null };
+    this._autoProfileCandidate = null;
+    this._autoProfileCandidateFrames = 0;
+    this._rendererCreationOptions = null;
+    this._appliedPixelRatio = null;
+    this._qualityResizePending = false;
+    this._projectedShadowSources = new Set();
+    this._projectedShadowDirty = true;
+    this._lastProjectedShadowUpdateMs = Number.NEGATIVE_INFINITY;
+
     // Dynamic lighting toggle (default true)
     this.dynamicLightingEnabled = true;
     this.showGroundGrid = false;
@@ -394,8 +416,9 @@ class RenderManager {
     this.camera.lookAt(0, 0, 0);
     this.scene.add(this.camera);
 
+    this._rendererCreationOptions = getInitialRendererOptions(this.qualityMode, this.qualityHints);
     try {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true, xrCompatible: true, stencil: true });
+      this.renderer = new THREE.WebGLRenderer(this._rendererCreationOptions);
     } catch (error) {
       const probeCanvas = document.createElement('canvas');
       const hasWebGL = !!(
@@ -412,6 +435,9 @@ class RenderManager {
     }
 
     this.renderer.xr.enabled = true;
+    this.qualityCapabilities = detectRenderCapabilities(this.renderer, this.qualityHints);
+    this.qualityProfile = selectRenderQualityProfile(this.qualityMode, this.qualityCapabilities, this.frameMetrics);
+    this._applyRenderQualityProfile({ resize: false });
     this.renderer.setSize(viewport.width, viewport.height);
     // Disable real-time shadow mapping for performance
     this.renderer.shadowMap.enabled = false;
@@ -491,6 +517,187 @@ class RenderManager {
     return {
       teleportBuffer,
     };
+  }
+
+  // Public quality controls. antialias/stencil are context creation attributes,
+  // so changing a mode adjusts runtime work without recreating the WebGL context.
+  setQualityMode(mode) {
+    this.qualityMode = normalizeRenderQualityMode(mode);
+    this._autoProfileCandidate = null;
+    this._autoProfileCandidateFrames = 0;
+    this.qualityProfile = selectRenderQualityProfile(
+      this.qualityMode,
+      this.qualityCapabilities || this.qualityHints,
+      this.frameMetrics,
+    );
+    this._applyRenderQualityProfile({ resize: true });
+    return this.getRenderQualityState();
+  }
+
+  getQualityMode() {
+    return this.qualityMode;
+  }
+
+  getRenderCapabilities() {
+    return this.qualityCapabilities ? { ...this.qualityCapabilities } : null;
+  }
+
+  getRenderQualityState() {
+    const profile = this.qualityProfile;
+    const creationOptions = this._rendererCreationOptions;
+    return {
+      mode: this.qualityMode,
+      profile: {
+        ...profile,
+        renderer: { ...profile.renderer },
+        pointLightLimits: { ...profile.pointLightLimits },
+      },
+      capabilities: this.getRenderCapabilities(),
+      frameMetrics: { ...this.frameMetrics },
+      appliedPixelRatio: this._appliedPixelRatio,
+      resizePending: this._qualityResizePending,
+      contextOptions: creationOptions ? { ...creationOptions } : null,
+      contextMatchesProfile: !creationOptions
+        || (creationOptions.antialias === profile.renderer.antialias
+          && creationOptions.stencil === profile.renderer.stencil),
+    };
+  }
+
+  updateFrameMetrics(metrics = {}) {
+    const now = Number.isFinite(metrics.now)
+      ? metrics.now
+      : (typeof performance !== 'undefined' ? performance.now() : null);
+    let frameTimeMs = Number.isFinite(metrics.frameTimeMs) && metrics.frameTimeMs >= 0
+      ? metrics.frameTimeMs
+      : null;
+    if (frameTimeMs === null && Number.isFinite(now) && Number.isFinite(this.frameMetrics.lastFrameTime)) {
+      frameTimeMs = now - this.frameMetrics.lastFrameTime;
+    }
+    if (Number.isFinite(now)) this.frameMetrics.lastFrameTime = now;
+    if (frameTimeMs !== null && frameTimeMs < 1000) {
+      this.frameMetrics.averageFrameMs = Number.isFinite(this.frameMetrics.averageFrameMs)
+        ? (this.frameMetrics.averageFrameMs * 0.9) + (frameTimeMs * 0.1)
+        : frameTimeMs;
+      this.frameMetrics.frameCount += 1;
+    }
+
+    if (this.qualityMode === 'auto' && this.qualityCapabilities && this.frameMetrics.frameCount >= 30) {
+      const nextProfile = selectRenderQualityProfile('auto', this.qualityCapabilities, this.frameMetrics);
+      if (nextProfile.name !== this.qualityProfile.name) {
+        if (this._autoProfileCandidate === nextProfile.name) {
+          this._autoProfileCandidateFrames += 1;
+        } else {
+          this._autoProfileCandidate = nextProfile.name;
+          this._autoProfileCandidateFrames = 1;
+        }
+        // Downgrade promptly under sustained pressure, but require a longer
+        // period of headroom before upgrading to avoid profile oscillation.
+        const requiredFrames = nextProfile.name === 'low' ? 30 : 120;
+        if (this._autoProfileCandidateFrames >= requiredFrames) {
+          this.qualityProfile = nextProfile;
+          this._autoProfileCandidate = null;
+          this._autoProfileCandidateFrames = 0;
+          this._applyRenderQualityProfile({ resize: true });
+        }
+      } else {
+        this._autoProfileCandidate = null;
+        this._autoProfileCandidateFrames = 0;
+      }
+    }
+    return { ...this.frameMetrics };
+  }
+
+  markProjectedShadowsDirty() {
+    this._projectedShadowDirty = true;
+  }
+
+  _getCurrentDevicePixelRatio() {
+    const current = typeof window !== 'undefined' ? Number(window.devicePixelRatio) : null;
+    if (Number.isFinite(current) && current > 0) {
+      this.qualityHints.devicePixelRatio = current;
+    }
+    return this.qualityHints.devicePixelRatio || 1;
+  }
+
+  _applyPixelRatio() {
+    if (!this.renderer || !this.qualityProfile) return false;
+    const pixelRatio = Math.min(
+      this._getCurrentDevicePixelRatio(),
+      this.qualityProfile.pixelRatioCap,
+    );
+    if (this.renderer.xr?.isPresenting) {
+      // WebXR owns the framebuffer while presenting. Defer the normal canvas
+      // resize/pixel-ratio change until the session has ended.
+      this._qualityResizePending = true;
+      return false;
+    }
+    if (this._appliedPixelRatio !== pixelRatio) {
+      this.renderer.setPixelRatio(pixelRatio);
+      this._appliedPixelRatio = pixelRatio;
+    }
+    this._qualityResizePending = false;
+    return true;
+  }
+
+  _applyRenderQualityProfile({ resize }) {
+    if (!this.renderer || !this.qualityProfile) return;
+    const canResize = this._applyPixelRatio();
+    if (!this._canUseProjectedStencilShadows()) {
+      this._clearProjectedShadows();
+    } else {
+      if (!this.projectedShadowOverlay && this.ground) {
+        const groundExtent = this.ground.geometry?.parameters?.width / 2;
+        if (Number.isFinite(groundExtent) && groundExtent > 0) {
+          this.projectedShadowOverlay = this._buildProjectedShadowOverlay(groundExtent);
+          this.worldGroup.add(this.projectedShadowOverlay);
+        }
+      }
+      this.markProjectedShadowsDirty();
+    }
+    if (resize && canResize) this.handleResize();
+    else if (resize) this._qualityResizePending = true;
+  }
+
+  applyPendingQuality() {
+    if (!this.renderer || this.renderer.xr?.isPresenting) return this.getRenderQualityState();
+    this._applyRenderQualityProfile({ resize: true });
+    return this.getRenderQualityState();
+  }
+
+  _canUseProjectedStencilShadows() {
+    return this.qualityProfile?.projectedShadows === 'stencil'
+      && this.qualityCapabilities?.stencil === true;
+  }
+
+  _clearProjectedShadows() {
+    if (this.projectedShadowOverlay) {
+      this.worldGroup?.remove(this.projectedShadowOverlay);
+      this.projectedShadowOverlay.geometry?.dispose();
+      this.projectedShadowOverlay.material?.dispose();
+      this.projectedShadowOverlay = null;
+    }
+    for (const source of this._projectedShadowSources) {
+      const shadowMesh = source?.userData?.shadowMesh;
+      if (!shadowMesh) continue;
+      this.worldGroup?.remove(shadowMesh);
+      shadowMesh.geometry?.dispose();
+      shadowMesh.material?.dispose();
+      source.userData.shadowMesh = null;
+    }
+    this._projectedShadowSources.clear();
+    this._lastObstacleShadowDir = null;
+  }
+
+  _canCreatePointLight(kind) {
+    if (!this.dynamicLightingEnabled) return false;
+    const limit = this.qualityProfile?.pointLightLimits?.[kind] ?? 0;
+    if (limit <= 0) return false;
+    const active = kind === 'projectile'
+      ? (this.projectileLights?.size || 0)
+      : (kind === 'explosion'
+        ? this.activeExplosions.filter((effect) => effect.light).length
+        : this.activeShotExplosions.filter((effect) => effect.light).length);
+    return active < limit;
   }
 
   _getWorldGroupLocalMatrix(object) {
@@ -704,6 +911,7 @@ class RenderManager {
         mesh.userData.shadowMesh.geometry.dispose();
         mesh.userData.shadowMesh.material.dispose();
         mesh.userData.shadowMesh = null;
+        this._projectedShadowSources.delete(mesh);
       }
       return;
     }
@@ -725,6 +933,7 @@ class RenderManager {
       mesh.userData.shadowMesh.material.dispose();
       this.worldGroup.add(replacementShadowMesh);
       mesh.userData.shadowMesh = replacementShadowMesh;
+      this._projectedShadowSources.add(mesh);
       return;
     }
     // Always set transform to match mesh, even if at origin
@@ -734,16 +943,28 @@ class RenderManager {
         // shadowMesh geometry is already in worldGroup-local coordinates.
         this.worldGroup.add(shadowMesh);
         mesh.userData.shadowMesh = shadowMesh;
+        this._projectedShadowSources.add(mesh);
       }
     }
   }
 
-  // Update all projected shadows (call each frame or when light/objects move)
-  updateProjectedShadows(tankMeshes = []) {
+  // Low uses no stencil pass as the cheap fallback. Other profiles update on
+  // demand or at an interval; the PR #25 horizon guard remains below unchanged.
+  updateProjectedShadows(tankMeshes = [], now = performance.now()) {
+    if (!this._canUseProjectedStencilShadows()) {
+      this._clearProjectedShadows();
+      return;
+    }
     // Use sun or moon depending on which is visible
     const light = (this.sunLight && this.sunLight.intensity > 0.5) ? this.sunLight : this.moonLight;
     const dir = this._getProjectedShadowDirection(light?.position);
     if (!dir) return;
+
+    const interval = this.qualityProfile.shadowUpdateIntervalMs;
+    const due = this._projectedShadowDirty
+      || !Number.isFinite(this._lastProjectedShadowUpdateMs)
+      || (now - this._lastProjectedShadowUpdateMs) >= interval;
+    if (!due) return;
 
     // --- Obstacles: only update if light direction changed ---
     if (!this._lastObstacleShadowDir || dir.distanceToSquared(this._lastObstacleShadowDir) > PROJECTED_SHADOW_DIRECTION_EPSILON_SQ) {
@@ -768,6 +989,8 @@ class RenderManager {
         this._addProjectedShadowForMesh(tank, dir);
       }
     }
+    this._projectedShadowDirty = false;
+    this._lastProjectedShadowUpdateMs = now;
   }
 
   updateSunLighting() {
@@ -810,6 +1033,8 @@ class RenderManager {
     this.camera.aspect = viewport.width / viewport.height;
     this.camera.fov = this._getVerticalFovForAspect(this.camera.aspect);
     this.camera.updateProjectionMatrix();
+    const canResize = this._applyPixelRatio();
+    if (!canResize) return;
     this.renderer.setSize(viewport.width, viewport.height);
     this.labelRenderer.setSize(viewport.width, viewport.height);
     if (this.anaglyphEffect) {
@@ -819,6 +1044,9 @@ class RenderManager {
 
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
+
+    this.updateFrameMetrics();
+    this._applyPixelRatio();
 
     this._updateTeleporterVisuals(performance.now() * 0.001);
 
@@ -1154,6 +1382,7 @@ class RenderManager {
       object3D.userData.shadowMesh.geometry?.dispose();
       object3D.userData.shadowMesh.material?.dispose();
       object3D.userData.shadowMesh = null;
+      this._projectedShadowSources.delete(object3D);
     }
     this._disposeObject3D(object3D);
     this.worldGroup.remove(object3D);
@@ -1183,8 +1412,10 @@ class RenderManager {
     this.ground.receiveShadow = true;
     this.worldGroup.add(this.ground);
 
-    this.projectedShadowOverlay = this._buildProjectedShadowOverlay(groundExtent);
-    this.worldGroup.add(this.projectedShadowOverlay);
+    if (this._canUseProjectedStencilShadows()) {
+      this.projectedShadowOverlay = this._buildProjectedShadowOverlay(groundExtent);
+      this.worldGroup.add(this.projectedShadowOverlay);
+    }
 
     this.setGroundGridEnabled(this.showGroundGrid, mapSize);
   }
@@ -2785,7 +3016,7 @@ class RenderManager {
     this.worldGroup.add(sprite);
 
     let light = null;
-    if (this.dynamicLightingEnabled) {
+    if (this._canCreatePointLight('impact')) {
       light = new THREE.PointLight(0xffcc80, 1.2, 28, 2.2);
       light.position.copy(position);
       this.worldGroup.add(light);
@@ -3231,8 +3462,8 @@ class RenderManager {
       head,
       tailSegments,
     };
-    // Only add a point light if dynamic lighting is enabled
-    if (this.dynamicLightingEnabled) {
+    // Dynamic lighting still owns this behavior; the profile only bounds its cost.
+    if (this._canCreatePointLight('projectile')) {
       const shotLight = new THREE.PointLight(projectileColor, 1.5, 12, 2);
       shotLight.position.copy(projectile.position);
       this.worldGroup.add(shotLight);
@@ -3290,7 +3521,7 @@ class RenderManager {
     // Dynamic lighting flash
     let explosionLight = null;
     let lightIntensity = 0;
-    if (this.dynamicLightingEnabled && typeof THREE !== 'undefined') {
+    if (this._canCreatePointLight('explosion') && typeof THREE !== 'undefined') {
       explosionLight = new THREE.PointLight(0xffe066, 3, 40, 2.5);
       explosionLight.position.copy(position);
       lightIntensity = 500.0;

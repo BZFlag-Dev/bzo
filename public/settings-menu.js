@@ -18,6 +18,7 @@ export const SETTINGS_MENU_ITEMS = Object.freeze([
   { id: 'wireframeBtn', label: 'Wireframe', kind: 'toggle' },
   { id: 'dynamicLightingBtn', label: 'Dynamic Lighting', kind: 'toggle' },
   { id: 'anaglyphBtn', label: 'Anaglyph 3D', kind: 'toggle' },
+  { id: 'graphicsQualitySelect', rowId: 'graphicsQualityRow', label: 'Graphics Quality', kind: 'select' },
   { id: 'voiceBtn', label: 'Voice Settings', kind: 'submenu' },
   { id: 'helpBtn', label: 'Help', kind: 'submenu' },
   { id: 'operatorBtn', label: 'Operator', kind: 'submenu' },
@@ -49,40 +50,84 @@ export function initSettingsMenu({ root, getValue }) {
   if (!root) return null;
 
   const list = root.querySelector('.settingsMenuList');
-  const items = SETTINGS_MENU_ITEMS.map((item) => ({
-    ...item,
-    button: document.getElementById(item.id),
-  })).filter((item) => item.button);
+  const items = SETTINGS_MENU_ITEMS.map((item) => ({ ...item, ...getItemElements(item) }))
+    .filter((item) => item.control && item.row);
 
   items.forEach((item) => {
-    list?.appendChild(item.button);
-    item.button.classList.add('settingsMenuRow');
-    item.button.dataset.menuRow = item.id;
-    item.button.dataset.menuKind = item.kind;
-    item.button.setAttribute('role', 'menuitem');
+    list?.appendChild(item.row);
+    item.row.classList.add('settingsMenuRow');
+    item.control.dataset.menuRow = item.id;
+    item.control.dataset.menuKind = item.kind;
   });
 
   const refresh = () => {
     items.forEach((item) => {
-      const { label, value } = ensureRowContent(item.button);
       const currentValue = typeof getValue === 'function' ? getValue(item.id, item) : undefined;
+      if (item.kind === 'select') {
+        const label = item.row.querySelector(`label[for="${item.id}"]`);
+        if (label) label.textContent = item.label;
+        const value = (currentValue ?? item.control.selectedOptions[0]?.textContent) || '';
+        item.control.setAttribute('aria-label', value ? `${item.label}: ${value}` : item.label);
+        return;
+      }
+
+      const { label, value } = ensureRowContent(item.control);
       label.textContent = item.label;
       value.textContent = currentValue ?? defaultValue(item);
-      item.button.setAttribute('aria-label', value.textContent ? `${item.label}: ${value.textContent}` : item.label);
+      item.control.setAttribute('aria-label', value.textContent ? `${item.label}: ${value.textContent}` : item.label);
     });
+  };
+
+  const activate = (item, direction = 1) => {
+    if (!item || item.control.disabled) return false;
+    if (item.kind === 'select') return selectRelativeOption(item.control, direction);
+    item.control.click();
+    return true;
   };
 
   root.addEventListener('click', () => {
     Promise.resolve().then(refresh);
     window.setTimeout(refresh, 150);
   });
+  root.addEventListener('change', (event) => {
+    const item = items.find((candidate) => candidate.control === event.target);
+    if (!item || item.kind !== 'select') return;
+    refresh();
+    root.dispatchEvent(new window.CustomEvent('graphicsqualitychange', {
+      bubbles: true,
+      detail: { value: item.control.value },
+    }));
+  });
   root.addEventListener('menuadjust', (event) => {
-    const button = event.target.closest?.('[data-menu-row]');
-    if (!button || button.disabled) return;
-    if (button.dataset.menuKind !== 'choice' && button.dataset.menuKind !== 'toggle') return;
-    button.click();
+    const control = event.target.closest?.('[data-menu-row]');
+    if (!control || control.disabled) return;
+    const item = items.find((candidate) => candidate.control === control);
+    if (!item) return;
+    if (item.kind === 'select') {
+      selectRelativeOption(item.control, Number(event.detail?.direction) < 0 ? -1 : 1);
+      return;
+    }
+    if (item.kind !== 'choice' && item.kind !== 'toggle') return;
+    item.control.click();
   });
 
   refresh();
-  return { refresh, items };
+  return { refresh, items, activate };
+}
+
+function getItemElements(item) {
+  const control = document.getElementById(item.id);
+  const row = document.getElementById(item.rowId || item.id);
+  return { control, row };
+}
+
+function selectRelativeOption(select, direction) {
+  const options = Array.from(select.options).filter((option) => !option.disabled);
+  if (!options.length) return false;
+
+  const currentIndex = Math.max(options.indexOf(select.selectedOptions[0]), 0);
+  const nextIndex = (currentIndex + direction + options.length) % options.length;
+  select.value = options[nextIndex].value;
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  return true;
 }

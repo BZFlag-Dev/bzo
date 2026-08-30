@@ -56,7 +56,7 @@
   <div id="settingsHud" class="dialog" role="dialog" aria-modal="true" aria-labelledby="settingsMenuTitle">
     <div id="settingsMenuTitle" class="dialogTitle">Settings</div>
     <div class="settingsHudContent">
-      <div class="settingsMenuList" role="menu">
+      <div class="settingsMenuList" role="group" aria-labelledby="settingsMenuTitle">
         <button id="playerOptionsBtn" class="settingsHudBtn">Player Options</button>
         <button id="virtualControlsBtn" class="settingsHudBtn">Virtual Controls</button>
         <button id="mouseBtn" class="settingsHudBtn">Mouse Mode</button>
@@ -71,6 +71,15 @@
         <button id="wireframeBtn" class="settingsHudBtn" title="Wireframe Mode">Wireframe</button>
         <button id="anaglyphBtn" class="settingsHudBtn" title="Anaglyph 3D">Anaglyph 3D</button>
         <button id="dynamicLightingBtn" class="settingsHudBtn" title="Dynamic Lighting">Dynamic Lighting</button>
+        <div id="graphicsQualityRow" class="settingsQualityRow">
+          <label class="settingsMenuLabel" for="graphicsQualitySelect">Graphics Quality</label>
+          <select id="graphicsQualitySelect" class="settingsQualitySelect">
+            <option value="auto" selected>Auto</option>
+            <option value="low">Low</option>
+            <option value="balanced">Balanced</option>
+            <option value="high">High</option>
+          </select>
+        </div>
         <button id="xrBtn" class="settingsHudBtn" title="Enter WebXR VR Mode">VR Mode</button>
         <button id="voiceBtn" class="settingsHudBtn" title="Open Voice Settings">Voice</button>
         <button id="closeSettingsHud" class="settingsHudBtn">Close</button>

@@ -1337,6 +1337,29 @@ canvas {
   color: var(--color-fg);
 }
 
+.settingsQualityRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 24px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.settingsQualitySelect {
+  width: 100%;
+  min-height: 38px;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  background: #222;
+  color: var(--color-accent-light);
+  font: inherit;
+  font-weight: bold;
+}
+
 @media (max-width: 600px) {
   #settingsHud,
   #helpPanel,
@@ -1354,6 +1377,12 @@ canvas {
     column-gap: 16px;
     width: 100%;
     min-height: 58px;
+    padding: 10px 8px;
+  }
+
+  .settingsQualityRow {
+    grid-template-columns: minmax(0, 1fr) minmax(7rem, auto);
+    column-gap: 16px;
     padding: 10px 8px;
   }
 

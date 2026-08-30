@@ -106,6 +106,7 @@ import {
   updateXRControllerInput,
   getXRControllerInput,
   setNormalAnimationLoop,
+  subscribeToXRState,
   isXREnabled,
 } from './webxr.js';
 import { INPUT_CONTEXT } from './input-context.mjs';
@@ -193,6 +194,8 @@ const XR_HUD_PLANE_Z = -0.85;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 const RADAR_ZOOM_STORAGE_KEY = 'radarZoomLevel';
+const GRAPHICS_QUALITY_STORAGE_KEY = 'graphicsQualityMode';
+const GRAPHICS_QUALITY_MODES = Object.freeze(['auto', 'low', 'balanced', 'high']);
 const RADAR_ZOOM_MIN = 0.005;
 const RADAR_ZOOM_MAX = 2.0;
 const RADAR_ZOOM_STEP = 1.05;
@@ -2233,7 +2236,51 @@ function updateDebugLabelsButton() {
   }
 }
 
+function getSavedGraphicsQualityMode() {
+  const saved = localStorage.getItem(GRAPHICS_QUALITY_STORAGE_KEY);
+  return GRAPHICS_QUALITY_MODES.includes(saved) ? saved : 'auto';
+}
+
+function updateGraphicsQualityControl() {
+  const select = document.getElementById('graphicsQualitySelect');
+  if (!select || typeof renderManager.getQualityMode !== 'function') return;
+
+  const mode = renderManager.getQualityMode();
+  if (select.value !== mode) select.value = mode;
+
+  const state = typeof renderManager.getRenderQualityState === 'function'
+    ? renderManager.getRenderQualityState()
+    : null;
+  const activeProfile = state?.profile?.name || mode;
+  select.title = mode === 'auto'
+    ? `Automatic quality (active profile: ${activeProfile})`
+    : `${activeProfile} quality`;
+}
+
+function applyGraphicsQualityMode(mode, { persist = true, announce = false } = {}) {
+  const normalized = GRAPHICS_QUALITY_MODES.includes(mode) ? mode : 'auto';
+  const state = typeof renderManager.setQualityMode === 'function'
+    ? renderManager.setQualityMode(normalized)
+    : null;
+  if (persist) localStorage.setItem(GRAPHICS_QUALITY_STORAGE_KEY, normalized);
+  updateGraphicsQualityControl();
+  if (announce) showMessage(`Graphics quality: ${normalized}`);
+  return state;
+}
+
+function bindGraphicsQualityControl() {
+  const select = document.getElementById('graphicsQualitySelect');
+  if (!select || select.dataset.graphicsQualityBound === 'true') return;
+
+  select.addEventListener('change', () => {
+    applyGraphicsQualityMode(select.value, { announce: true });
+  });
+  select.dataset.graphicsQualityBound = 'true';
+  updateGraphicsQualityControl();
+}
+
 window.addEventListener('DOMContentLoaded', () => {
+      bindGraphicsQualityControl();
       setRadarZoomLevel(localStorage.getItem(RADAR_ZOOM_STORAGE_KEY), { announce: false });
       updateRadarZoomButton();
 
@@ -2283,7 +2330,7 @@ window.addEventListener('DOMContentLoaded', () => {
           renderManager.setAnaglyphEnabled(enabled);
           updateBtn();
         });
-        window.addEventListener('webxrsessionchange', updateBtn);
+        subscribeToXRState(({ enabled }) => updateBtn(Boolean(enabled)));
         updateBtn();
       }
 
@@ -2392,8 +2439,9 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // Initialize WebXR support
-  window.addEventListener('webxrsessionchange', event => {
-    if (event.detail?.enabled) return;
+  subscribeToXRState(({ enabled }) => {
+    if (enabled) return;
+    renderManager.applyPendingQuality?.();
     closeXRSettingsMenu();
     xrSettingsShortcutLatched = false;
     setXRButtonState(false);
@@ -2445,6 +2493,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Initialize Three.js
 function init() {
+  // Select the requested quality before creating the WebGL context so the
+  // initial antialias/stencil attributes match the user's saved preference.
+  applyGraphicsQualityMode(getSavedGraphicsQualityMode(), { persist: false });
+
   // Prevent iOS scrolling/bounce on fullscreen (web app mode)
   document.addEventListener('touchmove', (e) => {
     // Allow touch on specific elements (chat, controls overlay, etc.)
@@ -2601,7 +2653,7 @@ function init() {
       updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
       showMessage,
       updateDebugDisplay,
-      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation, worldTime, gamepadConnected: isGamepadConnected(), gamepadInfo: getGamepadInfo() })
+      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation, worldTime, gamepadConnected: isGamepadConnected(), gamepadInfo: getGamepadInfo(), renderQuality: renderManager.getRenderQualityState?.() })
     });
   }
 
@@ -2610,6 +2662,7 @@ function init() {
     renderContext = renderManager.init({});
     scene = renderContext.scene;
     camera = renderContext.camera;
+    bindGraphicsQualityControl();
     const renderer = renderManager.getRenderer();
     if (renderer) {
       const rendererSize = renderer.getSize(new THREE.Vector2());
