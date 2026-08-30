@@ -4,6 +4,19 @@ Canonical instructions and project memory for AI coding agents working in this
 repository. `CLAUDE.md` and `.github/copilot-instructions.md` both point here, so
 Claude Code, GitHub Copilot, and any other agent read the same file.
 
+## Reference: upstream BZFlag
+
+The upstream BZFlag C++ source is checked out at `$HOME/bzflag/`. **Consult it
+before designing or fixing gameplay logic.** bzo mirrors BZFlag except where the
+web, mobile, or XR platform makes the upstream approach nonsensical (input
+methods, rendering stack, network transport, UI shell).
+
+Useful subtrees: `src/obstacle/` (obstacle geometry and collision),
+`src/game/Intersect.cxx` (rect/circle primitives), `src/bzfs/` (server),
+`src/bzflag/` (client), `include/`.
+
+Prefer upstream naming too -- see `docs/tank-model-format.md` for tank part names.
+
 ## Memory Policy
 
 - When the user asks to remember something, record it in this file so other
@@ -71,17 +84,34 @@ and asserts they agree across a shared input table. See
 the copies drift silently — `player-teams` did exactly that, with the client
 skipping the `trim()` the server performed.
 
+### Collision geometry follows BZFlag
+
+Obstacle geometry lives in the `collision-geometry` pair and mirrors upstream
+BZFlag (`src/obstacle/`, `src/game/Intersect.cxx`). The client resolves moves and
+the server rejects them -- different jobs -- but both must agree about which
+volume is solid, because every disagreement is either an honest player wrongly
+rejected or a cheater wrongly allowed. Both sides agree by agreeing with the
+same reference implementation.
+
+`scripts/test-collision-geometry.mjs` fuzzes the two copies against each other.
+
+bzo is BZFlag's world relabeled for Three.js: `bzo(x, y, z) = bzf(x, z, -y)`.
+That is a proper rotation, not a mirror. Because the ordered pair `(x, z)` seen
+from `+Y` has the opposite orientation to `(x, y)` seen from `+Z`, a Three.js
+rotation about `+Y` is a negative 2D rotation in `(x, z)`; that is why
+`getColliderLocalPoint` uses `+rotation` where upstream uses `-angle`. It matches
+how `render.js` draws obstacles (`mesh.rotation.y = obs.rotation`).
+
 ### Known duplication (do not add more)
 
-`server.js` and `public/client.js` each carry their own copy of the collision and
-teleporter math: `checkCollision`, `getCollisionColliders`,
-`getWorldBorderColliders`, `getColliderLocalPoint`,
+`server.js` and `public/client.js` still each carry their own copy of:
+`checkCollision`, `getCollisionColliders`, `getWorldBorderColliders`,
 `getBoxCollisionDistanceSquared`, `normalizeAngle`, `rotateXZ`,
 `getSegmentBoxEntryTime`, `getShotTeleporterDims`, `getShotTeleporterCrossing`,
 `transformShotThroughTeleporter`, `traceShotThroughTeleporters`. Several have
-already drifted. When touching any of them, change both sides in the same edit
-and note the divergence; the long-term fix is to extract a
-`public/collision.mjs` + `server/collision.cjs` pair with a parity test.
+already drifted. When touching any of them, change both sides in the same edit;
+the fix is to move each into the `collision-geometry` pair, matching upstream
+BZFlag, with fuzz coverage -- as the pyramid path already has.
 
 ## Dev Workflow
 
@@ -115,6 +145,7 @@ That runs, in order:
 | `npm run test:player-teams` | Team normalization, plus client/server parity |
 | `npm run test:team-mode` | Server team-mode config and BZW `options` parsing |
 | `npm run test:shot-limits` | Shot slot limits, plus client/server parity |
+| `npm run test:collision-geometry` | Obstacle geometry, fuzzed for client/server parity |
 
 CI runs the same checks on pushes and pull requests, and additionally runs
 `npm audit --omit=dev --audit-level=high` and a Node 18.19.1 / 24.19.0

@@ -11,6 +11,7 @@ const logPath = require('path').join(__dirname, 'server.log');
 require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
 const { normalizeShotSlotCount } = require('./server/shot-limits.cjs');
+const { getColliderLocalPoint, pyramidIntersectsCylinder } = require('./server/collision-geometry.cjs');
 const {
   normalizePlayerTeamSelection,
   parseBZWTeamMode,
@@ -1376,18 +1377,6 @@ function normalizeAngle(angle) {
   return angle;
 }
 
-function getColliderLocalPoint(x, z, obs) {
-  const rotation = obs.rotation || 0;
-  const dx = x - obs.x;
-  const dz = z - obs.z;
-  const cos = Math.cos(rotation);
-  const sin = Math.sin(rotation);
-  return {
-    x: dx * cos - dz * sin,
-    z: dx * sin + dz * cos
-  };
-}
-
 function getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD) {
   const closestX = Math.max(-halfW, Math.min(localX, halfW));
   const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
@@ -1464,39 +1453,12 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
         }
       }
     } else if (obs.type === 'pyramid') {
-      // Pyramid collision: check if tank top is under the sloped surface
-      // Sample points around the tank's top circle (8 directions + center)
-      const sampleCount = 8;
-      const localY_top = tankTop - obstacleBase;
-      let collided = false;
-      for (let i = 0; i < sampleCount; i++) {
-        const angle = (Math.PI * 2 * i) / sampleCount;
-        const offsetX = Math.cos(angle) * tankRadius;
-        const offsetZ = Math.sin(angle) * tankRadius;
-        const sx = localX + offsetX;
-        const sz = localZ + offsetZ;
-        if (Math.abs(sx) <= halfW && Math.abs(sz) <= halfD) {
-          const nx = Math.abs(sx) / halfW;
-          const nz = Math.abs(sz) / halfD;
-          const n = Math.max(nx, nz);
-          const maxPyramidY = obs.h * (1 - n);
-          if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
-            collided = true;
-            break;
-          }
-        }
-      }
-      // Also check the center point for completeness
-      if (!collided && Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD) {
-        const nx = Math.abs(localX) / halfW;
-        const nz = Math.abs(localZ) / halfD;
-        const n = Math.max(nx, nz);
-        const maxPyramidY = obs.h * (1 - n);
-        if (localY_top >= epsilon && localY_top < maxPyramidY - epsilon) {
-          collided = true;
-        }
-      }
-      if (collided) {
+      // Mirrors BZFlag PyramidBuilding::inBox: the pyramid's cross-section at
+      // the occupant's height is the base rectangle scaled by shrinkFactor.
+      // The previous 8-point sample never consulted obs.inverted, so the server
+      // treated every inverted pyramid as upright and disagreed with the client
+      // about roughly a fifth of the volume around it.
+      if (pyramidIntersectsCylinder(obs, x, y, z, tankRadius, tankHeight)) {
         if (!suppressLog) {
           log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         }

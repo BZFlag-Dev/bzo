@@ -121,6 +121,12 @@ import {
 import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shot-limits.mjs';
 import { CLIENT_VERSION } from './version.mjs';
+import {
+  getColliderLocalPoint,
+  getPyramidHeight,
+  getPyramidSurfaceLocalHeight,
+  pyramidIntersectsCylinder,
+} from './collision-geometry.mjs';
 
 // FPS
 let fps = 0;
@@ -3732,18 +3738,6 @@ function showMessage(text) {
   routeLocalHudMessage(text);
 }
 
-function getColliderLocalPoint(x, z, obs) {
-  const rotation = obs.rotation || 0;
-  const dx = x - obs.x;
-  const dz = z - obs.z;
-  const cos = Math.cos(rotation);
-  const sin = Math.sin(rotation);
-  return {
-    x: dx * cos - dz * sin,
-    z: dx * sin + dz * cos
-  };
-}
-
 function getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD) {
   const closestX = Math.max(-halfW, Math.min(localX, halfW));
   const closestZ = Math.max(-halfD, Math.min(localZ, halfD));
@@ -3860,18 +3854,9 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
         return { type: 'collision', obstacle: obs };
       }
     } else if (obs.type === 'pyramid') {
-      if (!pyramidSurface) continue;
-      const tankTop = y + tankHeight;
-      const localYBase = y - obstacleBase;
-      const localYTop = tankTop - obstacleBase;
-      if (!obs.inverted) {
-        if (tankTop < obstacleBase + epsilon) continue;
-        if (y >= pyramidSurface.surfaceY - epsilon) continue;
-      } else {
-        if (tankTop <= pyramidSurface.surfaceY + epsilon) continue;
-        if (y >= obstacleTop - epsilon) continue;
-      }
-      if (hasPyramidSurfacePenetration(obs, localX, localZ, tankRadius, localYBase, localYTop, epsilon)) {
+      // Mirrors BZFlag PyramidBuilding::inBox via the shared geometry module,
+      // so the server evaluates the same solid volume the client moves through.
+      if (pyramidIntersectsCylinder(obs, x, y, z, tankRadius, tankHeight)) {
         return { type: 'collision', obstacle: obs };
       }
     }
@@ -4720,50 +4705,6 @@ function getBoxSurfaceContact(obs, worldX, worldZ, tankRadius = 2) {
       name: obs.name
     }
   };
-}
-
-function getPyramidHeight(obs) {
-  return Math.abs(obs.h || 0);
-}
-
-function getPyramidSurfaceLocalHeight(obs, localX, localZ) {
-  const halfW = obs.w / 2;
-  const halfD = obs.d / 2;
-  if (Math.abs(localX) > halfW || Math.abs(localZ) > halfD) return null;
-  const nx = Math.abs(localX) / halfW;
-  const nz = Math.abs(localZ) / halfD;
-  const height = getPyramidHeight(obs);
-  const edgeFactor = Math.max(nx, nz);
-  return obs.inverted ? height * edgeFactor : height * (1 - edgeFactor);
-}
-
-function hasPyramidSurfacePenetration(obs, localX, localZ, tankRadius, localYBase, localYTop, epsilon) {
-  const sampleCount = 8;
-  const height = getPyramidHeight(obs);
-  for (let i = 0; i < sampleCount; i++) {
-    const angle = (Math.PI * 2 * i) / sampleCount;
-    const sx = localX + Math.cos(angle) * tankRadius;
-    const sz = localZ + Math.sin(angle) * tankRadius;
-    const surfaceLocalY = getPyramidSurfaceLocalHeight(obs, sx, sz);
-    if (surfaceLocalY === null) continue;
-    if (
-      (!obs.inverted && localYTop > epsilon && localYBase < surfaceLocalY - epsilon) ||
-      (obs.inverted && localYTop > surfaceLocalY + epsilon && localYBase < height - epsilon)
-    ) {
-      return true;
-    }
-  }
-  const centerSurfaceLocalY = getPyramidSurfaceLocalHeight(obs, localX, localZ);
-  if (
-    centerSurfaceLocalY !== null &&
-    (
-      (!obs.inverted && localYTop > epsilon && localYBase < centerSurfaceLocalY - epsilon) ||
-      (obs.inverted && localYTop > centerSurfaceLocalY + epsilon && localYBase < height - epsilon)
-    )
-  ) {
-    return true;
-  }
-  return false;
 }
 
 function getPyramidSurfaceContact(obs, worldX, worldY, worldZ) {
