@@ -6,6 +6,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import {
   PLAYER_TEAM,
   PLAYER_TEAMS,
@@ -15,6 +16,9 @@ import {
   normalizePlayerTeam,
   normalizePlayerTeamSelection,
 } from '../public/player-teams.mjs';
+
+const require = createRequire(import.meta.url);
+const serverTeams = require('../server/player-teams.cjs');
 
 assert.deepEqual(PLAYER_TEAMS, [
   PLAYER_TEAM.ROGUE,
@@ -38,5 +42,51 @@ assert.deepEqual(getPlayerTeamSelections([PLAYER_TEAM.BLUE, PLAYER_TEAM.OBSERVER
 ]);
 assert.equal(isObserverTeam(PLAYER_TEAM.OBSERVER), true);
 assert.equal(isObserverTeam(PLAYER_TEAM.ROGUE), false);
+
+// public/player-teams.mjs and server/player-teams.cjs are hand-maintained copies
+// of the same normalization rules. Compare the shared surface directly so the
+// two cannot drift the way they did before (the client used to skip trimming).
+assert.deepEqual(serverTeams.PLAYER_TEAM, PLAYER_TEAM);
+assert.deepEqual(serverTeams.PLAYER_TEAMS, PLAYER_TEAMS);
+
+const normalizationCases = [
+  'rogue',
+  'BLUE',
+  ' red ',
+  'Red\n',
+  '\tgreen\t',
+  'automatic',
+  ' AUTOMATIC ',
+  'observer',
+  'unknown',
+  '',
+  '   ',
+  42,
+  null,
+  undefined,
+  true,
+  ['red'],
+  { toString: () => 'blue' },
+];
+
+for (const value of normalizationCases) {
+  const label = typeof value === 'object' && value !== null ? Object.prototype.toString.call(value) : String(value);
+  assert.equal(
+    serverTeams.normalizePlayerTeam(value),
+    normalizePlayerTeam(value),
+    `client/server normalizePlayerTeam diverged for ${JSON.stringify(label)}`
+  );
+  assert.equal(
+    serverTeams.normalizePlayerTeamSelection(value),
+    normalizePlayerTeamSelection(value),
+    `client/server normalizePlayerTeamSelection diverged for ${JSON.stringify(label)}`
+  );
+}
+
+// Whitespace-padded input must resolve to the real team, not fall back to rogue.
+assert.equal(normalizePlayerTeam(' red '), PLAYER_TEAM.RED);
+assert.equal(normalizePlayerTeamSelection(' AUTOMATIC '), PLAYER_TEAM.AUTOMATIC);
+// Non-strings are rejected rather than coerced.
+assert.equal(normalizePlayerTeam({ toString: () => 'blue' }), PLAYER_TEAM.ROGUE);
 
 console.log('player team tests passed');

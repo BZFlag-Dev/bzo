@@ -62,7 +62,11 @@ Keyboard events have one document listener in `public/input.js`. Application com
 - Up/Down and Tab move focus; Left/Right adjusts the focused settings row; activation and back behavior remain shared.
 - Immersive XR Settings use a CanvasTexture renderer backed by the shared Settings values and actions.
 - Pressing either controller stick opens or closes XR Settings without ending the session.
-- XR Settings place `Exit VR` first, gameplay-relevant settings after it, and `Close` last. DOM-only submenus remain deferred.
+- Player-name activation opens Settings, where `Player Options` is the first destination for name, Team, and Tank changes.
+- XR Settings place `Exit VR` first, followed by `Player Options`, Help, Voice, and Operator screens, with `Close` last.
+- XR Player Options changes Team and Tank selections and applies team changes through an authoritative rejoin.
+- XR Voice exposes permission, microphone, input-device, and browser audio-processing controls.
+- XR Operator exposes map selection/restart, shot-limit updates, server-data refresh, and read-only MOTD. Text editing and map upload remain desktop-only.
 - Either stick navigates, either trigger or primary face button activates, and either grip or secondary face button closes the menu.
 
 ## Interaction Rules
@@ -74,7 +78,7 @@ Keyboard events have one document listener in `public/input.js`. Application com
 
 ## Resume Point
 
-Migrate Help, Voice, Entry/tank selection, and Operator content into renderer-neutral models for additional XR menu screens.
+Add optional controller-ray pointing and richer XR text entry when portable browser APIs are available.
 
 ## XR Menu Direction
 
@@ -84,4 +88,4 @@ Migrate Help, Voice, Entry/tank selection, and Operator content into renderer-ne
 - Keep thumbstick navigation primary: either stick selects, either trigger or primary face button activates, and either grip or secondary face button closes the menu.
 - Add optional controller-ray pointing and trigger selection after the focus-based path works; both should drive the same menu selection state.
 - Show `Exit VR` as the first Settings row only during XR.
-- Continue moving Settings actions out of DOM button handlers as additional XR menu screens are added.
+- Continue moving remaining DOM-backed actions into renderer-neutral feature APIs as XR interaction expands.

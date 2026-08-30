@@ -6,6 +6,21 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+### Added
+- Added immersive XR Join, Help, Voice, and Operator screens linked from XR Settings.
+- Added XR team/tank selection with authoritative rejoin, voice controls, and controller-accessible operator map and shot-limit actions.
+- Added client/server parity checks for player team normalization so the two copies of the rules cannot drift apart.
+
+### Changed
+- Increased dialog and control text sizes across desktop, mobile, and XR, with scrolling XR menu rows to preserve readability.
+- Disabled Anaglyph 3D while XR is active because the rendering modes are incompatible.
+- Added Player Options as the first Settings destination and changed the player-name shortcut to open the main Settings menu.
+- Moved agent instructions and project memory into a single `AGENTS.md` shared by all coding agents.
+
+### Fixed
+- Fixed the reported client version, which was pinned to an old release and is now derived from the release tooling.
+- Fixed team names with surrounding whitespace being rejected by the client while the server accepted them.
+
 ## [1.0.36] - 2026-08-30
 
 ### Added

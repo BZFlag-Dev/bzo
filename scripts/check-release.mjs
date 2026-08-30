@@ -15,6 +15,7 @@ const rootDir = resolve(__dirname, '..');
 const packageJsonPath = resolve(rootDir, 'package.json');
 const packageLockPath = resolve(rootDir, 'package-lock.json');
 const changelogPath = resolve(rootDir, 'CHANGELOG.md');
+const clientVersionPath = resolve(rootDir, 'public', 'version.mjs');
 
 function fail(message) {
   console.error(`Release check failed: ${message}`);
@@ -67,6 +68,15 @@ if (packageJson.version !== tagVersion) {
 const packageLock = readJson(packageLockPath);
 if (packageLock.version !== tagVersion || packageLock.packages?.['']?.version !== tagVersion) {
   fail('package-lock.json version does not match package.json');
+}
+
+const clientVersionSource = readFileSync(clientVersionPath, 'utf8');
+const clientVersionMatch = clientVersionSource.match(/^export const CLIENT_VERSION = '([^']*)';$/m);
+if (!clientVersionMatch) {
+  fail('public/version.mjs is missing an export const CLIENT_VERSION line');
+}
+if (clientVersionMatch[1] !== tagVersion) {
+  fail(`public/version.mjs CLIENT_VERSION ${clientVersionMatch[1]} does not match tag ${tagVersion}`);
 }
 
 const changelog = readFileSync(changelogPath, 'utf8');

@@ -44,6 +44,16 @@ or deployment configuration.
 - Confirm that `Exit VR` is the first selected row and `Close` is the last row.
 - Navigate up and down with either thumbstick.
 - Activate a setting with either trigger and either primary face button.
+- Open Join, change Team and Tank with left/right, select `Apply & Rejoin`, and
+  confirm that the server returns the requested model and assigned team.
+- Open Help and confirm that all control rows are readable without overlap.
+- Open Voice, cycle microphone inputs, toggle browser audio processing, and
+  confirm permission/microphone states refresh after activation.
+- Open Operator, cycle maps and shot limits, refresh server data, and confirm
+  restart/apply actions affect the selected values. Confirm MOTD and desktop-only
+  controls remain readable but cannot be activated.
+- From each submenu, use grip or the secondary face button and confirm that
+  focus returns to Settings rather than closing the entire menu.
 - Close Settings with either grip, either secondary face button, or another
   thumbstick press.
 - Confirm that movement, firing, and jumping remain neutral until all controls

@@ -18,7 +18,6 @@ const CHAT_KIND_MISC = 'misc';
 const CHAT_KIND_DEBUG = 'debug';
 const CHAT_KIND_DIRECT_IN = 'direct-in';
 const CHAT_KIND_DIRECT_OUT = 'direct-out';
-const CLIENT_VERSION = '1.0.33';
 const CLIENT_COPYRIGHT = 'Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>';
 const CLIENT_LICENSE = 'AGPL-3.0-only';
 const CLIENT_LICENSE_URL = 'https://www.gnu.org/licenses/agpl-3.0.html';
@@ -121,6 +120,7 @@ import {
 } from './player-teams.mjs';
 import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shot-limits.mjs';
+import { CLIENT_VERSION } from './version.mjs';
 
 // FPS
 let fps = 0;
@@ -198,6 +198,7 @@ let activeInitSequence = 0;
 let xrSettingsShortcutLatched = false;
 let xrSettingsShortcutInFlight = false;
 let xrSettingsMenuOpen = false;
+let xrSettingsMenuScreen = 'settings';
 let xrSettingsMenuRenderer = null;
 let xrSettingsMenuSelectedIndex = 0;
 let xrSettingsMenuNavigationDirection = 0;
@@ -252,8 +253,8 @@ function setAvailablePlayerTeams(teams) {
   syncPlayerTeamSelector();
 }
 
-function selectRelativePlayerTeam(direction) {
-  if (gameplayJoinConfirmed) {
+function selectRelativePlayerTeam(direction, { allowJoined = false } = {}) {
+  if (gameplayJoinConfirmed && !allowJoined) {
     syncPlayerTeamSelector();
     return;
   }
@@ -2259,15 +2260,23 @@ window.addEventListener('DOMContentLoaded', () => {
       // Anaglyph 3D toggle button
       const anaglyphBtn = document.getElementById('anaglyphBtn');
       if (anaglyphBtn) {
+        const updateBtn = () => {
+          const xrEnabled = isXREnabled();
+          if (xrEnabled) renderManager.setAnaglyphEnabled(false);
+          const enabled = renderManager.getAnaglyphEnabled();
+          anaglyphBtn.disabled = xrEnabled;
+          anaglyphBtn.classList.toggle('active', enabled);
+          anaglyphBtn.title = xrEnabled
+            ? 'Anaglyph 3D is unavailable in VR mode'
+            : enabled ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+        };
         anaglyphBtn.addEventListener('click', () => {
           const enabled = !renderManager.getAnaglyphEnabled();
           renderManager.setAnaglyphEnabled(enabled);
-          anaglyphBtn.classList.toggle('active', enabled);
-          anaglyphBtn.title = enabled ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+          updateBtn();
         });
-        // Set initial state
-        anaglyphBtn.classList.toggle('active', renderManager.getAnaglyphEnabled());
-        anaglyphBtn.title = renderManager.getAnaglyphEnabled() ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
+        window.addEventListener('webxrsessionchange', updateBtn);
+        updateBtn();
       }
 
       // Debug geometry toggle button
@@ -2419,7 +2428,7 @@ window.addEventListener('DOMContentLoaded', () => {
       };
       if (xrBtn) xrBtn.addEventListener('click', xrClickHandler);
       if (xrQuickBtn) {
-        xrQuickBtn.style.display = '';
+        xrQuickBtn.classList.add('xrAvailable');
         xrQuickBtn.addEventListener('click', xrClickHandler);
       }
     }
@@ -6980,18 +6989,169 @@ function closeXRSettingsMenu() {
   syncInputContextFromUi();
 }
 
+function setXRSettingsMenuScreen(screen) {
+  xrSettingsMenuScreen = screen;
+  xrSettingsMenuSelectedIndex = 0;
+  xrSettingsMenuNavigationDirection = 0;
+  xrSettingsMenuNextRepeatAt = 0;
+  if (screen === 'operator') {
+    sendToServer({ type: 'getMaps', requestId: Math.floor(Math.random() * 1e9) });
+  }
+}
+
 function toggleXRSettingsMenu() {
   if (xrSettingsMenuOpen) {
     closeXRSettingsMenu();
     return;
   }
   xrSettingsMenuOpen = true;
-  xrSettingsMenuSelectedIndex = 0;
-  xrSettingsMenuNavigationDirection = 0;
-  xrSettingsMenuNextRepeatAt = 0;
+  setXRSettingsMenuScreen('settings');
   xrSettingsMenuActivateLatched = true;
   xrSettingsMenuBackLatched = true;
   setInputContext(INPUT_CONTEXT.DIALOG);
+}
+
+const XR_HELP_ITEMS = Object.freeze([
+  { id: 'helpMove', label: 'Move', value: 'Either stick Up / Down', disabled: true },
+  { id: 'helpTurn', label: 'Turn', value: 'Either stick Left / Right', disabled: true },
+  { id: 'helpFire', label: 'Fire', value: 'Either trigger / primary', disabled: true },
+  { id: 'helpJump', label: 'Jump', value: 'Either grip / secondary', disabled: true },
+  { id: 'helpMenu', label: 'Open Menu', value: 'Press either stick', disabled: true },
+  { id: 'helpNavigate', label: 'Navigate', value: 'Either stick', disabled: true },
+  { id: 'helpActivate', label: 'Activate', value: 'Trigger / primary', disabled: true },
+  { id: 'helpBack', label: 'Back', value: 'Grip / secondary', disabled: true },
+  { id: 'backXR', label: 'Back', value: '' },
+]);
+
+function getXRPlayerOptionsMenuItems() {
+  const tankModel = getTankModelById(selectedTankModelId) || getDefaultTankModel();
+  return [
+    { id: 'teamXR', label: 'Team', value: PLAYER_TEAM_LABELS[selectedPlayerTeam], adjustable: true },
+    { id: 'tankXR', label: 'Tank', value: tankModel.label || tankModel.id, adjustable: true },
+    { id: 'rejoinXR', label: 'Apply & Rejoin', value: '' },
+    { id: 'backXR', label: 'Back', value: '' },
+  ];
+}
+
+function getXRVoiceMenuItems() {
+  const state = getVoiceState();
+  const observer = isObserverTeam(playerTeam);
+  const input = document.getElementById('voiceInputDevice');
+  const selectedInput = input?.selectedOptions?.[0]?.textContent || 'Default microphone';
+  return [
+    {
+      id: 'voicePermissionXR',
+      label: 'Permission',
+      value: state.microphonePermission || 'Prompt',
+      disabled: observer || state.microphonePermission === 'granted',
+    },
+    {
+      id: 'voiceMicrophoneXR',
+      label: 'Microphone',
+      value: state.transmitting ? 'On' : 'Off',
+      disabled: observer || (state.microphonePermission !== 'granted' && !state.hasLocalStream),
+    },
+    { id: 'voiceInputXR', label: 'Input', value: selectedInput, adjustable: true, disabled: observer },
+    { id: 'voiceEchoXR', label: 'Echo Cancellation', value: getVoiceAudioSettings().echoCancellation ? 'On' : 'Off' },
+    { id: 'voiceNoiseXR', label: 'Noise Suppression', value: getVoiceAudioSettings().noiseSuppression ? 'On' : 'Off' },
+    { id: 'voiceGainXR', label: 'Auto Gain', value: getVoiceAudioSettings().autoGainControl ? 'On' : 'Off' },
+    { id: 'backXR', label: 'Back', value: '' },
+  ];
+}
+
+function getXROperatorMenuItems() {
+  const mapList = document.getElementById('mapList');
+  const shotInput = document.getElementById('shotMaxActiveInput');
+  const currentMap = mapList?.selectedOptions?.[0]?.textContent || 'Loading...';
+  return [
+    { id: 'operatorMotdXR', label: 'MOTD', value: serverMotdText || '(empty)', disabled: true },
+    { id: 'operatorMapXR', label: 'Map', value: currentMap, adjustable: true, disabled: !mapList?.options?.length },
+    { id: 'operatorRestartXR', label: 'Restart with Map', value: '', disabled: !mapList?.value },
+    { id: 'operatorShotsXR', label: 'Shot Limit', value: shotInput?.value || String(gameConfig?.SHOT_MAX_ACTIVE || 5), adjustable: true },
+    { id: 'operatorApplyShotsXR', label: 'Apply Shot Limit', value: '' },
+    { id: 'operatorRefreshXR', label: 'Refresh Server Data', value: '' },
+    { id: 'operatorDesktopXR', label: 'MOTD / Upload', value: 'Desktop only', disabled: true },
+    { id: 'backXR', label: 'Back', value: '' },
+  ];
+}
+
+function getXRSettingsMenuDefinition() {
+  if (xrSettingsMenuScreen === 'player') return { title: 'Player Options', items: getXRPlayerOptionsMenuItems() };
+  if (xrSettingsMenuScreen === 'help') return { title: 'Help', items: XR_HELP_ITEMS };
+  if (xrSettingsMenuScreen === 'voice') return { title: 'Voice', items: getXRVoiceMenuItems() };
+  if (xrSettingsMenuScreen === 'operator') return { title: 'Operator', items: getXROperatorMenuItems() };
+  return { title: 'Settings', items: getXRSettingsMenuItems() };
+}
+
+function cycleSelectElement(select, direction) {
+  if (!select || select.options.length < 1) return false;
+  const nextIndex = (select.selectedIndex + direction + select.options.length) % select.options.length;
+  select.selectedIndex = nextIndex;
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  return true;
+}
+
+function adjustXRSettingsMenuItem(item, direction) {
+  if (!item || item.disabled) return false;
+  if (item.id === 'teamXR') {
+    selectRelativePlayerTeam(direction, { allowJoined: true });
+    return true;
+  }
+  if (item.id === 'tankXR') {
+    cycleTankModel(direction);
+    return true;
+  }
+  if (item.id === 'voiceInputXR') {
+    return cycleSelectElement(document.getElementById('voiceInputDevice'), direction);
+  }
+  if (item.id === 'operatorMapXR') {
+    return cycleSelectElement(document.getElementById('mapList'), direction);
+  }
+  if (item.id === 'operatorShotsXR') {
+    const input = document.getElementById('shotMaxActiveInput');
+    if (!input) return false;
+    input.value = String(Math.max(1, Math.min(10, Number(input.value || 5) + direction)));
+    return true;
+  }
+  return false;
+}
+
+function applyXRJoinSelection() {
+  gameplayJoinConfirmed = false;
+  updatePlayerTeamSelectorAvailability();
+  sendToServer({
+    type: 'joinGame',
+    name: myPlayerName,
+    isMobile,
+    tankModel: selectedTankModelId,
+    team: getSelectedPlayerTeam(),
+  });
+  closeXRSettingsMenu();
+}
+
+function activateXRSettingsMenuSelection(item) {
+  if (!item || item.disabled) return;
+  if (item.adjustable) {
+    adjustXRSettingsMenuItem(item, 1);
+    return;
+  }
+  if (item.id === 'exitXR') void exitXRFromMenu();
+  else if (item.id === 'closeXRMenu') closeXRSettingsMenu();
+  else if (item.id === 'backXR') setXRSettingsMenuScreen('settings');
+  else if (item.id === 'playerOptionsBtn') setXRSettingsMenuScreen('player');
+  else if (item.id === 'helpBtn') setXRSettingsMenuScreen('help');
+  else if (item.id === 'voiceBtn') setXRSettingsMenuScreen('voice');
+  else if (item.id === 'operatorBtn') setXRSettingsMenuScreen('operator');
+  else if (item.id === 'rejoinXR') applyXRJoinSelection();
+  else if (item.id === 'voicePermissionXR') requestVoicePermission();
+  else if (item.id === 'voiceMicrophoneXR') toggleVoiceMicrophone();
+  else if (item.id === 'voiceEchoXR') document.getElementById('voiceEchoCancellation')?.click();
+  else if (item.id === 'voiceNoiseXR') document.getElementById('voiceNoiseSuppression')?.click();
+  else if (item.id === 'voiceGainXR') document.getElementById('voiceAutoGainControl')?.click();
+  else if (item.id === 'operatorRestartXR') document.getElementById('restartBtn')?.click();
+  else if (item.id === 'operatorApplyShotsXR') document.getElementById('setShotMaxActiveBtn')?.click();
+  else if (item.id === 'operatorRefreshXR') setXRSettingsMenuScreen('operator');
+  else activateXRSettingsMenuItem(item.id);
 }
 
 async function exitXRFromMenu() {
@@ -7028,40 +7188,44 @@ function handleXRSettingsMenuInput(now = performance.now()) {
 
   if (!xrSettingsMenuOpen) return;
 
-  const items = getXRSettingsMenuItems();
+  const { items } = getXRSettingsMenuDefinition();
   xrSettingsMenuSelectedIndex = Math.min(xrSettingsMenuSelectedIndex, Math.max(0, items.length - 1));
+  const leftX = xrInput.leftThumbstick?.x || 0;
   const leftY = xrInput.leftThumbstick?.y || 0;
+  const rightX = xrInput.rightThumbstick?.x || 0;
   const rightY = xrInput.rightThumbstick?.y || 0;
+  const navigationX = Math.abs(rightX) >= Math.abs(leftX) ? rightX : leftX;
   const navigationY = Math.abs(rightY) >= Math.abs(leftY) ? rightY : leftY;
-  const direction = navigationY > 0.6 ? 1 : navigationY < -0.6 ? -1 : 0;
+  const useHorizontal = Math.abs(navigationX) > Math.abs(navigationY);
+  const dominantAxis = useHorizontal ? navigationX : navigationY;
+  const direction = dominantAxis > 0.6 ? 1 : dominantAxis < -0.6 ? -1 : 0;
+  const navigationToken = direction === 0 ? '' : `${useHorizontal ? 'horizontal' : 'vertical'}:${direction}`;
 
   if (direction === 0) {
     xrSettingsMenuNavigationDirection = 0;
     xrSettingsMenuNextRepeatAt = 0;
-  } else if (direction !== xrSettingsMenuNavigationDirection || now >= xrSettingsMenuNextRepeatAt) {
-    xrSettingsMenuSelectedIndex = (
-      xrSettingsMenuSelectedIndex + direction + items.length
-    ) % items.length;
-    xrSettingsMenuNavigationDirection = direction;
+  } else if (navigationToken !== xrSettingsMenuNavigationDirection || now >= xrSettingsMenuNextRepeatAt) {
+    const selectedItem = items[xrSettingsMenuSelectedIndex];
+    if (!useHorizontal || !adjustXRSettingsMenuItem(selectedItem, direction)) {
+      xrSettingsMenuSelectedIndex = (
+        xrSettingsMenuSelectedIndex + direction + items.length
+      ) % items.length;
+    }
+    xrSettingsMenuNavigationDirection = navigationToken;
     xrSettingsMenuNextRepeatAt = now + 250;
   }
 
   const activatePressed = xrInput.leftTrigger > 0.5 || xrInput.rightTrigger > 0.5 || xrInput.buttonA;
   if (activatePressed && !xrSettingsMenuActivateLatched) {
     const selectedItem = items[xrSettingsMenuSelectedIndex];
-    if (selectedItem?.id === 'exitXR') {
-      void exitXRFromMenu();
-    } else if (selectedItem?.id === 'closeXRMenu') {
-      closeXRSettingsMenu();
-    } else if (selectedItem && !selectedItem.disabled) {
-      activateXRSettingsMenuItem(selectedItem.id);
-    }
+    activateXRSettingsMenuSelection(selectedItem);
   }
   xrSettingsMenuActivateLatched = activatePressed;
 
   const backPressed = xrInput.buttonB || xrInput.buttonGrip;
   if (backPressed && !xrSettingsMenuBackLatched) {
-    closeXRSettingsMenu();
+    if (xrSettingsMenuScreen === 'settings') closeXRSettingsMenu();
+    else setXRSettingsMenuScreen('settings');
   }
   xrSettingsMenuBackLatched = backPressed;
 }
@@ -7070,9 +7234,11 @@ function ensureXRSettingsMenu() {
   if (!xrSettingsMenuRenderer) {
     xrSettingsMenuRenderer = new XRMenuRenderer();
   }
+  const definition = getXRSettingsMenuDefinition();
   xrSettingsMenuRenderer.update(renderManager.getCamera(), {
     visible: isXREnabled() && xrSettingsMenuOpen,
-    items: getXRSettingsMenuItems(),
+    title: definition.title,
+    items: definition.items,
     selectedIndex: xrSettingsMenuSelectedIndex,
   });
 }

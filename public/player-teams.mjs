@@ -35,12 +35,12 @@ export const PLAYER_TEAM_LABELS = Object.freeze({
 });
 
 export function normalizePlayerTeam(team) {
-  const normalized = String(team || '').toLowerCase();
+  const normalized = typeof team === 'string' ? team.trim().toLowerCase() : '';
   return PLAYER_TEAMS.includes(normalized) ? normalized : PLAYER_TEAM.ROGUE;
 }
 
 export function normalizePlayerTeamSelection(team) {
-  const normalized = String(team || '').toLowerCase();
+  const normalized = typeof team === 'string' ? team.trim().toLowerCase() : '';
   return normalized === PLAYER_TEAM.AUTOMATIC ? PLAYER_TEAM.AUTOMATIC : normalizePlayerTeam(normalized);
 }
 

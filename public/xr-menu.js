@@ -7,15 +7,26 @@
 
 import * as THREE from 'three';
 
-const CANVAS_WIDTH = 900;
-const CANVAS_HEIGHT = 1100;
-const PANEL_WIDTH_METERS = 0.82;
-const PANEL_HEIGHT_METERS = 1.0;
+const CANVAS_WIDTH = 1024;
+const CANVAS_HEIGHT = 1200;
+const PANEL_WIDTH_METERS = 0.95;
+const PANEL_HEIGHT_METERS = 1.1;
 const PANEL_DISTANCE_METERS = 1.25;
+const MAX_VISIBLE_ROWS = 9;
 
 function roundedRect(context, x, y, width, height, radius) {
   context.beginPath();
   context.roundRect(x, y, width, height, radius);
+}
+
+function fitText(context, text, maxWidth) {
+  const source = String(text || '');
+  if (context.measureText(source).width <= maxWidth) return source;
+  let result = source;
+  while (result.length > 1 && context.measureText(`${result}...`).width > maxWidth) {
+    result = result.slice(0, -1);
+  }
+  return `${result}...`;
 }
 
 export class XRMenuRenderer {
@@ -41,7 +52,7 @@ export class XRMenuRenderer {
     this.mesh.visible = false;
   }
 
-  update(camera, { visible, items = [], selectedIndex = 0 } = {}) {
+  update(camera, { visible, title = 'Settings', items = [], selectedIndex = 0 } = {}) {
     if (!camera) return;
     if (this.mesh.parent !== camera) {
       this.mesh.parent?.remove(this.mesh);
@@ -51,19 +62,25 @@ export class XRMenuRenderer {
     this.mesh.visible = Boolean(visible);
     if (!visible || !this.context) return;
 
-    this.draw(items, selectedIndex);
+    this.draw(title, items, selectedIndex);
     this.texture.needsUpdate = true;
   }
 
-  draw(items, selectedIndex) {
+  draw(title, items, selectedIndex) {
     const context = this.context;
     const width = this.canvas.width;
     const height = this.canvas.height;
-    const margin = 42;
-    const headerHeight = 112;
-    const rowGap = 8;
-    const availableHeight = height - headerHeight - margin * 2;
-    const rowHeight = Math.min(72, (availableHeight - Math.max(0, items.length - 1) * rowGap) / Math.max(1, items.length));
+    const margin = 48;
+    const headerHeight = 132;
+    const rowGap = 10;
+    const rowHeight = 88;
+    const visibleCount = Math.min(MAX_VISIBLE_ROWS, items.length);
+    const maxStartIndex = Math.max(0, items.length - visibleCount);
+    const startIndex = Math.min(
+      maxStartIndex,
+      Math.max(0, selectedIndex - Math.floor(visibleCount / 2)),
+    );
+    const visibleItems = items.slice(startIndex, startIndex + visibleCount);
 
     context.clearRect(0, 0, width, height);
     roundedRect(context, 8, 8, width - 16, height - 16, 24);
@@ -74,14 +91,15 @@ export class XRMenuRenderer {
     context.stroke();
 
     context.fillStyle = '#f4f7fb';
-    context.font = 'bold 48px monospace';
+    context.font = 'bold 58px monospace';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText('Settings', width / 2, margin + 28);
+    context.fillText(title, width / 2, margin + 34);
 
-    items.forEach((item, index) => {
-      const y = headerHeight + margin + index * (rowHeight + rowGap);
-      const selected = index === selectedIndex;
+    visibleItems.forEach((item, visibleIndex) => {
+      const itemIndex = startIndex + visibleIndex;
+      const y = headerHeight + margin + visibleIndex * (rowHeight + rowGap);
+      const selected = itemIndex === selectedIndex;
       roundedRect(context, margin, y, width - margin * 2, rowHeight, 8);
       context.fillStyle = selected ? 'rgba(76, 175, 80, 0.34)' : 'rgba(255, 255, 255, 0.055)';
       context.fill();
@@ -93,19 +111,29 @@ export class XRMenuRenderer {
 
       context.globalAlpha = item.disabled ? 0.42 : 1;
       context.textBaseline = 'middle';
-      context.font = 'bold 28px monospace';
+      context.font = 'bold 38px monospace';
       context.textAlign = 'left';
       context.fillStyle = item.id === 'exitXR' ? '#ff8f8f' : '#f4f7fb';
-      context.fillText(item.label, margin + 24, y + rowHeight / 2);
+      context.fillText(fitText(context, item.label, width * 0.46), margin + 24, y + rowHeight / 2);
 
       if (item.value) {
-        context.font = 'bold 27px monospace';
+        context.font = 'bold 34px monospace';
         context.textAlign = 'right';
         context.fillStyle = '#a7d8ff';
-        context.fillText(item.value, width - margin - 24, y + rowHeight / 2);
+        const value = item.adjustable ? `< ${item.value} >` : item.value;
+        context.fillText(fitText(context, value, width * 0.44), width - margin - 24, y + rowHeight / 2);
       }
       context.globalAlpha = 1;
     });
+
+    context.fillStyle = '#9fb0c2';
+    context.font = 'bold 28px monospace';
+    context.textAlign = 'center';
+    const footerY = height - 32;
+    const scrollPosition = `${selectedIndex + 1} / ${items.length}`;
+    const previousIndicator = startIndex > 0 ? '^  ' : '';
+    const nextIndicator = startIndex + visibleCount < items.length ? '  v' : '';
+    context.fillText(`${previousIndicator}${scrollPosition}${nextIndicator}`, width / 2, footerY);
   }
 
   hide() {

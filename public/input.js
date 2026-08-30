@@ -586,6 +586,7 @@ const domRefs = {
   debugBtn: null,
   cameraBtn: null,
   helpBtn: null,
+  playerOptionsBtn: null,
   settingsBtn: null,
   settingsHud: null,
   voiceBtn: null,
@@ -609,9 +610,6 @@ let keyboardListenerAttached = false;
 let orientationDebugInitialized = false;
 let settingsMenu = null;
 const XR_SETTINGS_EXCLUDED_IDS = new Set([
-  'voiceBtn',
-  'helpBtn',
-  'operatorBtn',
   'xrBtn',
   'closeSettingsHud',
 ]);
@@ -1101,6 +1099,7 @@ function bindHudElements() {
   domRefs.debugBtn = document.getElementById('debugBtn');
   domRefs.cameraBtn = document.getElementById('cameraBtn');
   domRefs.helpBtn = document.getElementById('helpBtn');
+  domRefs.playerOptionsBtn = document.getElementById('playerOptionsBtn');
   domRefs.settingsBtn = document.getElementById('settingsBtn');
   domRefs.settingsHud = document.getElementById('settingsHud');
   domRefs.voiceBtn = document.getElementById('voiceBtn');
@@ -1199,6 +1198,15 @@ function bindHudElements() {
     });
   }
 
+  if (domRefs.playerOptionsBtn) {
+    domRefs.playerOptionsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideSettingsHudSilently();
+      hudContext.toggleEntryDialog();
+    });
+  }
+
   if (domRefs.voiceBtn) {
     domRefs.voiceBtn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -1252,7 +1260,7 @@ function bindHudElements() {
     domRefs.playerNameEl.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      hudContext.toggleEntryDialog();
+      openSettingsDialog();
     });
   }
 

@@ -15,6 +15,7 @@ const rootDir = resolve(__dirname, '..');
 const packageJsonPath = resolve(rootDir, 'package.json');
 const packageLockPath = resolve(rootDir, 'package-lock.json');
 const changelogPath = resolve(rootDir, 'CHANGELOG.md');
+const clientVersionPath = resolve(rootDir, 'public', 'version.mjs');
 
 function fail(message) {
   console.error(`Release prepare failed: ${message}`);
@@ -28,6 +29,18 @@ function normalizeVersion(input) {
 
 function writeJson(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function writeClientVersion(filePath, value) {
+  const source = readFileSync(filePath, 'utf8');
+  const updated = source.replace(
+    /^export const CLIENT_VERSION = '[^']*';$/m,
+    `export const CLIENT_VERSION = '${value}';`
+  );
+  if (updated === source) {
+    fail(`${filePath} is missing an export const CLIENT_VERSION line`);
+  }
+  writeFileSync(filePath, updated, 'utf8');
 }
 
 function ensureUnreleased(changelog) {
@@ -72,6 +85,8 @@ if (packageLock.packages?.['']) {
   packageLock.packages[''].license = packageJson.license;
 }
 writeJson(packageLockPath, packageLock);
+
+writeClientVersion(clientVersionPath, version);
 
 const defaultChangelog = `# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on Keep a Changelog, and versions use SemVer tags like v${version}.\n\n## [Unreleased]\n`;
 let changelog = existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : defaultChangelog;
