@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.37] - 2026-08-30
+
 ### Added
 - Added immersive XR Join, Help, Voice, and Operator screens linked from XR Settings.
 - Added XR team/tank selection with authoritative rejoin, voice controls, and controller-accessible operator map and shot-limit actions.
