@@ -69,4 +69,15 @@ module.exports = [
       },
     },
   },
+  {
+    // Service worker: a classic worker script, not an ES module.
+    files: ["public/sw.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        caches: "readonly",
+        self: "readonly",
+      },
+    },
+  },
 ];

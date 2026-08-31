@@ -84,8 +84,13 @@ and a browser Three.js client under `public/`.
 
 All front-end modules are plain ES modules loaded directly by the browser. There
 is **no bundler**. When adding an external module, update the
-`<script type="importmap">` block in `public/index.html`; keep the Three.js
-version there in sync with `package.json` (both are currently `0.185.1`).
+`<script type="importmap">` block in `public/index.html`.
+
+**Serve every dependency from this origin.** Nothing in `public/` may reference a
+third-party host: an installed PWA on a headset, or a phone on a LAN game server
+with no internet route, must still load. Three.js is mounted from the installed
+`node_modules/three` at `/vendor/three/`, so `package.json` is the only place its
+version appears.
 
 ### Layout
 
@@ -103,6 +108,8 @@ version there in sync with `package.json` (both are currently `0.185.1`).
 | `public/webxr.js` | XR session lifecycle and controller input |
 | `public/voice.js` | WebRTC nearby-voice manager |
 | `public/audio.js` | Procedurally generated audio buffers |
+| `public/sw.js` | Service worker: install support and asset caching |
+| `public/icons/` | Installed-app icons; see `docs/icons.md` |
 | `public/*.mjs` | Client-side copies of logic shared with the server |
 | `scripts/*.mjs` | Release tooling, doc checks, tests, OBJ generators |
 | `maps/*.bzw` | Map files |
@@ -112,7 +119,12 @@ version there in sync with `package.json` (both are currently `0.185.1`).
 
 Because the client is unbundled ESM and the server is CommonJS, logic needed on
 both sides is kept as a **hand-maintained pair**: `public/<name>.mjs` and
-`server/<name>.cjs`. Current pairs are `shot-limits` and `player-teams`.
+`server/<name>.cjs`. Current pairs are `shot-limits`, `player-teams`, `collision-geometry` and
+`tank-motion`. `npm run check:shared-pairs` enforces them: the two mirrored
+pairs must match line for line, and any name a hand-written pair exports on
+both sides must agree in type and arity. A pair that drifts does not throw --
+the client and server just quietly disagree about geometry, which surfaces as
+position corrections.
 
 **Any such pair must have a parity test** in `scripts/` that loads both copies
 and asserts they agree across a shared input table. See
@@ -192,6 +204,31 @@ So firing continuously sustains exactly `maxShots` shots in flight. bzo derives
 so changing `shotMaxActive`, `shotSpeed`, or `shotDistance` keeps the relation
 intact. With the defaults and five slots that is 700ms.
 
+### The server does not enforce a reload timer
+
+Fire rate is limited by shot slots alone. `bzfs.cxx` `shotFired()` has no
+elapsed-time check at all, and `GameKeeper.cxx` `addShot()` refuses a shot only
+when that shot's own slot is still live. Each slot expires a full shot lifetime
+after it was filled, so two consecutive shots never share a timer.
+
+**Do not add a global cooldown back.** A reload timer compares shots that are
+one reload apart, which is the interval network jitter actually lands in: the
+client starts its window when it sends and the server started its window when it
+received, so any dip in latency between two shots makes an honest one look
+early. Slot expiry compares shots a full lifetime apart, where jitter is noise.
+The sustained rate is identical either way -- `maxShots` slots each held for one
+shot lifetime is one shot per `SHOT_RELOAD_TIME`.
+
+### Open question: shot position tolerance
+
+bzo allows a shot origin `barrelLength + SHOT_POSITION_TOLERANCE` (~5 units)
+from the extrapolated tank position. bzfs allows
+`tankSpeed * _velocityAd + 2 * _muzzleFront` -- tens of units -- deliberately
+absorbing a frame of tank motion and flag effects. bzo is much stricter than
+upstream here. Rejections now log as `[ANTICHEAT:...] SHOT REJECTED`; if honest
+shots are being refused on position during testing, widen the tolerance toward
+upstream's rather than assuming a client bug.
+
 `shotReloadTime` in `server.json` pins the value and disables the derivation.
 Leave it unset unless an operator deliberately wants a non-BZFlag fire rate --
 in particular do not add it to `example-server.json`, which is copied to
@@ -241,8 +278,9 @@ through the `soundFiles[]` table in `src/bzflag/sound.cxx`.
 ## Dev Workflow
 
 - Install dependencies once with `npm install`.
-- `npm run dev` starts `server.js` via nodemon; `npm start` runs it without
-  auto-restart.
+- `npm run dev` starts `server.js` via nodemon, wrapped in a loop that brings it
+  back if it exits; `npm start` runs it once, without auto-restart. Ctrl-C stops
+  the loop.
 - The server watches `public/` and `server.js`, forcing connected clients to
   reload on any `public/` change and restarting itself when `server.js` changes.
 - Because `npm run dev` is used, edits to watched files usually restart or reload

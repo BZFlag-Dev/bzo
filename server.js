@@ -11,7 +11,19 @@ const logPath = require('path').join(__dirname, 'server.log');
 require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
 const { normalizeShotSlotCount } = require('./server/shot-limits.cjs');
-const { getColliderLocalPoint, pyramidIntersectsCylinder } = require('./server/collision-geometry.cjs');
+const {
+  documentTitle,
+  escapeHtml,
+  sanitizeHost,
+  shortHostName,
+} = require('./server/server-name.cjs');
+const {
+  getColliderLocalPoint,
+  getTankLocalAngle,
+  pyramidIntersectsCylinder,
+  pyramidIntersectsTank,
+  testOrigRectTank,
+} = require('./server/collision-geometry.cjs');
 const {
   normalizePlayerTeamSelection,
   parseBZWTeamMode,
@@ -54,8 +66,91 @@ const CONFIG_PATH = process.env.SERVER_CONFIG_PATH
   : path.join(__dirname, 'server.json');
 const EXAMPLE_CONFIG_PATH = path.join(__dirname, 'example-server.json');
 
+// Cache policy. Markup, styles and scripts must revalidate on every load: the
+// client/server protocol is lockstep, so a client older than the running server
+// is a desync, not a stale pixel. Only content that cannot change behaviour --
+// textures, models, audio, icons -- is cached without asking.
+const REVALIDATE = 'no-cache';
+const ASSET_MAX_AGE = 604800; // 7 days
+
+function setStaticHeaders(res, filePath) {
+  if (/\.(?:html|css|js|mjs)$/.test(filePath)) {
+    res.setHeader('Cache-Control', REVALIDATE);
+  } else {
+    res.setHeader('Cache-Control', `public, max-age=${ASSET_MAX_AGE}`);
+  }
+}
+
+// Serve Three.js from the installed dependency so the game has no third-party
+// origins: an installed PWA on a headset or a LAN with no internet route still
+// loads. `addons` is mounted first so the shorter path does not shadow it.
+// Both directories are reached through three's own `exports` map, which is the
+// only supported way in: it does not expose package.json.
+const threeBuildDir = path.dirname(require.resolve('three'));
+const threeAddonsDir = path.dirname(require.resolve('three/addons'));
+app.use('/vendor/three/addons', express.static(threeAddonsDir, {
+  setHeaders: (res) => res.setHeader('Cache-Control', REVALIDATE),
+}));
+app.use('/vendor/three', express.static(threeBuildDir, {
+  setHeaders: (res) => res.setHeader('Cache-Control', REVALIDATE),
+}));
+
+// index.html is rendered per request so the page is named after the host before
+// any script runs. iOS reads `apple-mobile-web-app-title` for a home screen
+// label, so it has to be in the markup that Safari parses, not added later by
+// the client. Mounted ahead of the static handler, which would otherwise serve
+// the untemplated file.
+const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+const INDEX_TITLE = '<title>Battlezone Online</title>';
+const INDEX_APPLE_TITLE = '<meta name="apple-mobile-web-app-title" content="Battlezone Online">';
+let indexTemplate = null;
+let indexTemplateMtime = 0;
+
+function readIndexTemplate() {
+  const { mtimeMs } = fs.statSync(INDEX_PATH);
+  if (indexTemplate === null || mtimeMs !== indexTemplateMtime) {
+    const html = fs.readFileSync(INDEX_PATH, 'utf8');
+    for (const marker of [INDEX_TITLE, INDEX_APPLE_TITLE]) {
+      if (!html.includes(marker)) {
+        throw new Error(`public/index.html is missing the marker: ${marker}`);
+      }
+    }
+    indexTemplate = html;
+    indexTemplateMtime = mtimeMs;
+  }
+  return indexTemplate;
+}
+
+function renderIndex(host) {
+  return readIndexTemplate()
+    .replace(INDEX_TITLE, `<title>${escapeHtml(documentTitle(host))}</title>`)
+    .replace(
+      INDEX_APPLE_TITLE,
+      `<meta name="apple-mobile-web-app-title" content="${escapeHtml(shortHostName(host))}">`
+    );
+}
+
+// The browser sets Host from the address the player typed, so it is the name
+// they expect to see. X-Forwarded-Host is not consulted: any client can send it,
+// and a proxy configured as the README describes already preserves Host.
+function requestHost(req) {
+  return sanitizeHost(req.get('host'));
+}
+
+app.get(['/', '/index.html'], (req, res) => {
+  const host = requestHost(req);
+  if (!host) {
+    res.status(400).type('text/plain').send('Malformed Host header');
+    return;
+  }
+  // res.send generates an ETag for this body, so an unchanged page still costs
+  // one conditional request and a bodiless 304.
+  res.set('Cache-Control', REVALIDATE);
+  res.type('html').send(renderIndex(host));
+});
+
 // Serve static files
-app.use(express.static('public'));
+app.use(express.static('public', { setHeaders: setStaticHeaders }));
 
 function getAvailableTankModels() {
   const objDir = path.join(__dirname, 'public', 'obj');
@@ -111,18 +206,80 @@ app.get('/api/tank-models', (req, res) => {
   res.json({ models: getAvailableTankModels() });
 });
 
+// The manifest is generated per request so the installed app is named after the
+// host the client asked for, verbatim. Two hosts pointing at different servers
+// then install as two separately-named apps. TLS terminates at a reverse proxy
+// (see README), so the forwarded header carries the host the client sent.
+app.get('/manifest.webmanifest', (req, res) => {
+  const host = requestHost(req);
+  if (!host) {
+    res.status(400).type('text/plain').send('Malformed Host header');
+    return;
+  }
+  const icon = (file, size, purpose) => ({
+    src: `/icons/${file}`,
+    sizes: `${size}x${size}`,
+    type: 'image/png',
+    purpose,
+  });
+  res.set('Cache-Control', REVALIDATE);
+  res.type('application/manifest+json').send(JSON.stringify({
+    id: '/',
+    name: host,
+    short_name: shortHostName(host),
+    description: serverConfig.description,
+    start_url: '/',
+    scope: '/',
+    display: 'fullscreen',
+    display_override: ['fullscreen', 'standalone', 'minimal-ui'],
+    orientation: 'any',
+    background_color: '#000000',
+    theme_color: '#cc0000',
+    categories: ['games'],
+    launch_handler: { client_mode: 'focus-existing' },
+    icons: [
+      icon('bzflag-192.png', 192, 'any'),
+      icon('bzflag-512.png', 512, 'any'),
+      icon('bzflag-1024.png', 1024, 'any'),
+      icon('bzflag-maskable-192.png', 192, 'maskable'),
+      icon('bzflag-maskable-512.png', 512, 'maskable'),
+    ],
+  }, null, 2));
+});
+
 // AGPL §13: provide source code access to network users
 app.get('/source', (req, res) => {
   res.redirect(302, 'https://github.com/timriker/bzo');
 });
 // --- Admin API Endpoints ---
 
+// Errors that reach a server object have no per-socket owner. Left unhandled
+// they throw the same way a socket error does.
+process.on('uncaughtException', (err) => {
+  logError(`Uncaught exception: ${err && err.stack ? err.stack : err}`);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logError(`Unhandled rejection: ${reason && reason.stack ? reason.stack : reason}`);
+  process.exit(1);
+});
+
 const server = app.listen(PORT, '::', () => {
   log(`Server running on http://[::]:${PORT}`);
 });
 
+server.on('error', (err) => {
+  logError(`HTTP server error: ${err.message}`);
+  process.exit(1);
+});
+
 // WebSocket server
 const wss = new WebSocketServer({ server });
+
+wss.on('error', (err) => {
+  logError(`WebSocket server error: ${err.message}`);
+});
 
 // Game constants
 const GAME_CONFIG = {
@@ -1018,7 +1175,6 @@ class Player {
     this.z = 0;
     this.rotation = 0;
     this.health = 0;
-    this.lastShot = 0;
     this.lastUpdate = Date.now();
     this.kills = 0;
     this.deaths = 0;
@@ -1057,6 +1213,7 @@ class Player {
     this.cheatWarnings = {
       linearDrift: 0,
       angularDrift: 0,
+      shotRejected: 0,
       totalWarnings: 0,
       lastWarningTime: 0,
     };
@@ -1195,7 +1352,7 @@ class Player {
   }
 
   respawn() {
-    const spawnPos = findValidSpawnPosition();
+    const spawnPos = getTestSpawn(this.name) || findValidSpawnPosition();
     this.x = spawnPos.x;
     this.y = spawnPos.y;
     this.z = spawnPos.z;
@@ -1421,9 +1578,13 @@ function getCollisionColliders() {
   return [...OBSTACLES, ...getWorldBorderColliders()];
 }
 
+// `options.rotation` selects BZFlag's two occupant shapes: a heading makes the
+// occupant an oriented 2.8 x 6.0 box (Obstacle::inBox, used for tanks), and its
+// absence keeps the cylinder (Obstacle::inCylinder, correct for projectiles).
 function checkCollision(x, y, z, tankRadius = 2, options = {}) {
   const ignoreTeleporters = options.ignoreTeleporters === true;
   const suppressLog = options.suppressLog === true;
+  const useTankBox = Number.isFinite(options.rotation);
   // Shrinks the tested radius only. Height is untouched, and the teleporter
   // portal interior keeps the full radius so slack can never make a portal
   // harder to pass through.
@@ -1445,19 +1606,25 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
+    const tankAngle = useTankBox ? getTankLocalAngle(options.rotation, obs.rotation) : 0;
+    const hitsRect = (rectHalfW, rectHalfD, rectSlack) => (useTankBox
+      ? testOrigRectTank(rectHalfW, rectHalfD, localX, localZ, tankAngle, rectSlack)
+      : getBoxCollisionDistanceSquared(localX, localZ, rectHalfW, rectHalfD)
+        < (tankRadius - rectSlack) * (tankRadius - rectSlack));
 
     if (obs.type === 'box' || !obs.type) {
       // Teleporter boxes are only solid on the frame. The inner active portal
       // area must remain non-colliding so crossing can trigger teleport.
       if (obs?.kind === 'teleporter') {
         const dims = getShotTeleporterDims(obs);
-        const outerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.halfD);
-        if (outerDistSquared < effectiveRadius * effectiveRadius) {
-          const innerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.activeHalfD);
+        if (hitsRect(dims.halfW, dims.halfD, slack)) {
           const activeBaseY = obstacleBase;
           const activeTopY = obstacleBase + dims.activeH;
           const overlapsActiveVertical = tankTop > (activeBaseY + epsilon) && y < (activeTopY - epsilon);
-          const inPortalInterior = overlapsActiveVertical && innerDistSquared < tankRadius * tankRadius;
+          // The portal interior keeps the full shape, so slack can never make a
+          // portal harder to pass through.
+          const inPortalInterior = overlapsActiveVertical
+            && hitsRect(dims.halfW, dims.activeHalfD, 0);
           if (inPortalInterior) {
             continue;
           }
@@ -1468,8 +1635,7 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
           return obs;
         }
       } else {
-        const distSquared = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
-        if (distSquared < effectiveRadius * effectiveRadius) {
+        if (hitsRect(halfW, halfD, slack)) {
           if (!suppressLog) {
             log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
           }
@@ -1482,7 +1648,10 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
       // The previous 8-point sample never consulted obs.inverted, so the server
       // treated every inverted pyramid as upright and disagreed with the client
       // about roughly a fifth of the volume around it.
-      if (pyramidIntersectsCylinder(obs, x, y, z, effectiveRadius, tankHeight)) {
+      const hitsPyramid = useTankBox
+        ? pyramidIntersectsTank(obs, x, y, z, options.rotation, tankHeight, slack)
+        : pyramidIntersectsCylinder(obs, x, y, z, effectiveRadius, tankHeight);
+      if (hitsPyramid) {
         if (!suppressLog) {
           log(`[COLLISION] ${x.toFixed(2)},${y.toFixed(2)},${z.toFixed(2)} ${obs.name}:${obs.type} ${obs.x.toFixed(2)},${obstacleBase.toFixed(2)},${obs.z.toFixed(2)} rot:${(obs.rotation || 0).toFixed(2)}, h:${obstacleHeight.toFixed(2)}, top:${obstacleTop.toFixed(2)}`);
         }
@@ -1562,6 +1731,21 @@ function findMapEdgeImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, halfMa
   };
 }
 
+// A fixed spawn for automated collision testing, so a probe always starts at a
+// known distance from known geometry instead of somewhere random. Set
+// `testSpawn` in server.json to enable; it is absent from example-server.json,
+// so a normal server never has one.
+function getTestSpawn(name) {
+  const spawn = serverConfig.testSpawn;
+  if (!spawn || spawn.name !== name) return null;
+  return {
+    x: Number(spawn.x) || 0,
+    y: Number(spawn.y) || 0,
+    z: Number(spawn.z) || 0,
+    rotation: Number(spawn.rotation) || 0,
+  };
+}
+
 function findValidSpawnPosition(tankRadius = 2) {
   //return { x: 0, y: 0, z: 0, rotation: 0 };
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
@@ -1573,7 +1757,7 @@ function findValidSpawnPosition(tankRadius = 2) {
     const z = Math.random() * (GAME_CONFIG.MAP_SIZE - tankRadius * 4) - (halfMap - tankRadius * 2);
     const rotation = Math.random() * Math.PI * 2;
 
-    if (!checkCollision(x, y, z, tankRadius)) {
+    if (!checkCollision(x, y, z, tankRadius, { rotation })) {
       return { x, y, z, rotation };
     }
   }
@@ -1651,6 +1835,7 @@ function validateMovement(player, newX, newY, newZ, newRotation, deltaTime, velo
   const ignoreTeleporters = options.ignoreTeleporters === true;
   let collision = checkCollision(newX, newY, newZ, 2, {
     ignoreTeleporters,
+    rotation: newRotation,
     slack: ANTICHEAT_CONFIG.collisionSlack
   });
   if (collision) {
@@ -1692,18 +1877,21 @@ function getShotRejection(player, shotX, shotY, shotZ) {
     return `dead player cannot shoot (health=${player.health})`;
   }
 
-  if (player.lastShot > 0) {
-    const elapsedSinceLastShot = now - player.lastShot;
-    if (elapsedSinceLastShot < GAME_CONFIG.SHOT_RELOAD_TIME) {
-      const remaining = GAME_CONFIG.SHOT_RELOAD_TIME - elapsedSinceLastShot;
-      return `fired too soon (${remaining.toFixed(0)}ms of ${GAME_CONFIG.SHOT_RELOAD_TIME.toFixed(0)}ms reload remaining)`;
-    }
-  }
+  // Fire rate is limited by shot slots alone, matching bzfs: GameKeeper.cxx
+  // addShot() rejects a shot only when its own slot is still live, and there is
+  // no elapsed-time check. Slots each expire independently a full shot lifetime
+  // after they were filled, so consecutive shots never share a timer and network
+  // jitter cannot make an honest shot look early. See the slot check below.
 
   // Use extrapolated position, not stored position
   const extrapolated = player.getExtrapolatedPosition(now);
   const dist = distance(extrapolated.x, extrapolated.z, shotX, shotZ);
 
+  // NOTE: bzfs is far more permissive here. bzfs.cxx shotFired() allows
+  // (tankSpeed * _velocityAd + 2 * _muzzleFront), tens of units, deliberately
+  // absorbing a frame of tank motion and flag effects. bzo allows ~5. Watch the
+  // ANTICHEAT log for position rejections during testing and widen this if
+  // honest shots are being refused.
   if (dist > barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE) {
     return `shot from invalid position: ${dist.toFixed(2)} units from the barrel,`
       + ` limit ${(barrelLength + GAME_CONFIG.SHOT_POSITION_TOLERANCE).toFixed(2)}`
@@ -1723,10 +1911,20 @@ function getShotRejection(player, shotX, shotY, shotZ) {
   return null;
 }
 
+// A rejected shot means the client believed it could fire and the server did
+// not. That is the same class of client/server disagreement the drift checks
+// report, so it is counted and reported the same way.
 function logShotRejection(player, reason, message) {
+  player.cheatWarnings.shotRejected++;
+  player.cheatWarnings.totalWarnings++;
+  player.cheatWarnings.lastWarningTime = Date.now();
+
   log(
-    `[SHOT_REJECT] player=${player.id} "${player.name}" reason=${reason}`
-    + ` at=${formatShotPoint(player.x, player.y, player.z)}`
+    `[ANTICHEAT:${ANTICHEAT_CONFIG.mode.toUpperCase()}] Player "${player.name}" SHOT REJECTED:`
+    + ` ${reason} | Warnings: ${player.cheatWarnings.totalWarnings}`
+  );
+  log(
+    `  player=${player.id} at=${formatShotPoint(player.x, player.y, player.z)}`
     + ` sent=${formatShotPoint(Number(message.x), Number(message.y), Number(message.z))}`
     + ` dir=(${Number(message.dirX)},${Number(message.dirY)},${Number(message.dirZ)})`
   );
@@ -2249,6 +2447,7 @@ function applyPlayerTeleportMessage(player, sourceState, fromFaceId, toFaceId, n
 
   const destinationCollision = checkCollision(outX, outY, outZ, 2, {
     ignoreTeleporters: true,
+    rotation: player.rotation,
     suppressLog: true,
   });
   if (destinationCollision) {
@@ -2405,7 +2604,7 @@ function formatShotPoint(x, y, z) {
 function logShotEnd(projectile, cause, point, details = '') {
   const extra = details ? ` ${details}` : '';
   log(
-    `[SHOT_END] id=${projectile.id} player=${projectile.playerId} slot=${projectile.shotSlot}` +
+    `[shotEnd] id=${projectile.id} player=${projectile.playerId} slot=${projectile.shotSlot}` +
     ` cause=${cause} at=${formatShotPoint(point.x, point.y, point.z)}` +
     ` origin=${formatShotPoint(projectile.originX, projectile.y, projectile.originZ)}` +
     ` dir=(${projectile.dirX.toFixed(4)},${(projectile.dirY || 0).toFixed(4)},${projectile.dirZ.toFixed(4)})${extra}`
@@ -2611,7 +2810,7 @@ if (ANTICHEAT_CONFIG.mode !== 'disabled') {
       log(`[ANTICHEAT SUMMARY] ${playersWithWarnings.length} player(s) with warnings:`);
       playersWithWarnings.forEach(p => {
         const timeSinceWarning = Math.floor((Date.now() - p.cheatWarnings.lastWarningTime) / 1000);
-        log(`  "${p.name}": ${p.cheatWarnings.totalWarnings} total (${p.cheatWarnings.linearDrift} linear, ${p.cheatWarnings.angularDrift} angular) - last ${timeSinceWarning}s ago`);
+        log(`  "${p.name}": ${p.cheatWarnings.totalWarnings} total (${p.cheatWarnings.linearDrift} linear, ${p.cheatWarnings.angularDrift} angular, ${p.cheatWarnings.shotRejected} shot) - last ${timeSinceWarning}s ago`);
       });
     }
   }, 300000); // 5 minutes
@@ -2697,6 +2896,14 @@ wss.on('connection', (ws, req) => {
 
   // Set player as not yet joined (health = 0)
   player.health = 0;
+
+  // A socket with no 'error' listener throws on the first protocol violation or
+  // reset, killing the whole server. Any client can send a malformed frame, so
+  // this listener is what keeps one bad peer from taking everyone down. ws
+  // closes the socket itself afterwards; 'close' does the player cleanup.
+  ws.on('error', (err) => {
+    logError(`Player ${player.id} socket error: ${err.message}`);
+  });
 
   // Handle pong responses for keep-alive
   ws.on('pong', () => {
@@ -3105,7 +3312,6 @@ wss.on('connection', (ws, req) => {
             logShotRejection(player, 'no free shot slot despite passing validation', message);
             break;
           }
-          player.lastShot = Date.now();
           const id = (++projectileIdCounter).toString();
           const proj = new Projectile(
             id,
@@ -3120,7 +3326,7 @@ wss.on('connection', (ws, req) => {
           );
           projectiles.set(id, proj);
           log(
-            `[SHOT_START] id=${proj.id} player=${proj.playerId} slot=${proj.shotSlot}` +
+            `[shotBegin] id=${proj.id} player=${proj.playerId} slot=${proj.shotSlot}` +
             ` pos=${formatShotPoint(proj.x, proj.y, proj.z)}` +
             ` dir=(${proj.dirX.toFixed(4)},${proj.dirY.toFixed(4)},${proj.dirZ.toFixed(4)})`
           );
@@ -3201,7 +3407,7 @@ wss.on('connection', (ws, req) => {
           player.joined = true;
           player.voiceRosterSignature = '';
           player.health = 100;
-          const spawnPos = findValidSpawnPosition();
+          const spawnPos = getTestSpawn(player.name) || findValidSpawnPosition();
           player.x = spawnPos.x;
           player.y = spawnPos.y
           player.z = spawnPos.z;

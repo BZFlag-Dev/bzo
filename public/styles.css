@@ -26,6 +26,8 @@ html, body {
   --color-fg: #fff;
   --color-accent: #4CAF50;
   --color-accent-light: #66bb6a;
+  --color-state-on: #66bb6a;
+  --color-state-off: #e57373;
   --color-btn-bg: rgba(76,175,80,0.15);
   --color-btn-bg-active: #4CAF50;
   --color-btn-bg-hover: rgba(76,175,80,0.35);
@@ -1335,6 +1337,16 @@ canvas {
 
 .settingsMenuRow.active .settingsMenuValue {
   color: var(--color-fg);
+}
+
+/* On and Off read as state, not as decoration, so they are the only values that
+   get a colour. Set after the .active rule so an enabled toggle stays green. */
+.settingsMenuRow[data-menu-state="off"] .settingsMenuValue {
+  color: var(--color-state-off);
+}
+
+.settingsMenuRow[data-menu-state="on"] .settingsMenuValue {
+  color: var(--color-state-on);
 }
 
 @media (max-width: 600px) {

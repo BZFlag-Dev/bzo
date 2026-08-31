@@ -746,6 +746,11 @@ function getSettingsMenuValue(id, item) {
   }
   if (id === 'fullscreenBtn') return document.fullscreenElement ? 'On' : 'Off';
   if (id === 'wireframeBtn') return wireframeEnabled ? 'On' : 'Off';
+  if (id === 'installBtn') {
+    const state = item.button.dataset.installState;
+    if (state === 'installed') return 'Installed';
+    return state === 'available' ? 'Install' : 'Unavailable';
+  }
   if (id === 'xrBtn') {
     if (item.button.disabled) return 'Unavailable';
     return /exit/i.test(item.button.title) ? 'Exit VR' : 'Enter VR';
@@ -770,6 +775,12 @@ export function getXRSettingsMenuItems() {
       })),
     { id: 'closeXRMenu', label: 'Close', value: '' },
   ];
+}
+
+// Capabilities can appear after the menu is built -- the browser decides when a
+// page becomes installable -- so the owning module refreshes the row itself.
+export function refreshSettingsMenu() {
+  settingsMenu?.refresh();
 }
 
 export function activateXRSettingsMenuItem(id) {
@@ -891,65 +902,68 @@ export function hideHelpPanel() {
   }
 }
 
-function toggleFullscreen() {
-  const isFullscreen = document.fullscreenElement ||
-                       document.webkitFullscreenElement ||
-                       document.mozFullScreenElement;
+function isFullscreenActive() {
+  return document.fullscreenElement ||
+         document.webkitFullscreenElement ||
+         document.mozFullScreenElement;
+}
 
-  // Detect iOS (Chrome, Safari, etc.)
+function enterFullscreen() {
+  // iOS has no Fullscreen API in Safari; installing the app is the only way to
+  // lose the browser chrome there.
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  const isStandalone = window.navigator.standalone === true;
+  if (isIOS && window.navigator.standalone !== true) {
+    hudContext.pushChatMessage('💡 iOS: Use "Share" → "Add to Home Screen" for fullscreen');
+    hudContext.updateChatWindow();
+    return false;
+  }
 
-  if (!isFullscreen) {
-    // On iOS, show message about adding to home screen
-    if (isIOS && !isStandalone) {
-      hudContext.pushChatMessage('💡 iOS: Use "Share" → "Add to Home Screen" for fullscreen');
-      hudContext.updateChatWindow();
-      return;
-    }
+  const elem = document.documentElement;
+  const request = elem.requestFullscreen ||
+                 elem.webkitRequestFullscreen ||
+                 elem.webkitEnterFullscreen ||
+                 elem.mozRequestFullScreen;
 
-    // Request fullscreen
-    const elem = document.documentElement;
-    const request = elem.requestFullscreen ||
-                   elem.webkitRequestFullscreen ||
-                   elem.webkitEnterFullscreen ||
-                   elem.mozRequestFullScreen;
+  if (!request) {
+    hudContext.pushChatMessage('⚠️ Fullscreen not supported');
+    hudContext.updateChatWindow();
+    return false;
+  }
 
-    if (request) {
-      try {
-        if (request === elem.webkitEnterFullscreen) {
-          // Older webkit
-          request.call(elem);
-        } else if (request === elem.webkitRequestFullscreen) {
-          // Older webkit with keyboard input
-          request.call(elem, Element.ALLOW_KEYBOARD_INPUT);
-        } else {
-          // Standard fullscreen
-          request.call(elem);
-        }
-      } catch (e) {
-        console.warn('Fullscreen request failed:', e);
-        hudContext.pushChatMessage('⚠️ Fullscreen not supported');
-        hudContext.updateChatWindow();
-      }
+  try {
+    if (request === elem.webkitRequestFullscreen) {
+      request.call(elem, Element.ALLOW_KEYBOARD_INPUT);
     } else {
-      hudContext.pushChatMessage('⚠️ Fullscreen not supported');
-      hudContext.updateChatWindow();
+      request.call(elem);
     }
-  } else {
-    // Exit fullscreen
-    const exit = document.exitFullscreen ||
-               document.webkitExitFullscreen ||
-               document.webkitCancelFullScreen ||
-               document.mozCancelFullScreen;
+    return true;
+  } catch (e) {
+    console.warn('Fullscreen request failed:', e);
+    hudContext.pushChatMessage('⚠️ Fullscreen not supported');
+    hudContext.updateChatWindow();
+    return false;
+  }
+}
 
-    if (exit) {
-      try {
-        exit.call(document);
-      } catch (e) {
-        console.warn('Fullscreen exit failed:', e);
-      }
-    }
+function leaveFullscreen() {
+  const exit = document.exitFullscreen ||
+             document.webkitExitFullscreen ||
+             document.webkitCancelFullScreen ||
+             document.mozCancelFullScreen;
+
+  if (!exit) return;
+  try {
+    exit.call(document);
+  } catch (e) {
+    console.warn('Fullscreen exit failed:', e);
+  }
+}
+
+function toggleFullscreen() {
+  if (isFullscreenActive()) {
+    leaveFullscreen();
+  } else {
+    enterFullscreen();
   }
 
   setTimeout(() => {
@@ -958,6 +972,40 @@ function toggleFullscreen() {
     hudContext.updateChatWindow();
   }, 200);
   setTimeout(refreshHudButtons, 100);
+}
+
+// BZFlag remembers the player's display preference between runs. Track the real
+// fullscreen state rather than the toggle, so leaving with Escape is remembered
+// too. F11 is browser chrome rather than the Fullscreen API and does not reach
+// this event, which is correct: it is not a preference the game set.
+function rememberFullscreenPreference() {
+  try {
+    localStorage.setItem('fullscreenEnabled', isFullscreenActive() ? 'true' : 'false');
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+// Fullscreen cannot be entered on load: browsers require transient user
+// activation, and no manifest setting overrides that. Restoring on the first
+// gesture -- typing a name, clicking Join -- is the closest thing to starting
+// fullscreen that a web app is allowed.
+function restoreFullscreenOnFirstGesture() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem('fullscreenEnabled');
+  } catch {
+    /* ignore storage errors */
+  }
+  if (saved !== 'true') return;
+
+  const restore = () => {
+    window.removeEventListener('pointerdown', restore);
+    window.removeEventListener('keydown', restore);
+    if (!isFullscreenActive()) enterFullscreen();
+  };
+  window.addEventListener('pointerdown', restore);
+  window.addEventListener('keydown', restore);
 }
 
 function cameraModeLabel(mode) {
@@ -1048,6 +1096,15 @@ export function toggleOperatorPanel() {
     window._operatorMapReqId = requestId;
   }
   updateOperatorBtn();
+}
+
+// A click outside an open dialog dismisses it. The entry dialog is excluded:
+// it is the join prompt, not something a stray click should cancel.
+export function dismissDialogFromOutsideClick(target) {
+  const visibleDialog = getVisibleDialogRoot();
+  if (!visibleDialog || visibleDialog.id === 'entryDialog') return false;
+  if (visibleDialog.contains(target)) return false;
+  return dismissVisibleDialog(visibleDialog.id);
 }
 
 export function syncInputContextFromUi() {
@@ -1349,6 +1406,11 @@ function bindHudElements() {
   } catch {
     /* ignore storage errors */
   }
+  document.addEventListener('fullscreenchange', () => {
+    rememberFullscreenPreference();
+    refreshHudButtons();
+  });
+  restoreFullscreenOnFirstGesture();
 
   updateSettingsBtn();
   updateHelpBtn();

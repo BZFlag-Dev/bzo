@@ -5,8 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="true">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Battlezone Online">
   <title>Battlezone Online</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#cc0000">
+  <meta name="description" content="Web based BZFlag like 3D multiplayer tank game, Battlezone Online">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" sizes="48x48" href="favicon.ico">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -61,6 +68,7 @@
         <button id="virtualControlsBtn" class="settingsHudBtn">Virtual Controls</button>
         <button id="mouseBtn" class="settingsHudBtn">Mouse Mode</button>
         <button id="fullscreenBtn" class="settingsHudBtn">Fullscreen</button>
+        <button id="installBtn" class="settingsHudBtn" title="Install as an app">Install</button>
         <button id="debugBtn" class="settingsHudBtn">Debug</button>
         <button id="debugGeometryBtn" class="settingsHudBtn" title="Show Debug Geometry">Debug Geometry</button>
         <button id="debugLabelsBtn" class="settingsHudBtn">Debug Labels</button>
@@ -281,8 +289,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+        "three": "/vendor/three/three.module.js",
+        "three/addons/": "/vendor/three/addons/"
       }
     }
   </script>
