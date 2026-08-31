@@ -104,10 +104,6 @@ export function preflightHeadsetLaunch() {
   attemptLaunchSession('load start');
 }
 
-export function hasLaunchSession() {
-  return Boolean(pendingLaunchSession);
-}
-
 async function takePendingLaunchSession() {
   if (!pendingLaunchSession) return null;
   const session = await pendingLaunchSession;

@@ -302,8 +302,16 @@ through the `soundFiles[]` table in `src/bzflag/sound.cxx`.
   Handler; `startXRSession` adopts whichever session results. Read
   `server.log` for the `Launch session:` line, which names the signal and the
   activation state at the time. Do not move that request into the client's own
-  startup, and do not remove the first-click fallback until a launch is seen to
-  grant one.
+  startup. When every signal is refused the player enters VR from the button,
+  which is the whole fallback: **do not add one that reads a click on the page
+  as a request for VR.** The flat window is a legitimate place to be -- chat,
+  settings, a name typed on a real keyboard -- and the canvas covers most of it,
+  so such a fallback fires on clicks meant for the game.
+- **Leaving VR must not close the window.** An app launched from a headset icon
+  has little use for the flat window behind the session, but a player asking to
+  leave VR is asking for that window, not to quit. Nothing distinguishes the
+  headset ending a session from the player ending one, so closing on either quit
+  the app out from under Exit VR.
 - **Text entry is the headset's system keyboard.** Focusing a DOM text field
   during a session raises it where the runtime offers one (`isSystemKeyboardSupported`,
   Quest Browser 26.1+). `#xrTextInput` exists to receive that focus, because a

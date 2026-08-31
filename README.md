@@ -245,10 +245,8 @@ A headset browser launching the installed app tries to enter VR with no 2D
 landing page. `xr-launch.js` asks for the session before the rest of the client
 loads, and keeps asking on each signal that could carry the user activation an
 immersive session needs -- window load, focus, page show, visibility change, and
-the Launch Handler -- with the renderer picking up whichever session results. If
-none of them lands, the first click in the flat window enters VR instead. Leaving VR closes that window, since the app was
-launched for VR and nothing behind the session is worth keeping. Everywhere else
-VR Mode starts from the button.
+the Launch Handler -- with the renderer picking up whichever session results.
+Where none of them lands, and everywhere else, VR Mode starts from the button.
 
 A saved name joins immediately, and without one the XR menu opens on a Join
 screen carrying the same name, team, and tank choices as the 2D entry dialog, so

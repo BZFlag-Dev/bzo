@@ -6,6 +6,10 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+### Removed
+- Clicking the page no longer enters VR when a headset launch could not open the session on its own. The canvas covers most of the window, so a click meant for the game put the player in VR uninvited, and the VR button was already there for anyone who wanted it.
+- Leaving VR no longer closes the window on a headset launch. It could not tell a player asking to leave VR from the headset ending the session, so Exit VR quit the app.
+
 ## [1.0.41] - 2026-08-31
 
 ### Added

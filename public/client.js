@@ -104,7 +104,6 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import {
   initXR,
-  hasLaunchSession,
   isHeadsetAppLaunch,
   isHeadsetDevice,
   isSystemKeyboardSupported,
@@ -2444,13 +2443,6 @@ window.addEventListener('DOMContentLoaded', () => {
     document.getElementById('xrTextInput')?.blur();
     xrSettingsShortcutLatched = false;
     setXRButtonState(false);
-    // An app launched from a headset icon has no useful window behind the
-    // session, so leaving VR leaves the app rather than stranding a flat
-    // window on the headset's desktop.
-    if (isHeadsetAppLaunch()) {
-      window.close();
-      return;
-    }
     // A player who left XR before joining needs the dialog they never saw.
     if (!gameplayJoinConfirmed && isDefaultPlayerName(myPlayerName) && !isEntryDialogOpen()) {
       toggleEntryDialog(myPlayerName);
@@ -2520,12 +2512,7 @@ window.addEventListener('DOMContentLoaded', () => {
         window.addEventListener(XR_LAUNCH_SESSION_EVENT, () => {
           void toggleXRFromUi({ announceFailure: false });
         });
-        toggleXRFromUi({ announceFailure: false }).then((entered) => {
-          // A session granted while that attempt was in flight has no event
-          // left to announce it.
-          if (entered || hasLaunchSession()) return;
-          enterXROnFirstGesture(toggleXRFromUi);
-        });
+        void toggleXRFromUi({ announceFailure: false });
       }
     }
   });
@@ -6942,19 +6929,6 @@ function adjustXRSettingsMenuItem(item, direction) {
 function getDisplayMode() {
   const modes = ['fullscreen', 'standalone', 'minimal-ui', 'browser'];
   return modes.find((mode) => window.matchMedia(`(display-mode: ${mode})`).matches) || 'unknown';
-}
-
-// The launch did not carry the activation an immersive session needs, so the
-// player's own first click has to. Clicks meant for a control are left alone:
-// reaching for the name field is not a request to put the headset on.
-function enterXROnFirstGesture(enterXR) {
-  showMessage('Click anywhere to enter VR');
-  const handler = (event) => {
-    if (event.target?.closest?.('button, input, select, a, label')) return;
-    window.removeEventListener('pointerdown', handler, true);
-    void enterXR();
-  };
-  window.addEventListener('pointerdown', handler, true);
 }
 
 // Opened in place of the 2D entry dialog, which a headset player cannot see.

@@ -28,9 +28,9 @@ or deployment configuration.
   from its icon and confirm that it opens in VR without touching a button.
   `server.log` records the outcome as `Launch session: granted` or `refused`.
 - Reload the page in the installed app and confirm that the refused request
-  leaves the game playable, with the first click entering VR.
-- Leave VR in the installed app and confirm the window closes rather than
-  staying on the headset's desktop.
+  leaves the game playable in 2D, and that clicking the page does not enter VR.
+- Leave VR in the installed app and confirm the flat window is still there and
+  still playable.
 - Clear the saved name, launch the installed app again, and confirm that the
   session starts and the menu opens on Join Game rather than on Settings.
 - From Join Game, activate Name and confirm the system keyboard appears, that
