@@ -12,6 +12,7 @@ export const SETTINGS_MENU_ITEMS = Object.freeze([
   { id: 'mouseBtn', label: 'Mouse Control', kind: 'toggle' },
   { id: 'virtualControlsBtn', label: 'Virtual Controls', kind: 'toggle' },
   { id: 'fullscreenBtn', label: 'Fullscreen', kind: 'toggle' },
+  { id: 'installBtn', label: 'Install App', kind: 'action' },
   { id: 'debugBtn', label: 'Debug HUD', kind: 'toggle' },
   { id: 'debugGeometryBtn', label: 'Debug Geometry', kind: 'toggle' },
   { id: 'debugLabelsBtn', label: 'Debug Labels', kind: 'toggle' },
@@ -74,7 +75,14 @@ export function initSettingsMenu({ root, getValue }) {
       const { label, value } = ensureRowContent(item.control);
       label.textContent = item.label;
       value.textContent = currentValue ?? defaultValue(item);
-      item.control.setAttribute('aria-label', value.textContent ? `${item.label}: ${value.textContent}` : item.label);
+      // Only On/Off rows carry a state colour. Rows that read "Open >", "Long"
+      // or "First Person" are not on or off, so they keep the neutral styling.
+      if (value.textContent === 'On' || value.textContent === 'Off') {
+        item.button.dataset.menuState = value.textContent.toLowerCase();
+      } else {
+        delete item.button.dataset.menuState;
+      }
+      item.button.setAttribute('aria-label', value.textContent ? `${item.label}: ${value.textContent}` : item.label);
     });
   };
 

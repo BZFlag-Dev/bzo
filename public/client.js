@@ -81,6 +81,8 @@ import {
   activateXRSettingsMenuItem,
   closeSettingsDialog,
   getXRSettingsMenuItems,
+  dismissDialogFromOutsideClick,
+  refreshSettingsMenu,
   registerGameplayInputReset,
   setGameplayKeyState,
   setInputContext,
@@ -122,14 +124,30 @@ import {
 import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shot-limits.mjs';
 import { CLIENT_VERSION } from './version.mjs';
+import { getSoundPaths } from './audio.js';
+import { setupInstallPrompt } from './install.js';
 import {
   getColliderLocalPoint,
+  getOrigRectNormal,
   getPyramidHeight,
+  getTankLocalAngle,
+  pyramidShrinkFactor,
   getPyramidFaceLocalNormal,
   getPyramidSurfaceLocalHeight,
   isWithinPyramidFootprint,
-  pyramidIntersectsCylinder,
+  pyramidIntersectsTank,
+  testOrigRectTank,
 } from './collision-geometry.mjs';
+import { resolveTankMotion } from './tank-motion.mjs';
+
+// Register the service worker that makes the game installable and serves its
+// assets from disk. The version rides in the script URL, so a release changes
+// the worker's identity and forces a fresh install of its cache.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register(`/sw.js?v=${CLIENT_VERSION}`).catch(() => {});
+  });
+}
 
 // FPS
 let fps = 0;
@@ -655,10 +673,11 @@ async function prepareInitialRender(message, sequenceId) {
     '/textures/mountain3.png',
     '/textures/mountain4.png',
     '/textures/mountain5.png',
+    '/textures/blend_flash.png',
+    '/textures/dusty_flare.png',
+    '/textures/jumpjets.png',
   ];
-  const audioPaths = [
-    '/teleport.wav',
-  ];
+  const audioPaths = getSoundPaths();
 
   setLoadingOverlayState({
     visible: true,
@@ -1476,16 +1495,10 @@ const AIR_VELOCITY_THRESHOLD = 0.35; // Send if airborne horizontal velocity cha
 const MAX_UPDATE_INTERVAL = 5000; // Force update every 5 seconds
 const DEAD_STICK_STOP_THRESHOLD = 0.03; // Force an update when ground motion settles to near-zero
 const MAX_REMOTE_EXTRAPOLATION_STOP_SECONDS = 0.3; // Short horizon only when replicated state is fully stopped
-const BOX_SLIDE_EPSILON = 0.01;
-const BOX_SLIDE_AXIS_EPSILON = 1e-5;
-const BOX_SLIDE_TIE_EPSILON = 1e-4;
-const BOX_SLIDE_MAX_CHAIN_DEPTH = 1;
 const CLIMBABLE_SURFACE_NORMAL_Y = 0.7;
 const MAX_BUMP_HEIGHT = 0.165;
 const ONTOP_TOLERANCE = 0.1;
 const SUPPORT_SNAP_DOWN = 0.2;
-const SUPPORT_ACQUIRE_MARGIN = 0.05;
-const SUPPORT_RETAIN_MARGIN = 2;
 const CORNER_STICK_MIN_INTENT = 0.2;
 const CORNER_STICK_MAX_PROGRESS = 0.08;
 const CORNER_STICK_FRAMES = 3;
@@ -2721,6 +2734,10 @@ function init() {
   // Mouse click to shoot (or enable mouse controls on first click)
   let justActivatedMouseControl = false;
   document.addEventListener('mousedown', (e) => {
+    // A click outside an open dialog closes it and is consumed here, so it never
+    // reaches the tank. The click after that one is an ordinary gameplay click.
+    if (dismissDialogFromOutsideClick(e.target)) return;
+
     if (!isGameplayInputActive()) return;
     // Only block mouse actions if the click is on the chat input itself
     if (e.target === chatInput) return;
@@ -2734,13 +2751,12 @@ function init() {
       return;
     }
 
-    // Prevent firing if clicking on HUD elements and not in mouse mode
-    const hudSelectors = ['#playerName', '#mouseBtn', '#fullscreenBtn', '#debugBtn', '#cameraBtn', '#helpBtn'];
-    for (const sel of hudSelectors) {
-      const el = document.querySelector(sel);
-      if (el && (e.target === el || el.contains(e.target))) {
-        if (!mouseControlEnabled) return;
-      }
+    // Anything clickable in the HUD is chrome, not the battlefield. Matching on
+    // the control itself rather than a list of ids means a button added later is
+    // covered without touching this, and it holds in mouse mode too: pressing
+    // Settings should never also fire the tank.
+    if (e.target.closest && e.target.closest('button, a, input, select, textarea, #playerName')) {
+      return;
     }
 
     if (chatActive || document.activeElement === chatInput) return;
@@ -2801,6 +2817,8 @@ function init() {
       }
     });
   }
+
+  setupInstallPrompt(document.getElementById('installBtn'), refreshSettingsMenu);
 
   // Connect to server
   connectToServer();
@@ -3173,6 +3191,7 @@ function handleServerMessage(message) {
         if (oldVerticalVel <= 0 && message.vv > 10) {
           tank.userData.jumpDirection = message.r;
           renderManager.playLocalJumpSound(tank.position);
+          renderManager.fireTankJumpJets(tank);
         }
 
         // Detect fall start (drove off edge - record direction for air physics)
@@ -3859,7 +3878,10 @@ function rebuildTeleporterRuntimeState() {
 }
 
 // Returns: null, { type: 'collision', obstacle }, or { type: 'ontop', obstacle }
-function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
+// The occupant is BZFlag's oriented 2.8 x 6.0 tank box (Obstacle::inBox). Every
+// call here is for the local player, so the heading defaults to theirs: a call
+// site that silently fell back to a circle would disagree with the server.
+function checkCollision(x, y, z, ignoredObstacles = null, rotation = playerRotation) {
   let ontopCollision = null;
   for (const obs of getCollisionColliders()) {
     if (ignoredObstacles && ignoredObstacles.has(obs)) continue;
@@ -3871,7 +3893,10 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
     const halfW = obs.w / 2;
     const halfD = obs.d / 2;
     const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
-    const { distSquared } = getBoxCollisionDistanceSquared(localX, localZ, halfW, halfD);
+    const tankAngle = getTankLocalAngle(rotation, obs.rotation);
+    const hitsRect = (rectHalfW, rectHalfD) =>
+      testOrigRectTank(rectHalfW, rectHalfD, localX, localZ, tankAngle);
+    const overlapsFootprint = hitsRect(halfW, halfD);
 
     const pyramidSurface = obs.type === 'pyramid' ? getPyramidSurfaceContact(obs, x, y, z) : null;
 
@@ -3880,7 +3905,7 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
       if (pyramidSurface && pyramidSurface.supportable && Math.abs(y - pyramidSurface.supportSurfaceY) < ONTOP_TOLERANCE) {
         ontopCollision = { type: 'ontop', obstacle: obs, obstacleTop: pyramidSurface.supportSurfaceY, surfaceNormal: pyramidSurface.normal };
       }
-    } else if (Math.abs(y - obstacleTop) < ONTOP_TOLERANCE && distSquared < tankRadius * tankRadius) {
+    } else if (Math.abs(y - obstacleTop) < ONTOP_TOLERANCE && overlapsFootprint) {
       ontopCollision = { type: 'ontop', obstacle: obs, obstacleTop };
     }
 
@@ -3894,24 +3919,23 @@ function checkCollision(x, y, z, tankRadius = 2, ignoredObstacles = null) {
       // be pass-through so client movement does not slide before teleport.
       if (obs?.kind === 'teleporter') {
         const dims = getShotTeleporterDims(obs);
-        const outerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.halfD).distSquared;
-        if (outerDistSquared < tankRadius * tankRadius) {
-          const innerDistSquared = getBoxCollisionDistanceSquared(localX, localZ, dims.halfW, dims.activeHalfD).distSquared;
+        if (hitsRect(dims.halfW, dims.halfD)) {
           const activeBaseY = obstacleBase;
           const activeTopY = obstacleBase + dims.activeH;
           const overlapsActiveVertical = tankTop > (activeBaseY + epsilon) && y < (activeTopY - epsilon);
-          const inPortalInterior = overlapsActiveVertical && innerDistSquared < tankRadius * tankRadius;
+          const inPortalInterior = overlapsActiveVertical
+            && hitsRect(dims.halfW, dims.activeHalfD);
           if (!inPortalInterior) {
             return { type: 'collision', obstacle: obs };
           }
         }
-      } else if (distSquared < tankRadius * tankRadius) {
+      } else if (overlapsFootprint) {
         return { type: 'collision', obstacle: obs };
       }
     } else if (obs.type === 'pyramid') {
       // Mirrors BZFlag PyramidBuilding::inBox via the shared geometry module,
       // so the server evaluates the same solid volume the client moves through.
-      if (pyramidIntersectsCylinder(obs, x, y, z, tankRadius, tankHeight)) {
+      if (pyramidIntersectsTank(obs, x, y, z, rotation, tankHeight)) {
         return { type: 'collision', obstacle: obs };
       }
     }
@@ -3952,7 +3976,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     }
     const rise = surfaceY - y;
     if (rise <= 0 || rise > MAX_BUMP_HEIGHT) return null;
-    const steppedCollision = checkCollision(newX, surfaceY, newZ, tankRadius);
+    const steppedCollision = checkCollision(newX, surfaceY, newZ);
     if (!steppedCollision) {
       return { x: newX, y: surfaceY, z: newZ, collision: null };
     }
@@ -3983,7 +4007,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const nearTopBand = y >= topY - MAX_BUMP_HEIGHT && y <= topY + 1;
     if (!nearTopBand || intendedDeltaY > 0) return null;
 
-    if (isWithinSupportFootprint(obs, newX, topY, newZ, SUPPORT_ACQUIRE_MARGIN)) {
+    if (isWithinSupportFootprint(obs, newX, topY, newZ)) {
       return {
         x: newX,
         y: topY,
@@ -3995,7 +4019,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
       };
     }
 
-    const collisionWithoutBox = checkCollision(newX, candidateY, newZ, tankRadius, new Set([obs]));
+    const collisionWithoutBox = checkCollision(newX, candidateY, newZ, new Set([obs]));
     if (!collisionWithoutBox) {
       return {
         x: newX,
@@ -4047,7 +4071,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
     const escapeWorldZ = -escapeLocalX * sin + escapeLocalZ * cos;
     const escapeX = resultX + escapeWorldX;
     const escapeZ = resultZ + escapeWorldZ;
-    const escapeCollision = checkCollision(escapeX, candidateY, escapeZ, tankRadius);
+    const escapeCollision = checkCollision(escapeX, candidateY, escapeZ);
     if (escapeCollision && escapeCollision.type !== 'ontop') return null;
     return { x: escapeX, z: escapeZ };
   };
@@ -4076,7 +4100,7 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
 
   // Try full movement first
   const currentSupport = y > 0 ? findSupportSurface(x, y, z) : null;
-  let collisionObj = checkCollision(newX, candidateY, newZ, tankRadius);
+  let collisionObj = checkCollision(newX, candidateY, newZ);
 
 
   if (
@@ -4090,7 +4114,6 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
       newX,
       candidateY,
       newZ,
-      tankRadius,
       new Set([currentSupport.obstacle])
     );
 
@@ -4202,8 +4225,8 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
 
   // If we hit a collision while moving upward (jumping into obstacle bottom), start falling
   if (collisionObj && collisionObj.type === 'collision' && intendedDeltaY > 0) {
-    const horizontalOnlyCollision = checkCollision(newX, y, newZ, tankRadius);
-    const verticalOnlyCollision = checkCollision(x, candidateY, z, tankRadius);
+    const horizontalOnlyCollision = checkCollision(newX, y, newZ);
+    const verticalOnlyCollision = checkCollision(x, candidateY, z);
 
     if (verticalOnlyCollision && (!horizontalOnlyCollision || horizontalOnlyCollision.type === 'ontop')) {
       // Hit obstacle bottom while jumping - immediately start falling
@@ -4261,17 +4284,8 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   }
 
   const surfaceContact = getSurfaceContact(collisionObj.obstacle, newX, newY, newZ, tankRadius);
-  const surfaceSlideResult = resolveSurfaceSlide(
-    collisionObj.obstacle,
-    surfaceContact,
-    x,
-    y,
-    z,
-    intendedDeltaX,
-    intendedDeltaY,
-    intendedDeltaZ,
-    candidateY,
-    tankRadius
+  const surfaceSlideResult = resolveMotionSlide(
+    collisionObj.obstacle, x, y, z, intendedDeltaX, intendedDeltaZ, candidateY
   );
   if (surfaceSlideResult) {
     if (surfaceSlideResult.faceCenter) {
@@ -4361,339 +4375,67 @@ function validateMove(x, y, z, intendedDeltaX, intendedDeltaY, intendedDeltaZ, t
   return { x, y, z, moved: false, altered: false, landedOn: null, landedType: null };
 }
 
-function resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius = 2, visitedObstacles = new Set(), depth = 0) {
-  const rotation = obs.rotation || 0;
-  const cos = Math.cos(rotation);
-  const sin = Math.sin(rotation);
-  const halfW = obs.w / 2 + tankRadius;
-  const halfD = obs.d / 2 + tankRadius;
-  const visualHalfW = obs.w / 2;
-  const visualHalfD = obs.d / 2;
-  const nextVisited = new Set(visitedObstacles);
-  nextVisited.add(obs);
-  const getCompositeCenter = (targetObs) => {
-    let sumX = 0;
-    let sumZ = 0;
-    let count = 0;
-    for (const candidate of OBSTACLES) {
-      if ((candidate.type || 'box') !== 'box') continue;
-      if (Math.abs((candidate.baseY || 0) - (targetObs.baseY || 0)) > 0.01) continue;
-      if (Math.abs((candidate.h || 4) - (targetObs.h || 4)) > 0.01) continue;
-      if (Math.abs(candidate.x - targetObs.x) > 0.5) continue;
-      if (Math.abs(candidate.z - targetObs.z) > 0.5) continue;
-      sumX += candidate.x;
-      sumZ += candidate.z;
-      count += 1;
-    }
-    if (count === 0) {
-      return { x: targetObs.x, z: targetObs.z };
-    }
-    return { x: sumX / count, z: sumZ / count };
-  };
-  const compositeCenter = getCompositeCenter(obs);
 
-  const worldToLocalPoint = (px, pz) => {
-    const dx = px - obs.x;
-    const dz = pz - obs.z;
-    return {
-      x: dx * cos - dz * sin,
-      z: dx * sin + dz * cos
-    };
-  };
-  const worldToLocalVector = (vx, vz) => ({
-    x: vx * cos - vz * sin,
-    z: vx * sin + vz * cos
-  });
-  const localToWorldPoint = (lx, lz) => ({
-    x: obs.x + lx * cos + lz * sin,
-    z: obs.z - lx * sin + lz * cos
-  });
-  const localToWorldVector = (lx, lz) => ({
-    x: lx * cos + lz * sin,
-    z: -lx * sin + lz * cos
-  });
+// Box sliding, using BZFlag's motion resolution: advance, binary-search the
+// timestep for the last clear moment, cancel the velocity component along the
+// hit normal, slide with what is left. This asks only "is the tank clear here",
+// so it works with the oriented tank box, which no obstacle expansion can.
+function resolveMotionSlide(obs, x, y, z, deltaX, deltaZ, candidateY) {
+  // BZFlag does not branch on obstacle type when resolving motion; it asks the
+  // obstacle for its normal. PyramidBuilding::getNormal is the same rect normal
+  // as a box, taken against the cross-section at the tank's height, so a pyramid
+  // slides by the same code -- the sloped face just contributes a Y component,
+  // which resolveTankMotion already handles.
+  const worldNormal = (obstacle, px, py, pz) => {
+    const c = Math.cos(obstacle.rotation || 0);
+    const sn = Math.sin(obstacle.rotation || 0);
+    const toWorld = (nx, nz) => ({ x: nx * c + nz * sn, z: -nx * sn + nz * c });
 
-  const from = worldToLocalPoint(x, z);
-  const delta = worldToLocalVector(deltaX, deltaZ);
-
-  const sweepAxis = (fromCoord, deltaCoord, min, max) => {
-    if (Math.abs(deltaCoord) < 1e-8) {
-      return {
-        ok: fromCoord >= min && fromCoord <= max,
-        enter: -Infinity,
-        exit: Infinity
-      };
-    }
-    const invDelta = 1 / deltaCoord;
-    let t1 = (min - fromCoord) * invDelta;
-    let t2 = (max - fromCoord) * invDelta;
-    if (t1 > t2) [t1, t2] = [t2, t1];
-    return { ok: true, enter: t1, exit: t2 };
-  };
-
-  const xSweep = sweepAxis(from.x, delta.x, -halfW, halfW);
-  const zSweep = sweepAxis(from.z, delta.z, -halfD, halfD);
-  if (!xSweep.ok || !zSweep.ok) {
-    return null;
-  }
-
-  const tMin = Math.max(0, xSweep.enter, zSweep.enter);
-  const tMax = Math.min(1, xSweep.exit, zSweep.exit);
-  if (tMin > tMax) {
-    return null;
-  }
-
-  const candidateAxes = [];
-  if (Math.abs(xSweep.enter - tMin) < BOX_SLIDE_AXIS_EPSILON) candidateAxes.push('x');
-  if (Math.abs(zSweep.enter - tMin) < BOX_SLIDE_AXIS_EPSILON) candidateAxes.push('z');
-  if (candidateAxes.length === 0) {
-    candidateAxes.push(Math.abs(delta.x) >= Math.abs(delta.z) ? 'x' : 'z');
-  }
-
-  const hitT = Math.max(0, Math.min(1, tMin));
-  const getCornerEscapeSquared = (localPoint) => {
-    const corners = [
-      { x: -halfW, z: -halfD },
-      { x: -halfW, z: halfD },
-      { x: halfW, z: -halfD },
-      { x: halfW, z: halfD }
-    ];
-    let best = Infinity;
-    for (const corner of corners) {
-      const dx = localPoint.x - corner.x;
-      const dz = localPoint.z - corner.z;
-      const distSquared = dx * dx + dz * dz;
-      if (distSquared < best) best = distSquared;
-    }
-    return best;
-  };
-  const buildAxisResult = (axis) => {
-    const hitPoint = {
-      x: from.x + delta.x * hitT,
-      z: from.z + delta.z * hitT
-    };
-    const normalLocal = { x: 0, z: 0 };
-    const slideLocal = { x: 0, z: 0 };
-
-    if (axis === 'x') {
-      normalLocal.x = delta.x > 0 ? -1 : 1;
-      slideLocal.z = delta.z * (1 - hitT);
-      hitPoint.x = normalLocal.x > 0 ? halfW + BOX_SLIDE_EPSILON : -halfW - BOX_SLIDE_EPSILON;
-    } else {
-      normalLocal.z = delta.z > 0 ? -1 : 1;
-      slideLocal.x = delta.x * (1 - hitT);
-      hitPoint.z = normalLocal.z > 0 ? halfD + BOX_SLIDE_EPSILON : -halfD - BOX_SLIDE_EPSILON;
-    }
-
-    const hitWorld = localToWorldPoint(hitPoint.x, hitPoint.z);
-    const faceCenterLocal = axis === 'x'
-      ? { x: normalLocal.x > 0 ? visualHalfW : -visualHalfW, z: 0 }
-      : { x: 0, z: normalLocal.z > 0 ? visualHalfD : -visualHalfD };
-    const faceCenterWorld = localToWorldPoint(faceCenterLocal.x, faceCenterLocal.z);
-    const finalLocal = {
-      x: hitPoint.x + slideLocal.x,
-      z: hitPoint.z + slideLocal.z
-    };
-    const finalWorld = localToWorldPoint(finalLocal.x, finalLocal.z);
-    const finalCollision = checkCollision(finalWorld.x, candidateY, finalWorld.z, tankRadius, nextVisited);
-    if (finalCollision && finalCollision.type !== 'ontop') {
-      const slideWorld = localToWorldVector(slideLocal.x, slideLocal.z);
-      if (
-        depth < BOX_SLIDE_MAX_CHAIN_DEPTH &&
-        finalCollision.obstacle &&
-        finalCollision.obstacle.type === 'box' &&
-        !nextVisited.has(finalCollision.obstacle) &&
-        (slideWorld.x * slideWorld.x + slideWorld.z * slideWorld.z) > BOX_SLIDE_AXIS_EPSILON
-      ) {
-        const chainedResult = resolveBoxSlide(
-          finalCollision.obstacle,
-          hitWorld.x,
-          hitWorld.z,
-          slideWorld.x,
-          slideWorld.z,
-          candidateY,
-          tankRadius,
-          nextVisited,
-          depth + 1
-        );
-        if (chainedResult) {
-          return {
-            x: chainedResult.x,
-            z: chainedResult.z,
-            normal: chainedResult.normal,
-            slideX: chainedResult.x - hitWorld.x,
-            slideZ: chainedResult.z - hitWorld.z,
-            collisionOnTop: chainedResult.collisionOnTop,
-            slideMagnitude: (chainedResult.x - x) * (chainedResult.x - x) + (chainedResult.z - z) * (chainedResult.z - z),
-            cornerEscapeSquared: getCornerEscapeSquared(hitPoint),
-            outwardScore: chainedResult.outwardScore,
-            faceCenter: chainedResult.faceCenter
-          };
-        }
+    if (obstacle.type === 'pyramid') {
+      const n = getPyramidFaceLocalNormal(obstacle, px, py, pz, 2);
+      if (n) {
+        const w = toWorld(n.x, n.z);
+        return { x: w.x, y: n.y || 0, z: w.z };
       }
-      const hitCollision = checkCollision(hitWorld.x, candidateY, hitWorld.z, tankRadius, nextVisited);
-      if (hitCollision && hitCollision.type !== 'ontop') {
-        return null;
-      }
-      const normalWorld = localToWorldVector(normalLocal.x, normalLocal.z);
-      return {
-        x: hitWorld.x,
-        z: hitWorld.z,
-        normal: normalWorld,
-      slideX: 0,
-        slideZ: 0,
-        collisionOnTop: hitCollision && hitCollision.type === 'ontop',
-        slideMagnitude: 0,
-        cornerEscapeSquared: getCornerEscapeSquared(hitPoint),
-        outwardScore: 0,
-        faceCenter: { x: faceCenterWorld.x, y: candidateY, z: faceCenterWorld.z, normal: normalWorld, name: obs.name }
-      };
     }
-
-    const slideWorld = localToWorldVector(slideLocal.x, slideLocal.z);
-    // A zero tangential component is a valid stop. During a jump this lets
-    // the vertical component continue after a perpendicular wall impact.
-    const normalWorld = localToWorldVector(normalLocal.x, normalLocal.z);
-    const outwardVectorX = finalWorld.x - compositeCenter.x;
-    const outwardVectorZ = finalWorld.z - compositeCenter.z;
-    const outwardScore = normalWorld.x * outwardVectorX + normalWorld.z * outwardVectorZ;
-    return {
-      x: finalWorld.x,
-      z: finalWorld.z,
-      normal: normalWorld,
-      slideX: slideWorld.x,
-      slideZ: slideWorld.z,
-      collisionOnTop: finalCollision && finalCollision.type === 'ontop',
-      slideMagnitude: slideWorld.x * slideWorld.x + slideWorld.z * slideWorld.z,
-      cornerEscapeSquared: getCornerEscapeSquared(finalLocal),
-      outwardScore,
-      faceCenter: { x: faceCenterWorld.x, y: candidateY, z: faceCenterWorld.z, normal: normalWorld, name: obs.name }
-    };
+    const local = getColliderLocalPoint(px, pz, obstacle);
+    const shrink = obstacle.type === 'pyramid' ? pyramidShrinkFactor(obstacle, py, 2) : 1;
+    const n = getOrigRectNormal(
+      (obstacle.w / 2) * shrink, (obstacle.d / 2) * shrink, local.x, local.z
+    );
+    const w = toWorld(n.x, n.z);
+    return { x: w.x, y: 0, z: w.z };
   };
 
-  let bestResult = null;
-  for (const axis of candidateAxes) {
-    const candidate = buildAxisResult(axis);
-    if (!candidate) continue;
-    if (
-      !bestResult ||
-      candidate.slideMagnitude > bestResult.slideMagnitude + BOX_SLIDE_TIE_EPSILON ||
-      (
-        Math.abs(candidate.slideMagnitude - bestResult.slideMagnitude) <= BOX_SLIDE_TIE_EPSILON &&
-        candidate.outwardScore > bestResult.outwardScore + BOX_SLIDE_TIE_EPSILON
-      ) ||
-      (
-        Math.abs(candidate.slideMagnitude - bestResult.slideMagnitude) <= BOX_SLIDE_TIE_EPSILON &&
-        Math.abs(candidate.outwardScore - bestResult.outwardScore) <= BOX_SLIDE_TIE_EPSILON &&
-        candidate.cornerEscapeSquared > bestResult.cornerEscapeSquared + BOX_SLIDE_TIE_EPSILON
-      )
-    ) {
-      bestResult = candidate;
-    }
-  }
-  return bestResult;
+  const result = resolveTankMotion({
+    x, y: candidateY, z, azimuth: playerRotation,
+    velocityX: deltaX, velocityY: 0, velocityZ: deltaZ,
+    angularVelocity: 0,
+    timeStep: 1,
+    groundLimit: 0,
+    onGround: y <= 0,
+    hitTest: (fx, fy, fz, fa, tx, ty, tz) => {
+      const hit = checkCollision(tx, ty, tz);
+      return hit && hit.type === 'collision' ? hit.obstacle : null;
+    },
+    getNormal: (obstacle, px, py, pz) => worldNormal(obstacle, px, py, pz),
+  });
+
+  const finalCollision = checkCollision(result.x, candidateY, result.z);
+  const normal = worldNormal(result.obstacle || obs, result.x, candidateY, result.z);
+  return {
+    x: result.x,
+    y: candidateY,
+    z: result.z,
+    normal,
+    slideX: result.x - x,
+    slideZ: result.z - z,
+    collisionOnTop: !!(finalCollision && finalCollision.type === 'ontop'),
+    traceStage: 'motion-slide',
+    faceCenter: null,
+  };
 }
 
-function resolveSurfaceSlide(obs, contact, x, y, z, deltaX, deltaY, deltaZ, candidateY, tankRadius = 2) {
-  if (obs && (obs.type === 'box' || !obs.type)) {
-    const boxSlideResult = resolveBoxSlide(obs, x, z, deltaX, deltaZ, candidateY, tankRadius);
-    if (boxSlideResult) {
-      return {
-        x: boxSlideResult.x,
-        y: candidateY,
-        z: boxSlideResult.z,
-        collisionOnTop: boxSlideResult.collisionOnTop,
-        normal: boxSlideResult.normal,
-        slideX: boxSlideResult.slideX,
-        slideZ: boxSlideResult.slideZ,
-        faceCenter: boxSlideResult.faceCenter,
-        traceStage: 'box-slide'
-      };
-    }
-
-    const verticalOnlyCollisionObj = checkCollision(x, candidateY, z, tankRadius);
-    const boxContact = getBoxSurfaceContact(obs, x + deltaX, z + deltaZ, tankRadius);
-    if (!verticalOnlyCollisionObj || verticalOnlyCollisionObj.type === 'ontop') {
-      return {
-        x,
-        y: verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop'
-          ? verticalOnlyCollisionObj.obstacleTop
-          : candidateY,
-        z,
-        collisionOnTop: Boolean(verticalOnlyCollisionObj && verticalOnlyCollisionObj.type === 'ontop'),
-        normal: null,
-        slideX: 0,
-        slideZ: 0,
-        faceCenter: boxContact ? boxContact.faceCenter : null,
-        traceStage: 'box-vertical-only'
-      };
-    }
-    return null;
-  }
-
-  if (!contact || !contact.normal) return null;
-
-  if (obs && obs.type === 'pyramid' && contact.climbable && contact.withinFootprint) {
-    const targetX = x + deltaX;
-    const targetZ = z + deltaZ;
-    const targetContact = getPyramidSurfaceContact(obs, targetX, y, targetZ);
-    if (targetContact && targetContact.climbable && targetContact.withinFootprint) {
-      const targetY = Math.max(0, targetContact.surfaceY);
-      const collisionWithoutPyramid = checkCollision(targetX, targetY, targetZ, tankRadius, new Set([obs]));
-      if (!collisionWithoutPyramid || collisionWithoutPyramid.type === 'ontop') {
-        return {
-          x: targetX,
-          y: collisionWithoutPyramid && collisionWithoutPyramid.type === 'ontop'
-            ? collisionWithoutPyramid.obstacleTop
-            : targetY,
-          z: targetZ,
-          collisionOnTop: true,
-          normal: { x: targetContact.normal.x, z: targetContact.normal.z },
-          slideX: deltaX,
-          slideZ: deltaZ,
-          faceCenter: targetContact.faceCenter || contact.faceCenter || null,
-          traceStage: 'surface-slide'
-        };
-      }
-    }
-  }
-
-  const normal = contact.normal;
-  const dot = deltaX * normal.x + deltaY * normal.y + deltaZ * normal.z;
-  const inwardDot = Math.min(dot, 0);
-  const slide = {
-    x: deltaX - normal.x * inwardDot,
-    y: deltaY - normal.y * inwardDot,
-    z: deltaZ - normal.z * inwardDot
-  };
-  const normalYAbs = Math.max(0.2, Math.abs(normal.y));
-  const penetrationOffset = contact.penetrationDepth
-    ? Math.min(4, (contact.penetrationDepth / normalYAbs) + 0.12)
-    : 0;
-
-  const tryMove = (offset = 0) => {
-    const targetX = x + slide.x + normal.x * offset;
-    const targetY = Math.max(0, y + slide.y + normal.y * offset);
-    const targetZ = z + slide.z + normal.z * offset;
-    const slideCollision = checkCollision(targetX, targetY, targetZ, tankRadius);
-    if (slideCollision && slideCollision.type !== 'ontop') {
-      return null;
-    }
-    return {
-      x: targetX,
-      y: slideCollision && slideCollision.type === 'ontop' ? slideCollision.obstacleTop : targetY,
-      z: targetZ,
-      collisionOnTop: slideCollision && slideCollision.type === 'ontop',
-      normal: { x: normal.x, z: normal.z },
-      slideX: slide.x,
-      slideZ: slide.z,
-      faceCenter: contact.faceCenter || null,
-      traceStage: 'surface-slide'
-    };
-  };
-
-  return tryMove(penetrationOffset) || tryMove(Math.max(0.08, penetrationOffset * 0.5)) || tryMove(0.08);
-}
 
 function toWorldNormal(obs, localNormal) {
   const cosRot = Math.cos(obs.rotation || 0);
@@ -4836,11 +4578,7 @@ function getSurfaceContact(obs, worldX, worldY, worldZ, tankRadius = 2) {
   return getBoxSurfaceContact(obs, worldX, worldZ, tankRadius);
 }
 
-function getSupportMargin(obs, preferredObstacle) {
-  return obs === preferredObstacle ? SUPPORT_RETAIN_MARGIN : SUPPORT_ACQUIRE_MARGIN;
-}
-
-function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
+function findSupportSurface(worldX, worldY, worldZ) {
   let bestSupport = null;
   for (const obs of getCollisionColliders()) {
     if (obs.type === 'pyramid') {
@@ -4854,11 +4592,15 @@ function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
       continue;
     }
 
-    const margin = getSupportMargin(obs, preferredObstacle);
-    const halfW = obs.w / 2 + margin;
-    const halfD = obs.d / 2 + margin;
+    // Supported for exactly as long as the tank box still rests on the top, the
+    // same test that reports being on top. A centre-plus-margin test was tuned
+    // for the old radius-2 circle; with a 6-unit-long box it ends a unit before
+    // the tank actually leaves the edge, and the tank hangs in that gap.
     const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
-    if (Math.abs(localX) > halfW || Math.abs(localZ) > halfD) continue;
+    if (!testOrigRectTank(
+      obs.w / 2, obs.d / 2, localX, localZ,
+      getTankLocalAngle(playerRotation, obs.rotation)
+    )) continue;
     const surfaceY = (obs.baseY || 0) + (obs.h || 4);
     const deltaY = surfaceY - worldY;
     if (deltaY > MAX_BUMP_HEIGHT || deltaY < -SUPPORT_SNAP_DOWN) continue;
@@ -4869,7 +4611,7 @@ function findSupportSurface(worldX, worldY, worldZ, preferredObstacle = null) {
   return bestSupport;
 }
 
-function isWithinSupportFootprint(obs, worldX, worldY, worldZ, margin = SUPPORT_RETAIN_MARGIN) {
+function isWithinSupportFootprint(obs, worldX, worldY, worldZ) {
   if (!obs) return false;
 
   if (obs.type === 'pyramid') {
@@ -4877,10 +4619,11 @@ function isWithinSupportFootprint(obs, worldX, worldY, worldZ, margin = SUPPORT_
     return Boolean(contact && contact.supportable);
   }
 
-  const halfW = obs.w / 2 + margin;
-  const halfD = obs.d / 2 + margin;
   const { x: localX, z: localZ } = getColliderLocalPoint(worldX, worldZ, obs);
-  return Math.abs(localX) <= halfW && Math.abs(localZ) <= halfD;
+  return testOrigRectTank(
+    obs.w / 2, obs.d / 2, localX, localZ,
+    getTankLocalAngle(playerRotation, obs.rotation)
+  );
 }
 
 // Intended input state
@@ -4902,24 +4645,36 @@ let localTeleportCooldownUntil = 0;
 let suppressLocalTeleportFxUntil = 0;
 const LANDING_SQUISH_FACTOR = 1.0;
 const LANDING_SQUISH_TIME = 1.0;
+// BZFlag Player::spawnEffect(): a spawning tank starts at 1% on every axis and
+// grows to full size over _flagEffectTime. It shares dimensionsScale with the
+// landing squish, so both converge through the same loop (Player.cxx:520).
+const SPAWN_GROW_TIME = 0.64;
+const SPAWN_START_SCALE = 0.01;
 const PLAYER_TELEPORT_REENTRY_BLOCK_DISTANCE = 5.0;
 const PLAYER_TELEPORT_REENTRY_BLOCK_MIN_MS = 250;
 const PLAYER_TELEPORT_EXIT_EPSILON = 0.08;
 const PLAYER_TELEPORT_COOLDOWN_MS = 1000;
 
-function ensureLandingSquishState(tank) {
+function ensureTankDimensionState(tank) {
   if (!tank?.userData) return;
   if (!Number.isFinite(tank.userData.baseScaleX)) tank.userData.baseScaleX = tank.scale.x;
   if (!Number.isFinite(tank.userData.baseScaleY)) tank.userData.baseScaleY = tank.scale.y;
   if (!Number.isFinite(tank.userData.baseScaleZ)) tank.userData.baseScaleZ = tank.scale.z;
   if (!Number.isFinite(tank.userData.landingSquishScaleY)) tank.userData.landingSquishScaleY = 1;
   if (!Number.isFinite(tank.userData.landingSquishRecoverRate)) tank.userData.landingSquishRecoverRate = 1 / LANDING_SQUISH_TIME;
+  if (!Number.isFinite(tank.userData.spawnScale)) tank.userData.spawnScale = 1;
+}
+
+function applySpawnGrow(tank) {
+  if (!tank?.userData) return;
+  ensureTankDimensionState(tank);
+  tank.userData.spawnScale = SPAWN_START_SCALE;
 }
 
 function applyLandingSquish(tank, impactSpeed = 0) {
   if (!tank?.userData || !gameConfig) return;
 
-  ensureLandingSquishState(tank);
+  ensureTankDimensionState(tank);
 
   const gravity = Number.isFinite(gameConfig.GRAVITY) && gameConfig.GRAVITY > 0
     ? gameConfig.GRAVITY
@@ -4935,10 +4690,10 @@ function applyLandingSquish(tank, impactSpeed = 0) {
   tank.userData.landingSquishRecoverRate = 1 / LANDING_SQUISH_TIME;
 }
 
-function updateLandingSquish(deltaTime) {
+function updateTankDimensions(deltaTime) {
   tanks.forEach((tank) => {
     if (!tank?.userData) return;
-    ensureLandingSquishState(tank);
+    ensureTankDimensionState(tank);
 
     const baseScaleX = tank.userData.baseScaleX;
     const baseScaleY = tank.userData.baseScaleY;
@@ -4955,7 +4710,18 @@ function updateLandingSquish(deltaTime) {
       tank.userData.landingSquishScaleY = squishScaleY;
     }
 
-    tank.scale.set(baseScaleX, baseScaleY * squishScaleY, baseScaleZ);
+    let spawnScale = tank.userData.spawnScale;
+    if (!Number.isFinite(spawnScale)) spawnScale = 1;
+    if (spawnScale < 1) {
+      spawnScale = Math.min(1, spawnScale + (deltaTime / SPAWN_GROW_TIME));
+      tank.userData.spawnScale = spawnScale;
+    }
+
+    tank.scale.set(
+      baseScaleX * spawnScale,
+      baseScaleY * squishScaleY * spawnScale,
+      baseScaleZ * spawnScale
+    );
   });
 }
 
@@ -4966,6 +4732,7 @@ function triggerSpawnEffectForTank(tank, colorOverride = null) {
   const tankColor = tank.userData?.playerState?.color;
   const effectColor = colorOverride ?? tankColor ?? defaultColor;
   renderManager.createSpawnEffect(tank.position, effectColor);
+  applySpawnGrow(tank);
 }
 
 function approachValue(currentValue, targetValue, maxStep) {
@@ -5357,7 +5124,10 @@ function handleMotion(deltaTime) {
     myTank.userData.fallForwardSpeed = movementForwardInput;
     myTank.userData.slideDirection = undefined;
     forceMoveSend = true; // Force send on jump
-    if (myTank) renderManager.playLocalJumpSound(myTank.position);
+    if (myTank) {
+      renderManager.playLocalJumpSound(myTank.position);
+      renderManager.fireTankJumpJets(myTank);
+    }
   }
 
   let result = validateMove(playerX, playerY, playerZ, intendedDeltaX, intendedDeltaY, intendedDeltaZ, 2);
@@ -6047,6 +5817,9 @@ function updateProjectiles(deltaTime) {
       projectile.position.x = traced.point.x;
       projectile.position.y = traced.point.y;
       projectile.position.z = traced.point.z;
+      if (traced.teleports > 0) {
+        renderManager.createShotTeleportEffect(projectile);
+      }
       projectile.userData.dirX = traced.direction.x;
       projectile.userData.dirY = traced.direction.y;
       projectile.userData.dirZ = traced.direction.z;
@@ -7490,10 +7263,13 @@ function animate() {
   }
 
   updateProjectiles(deltaTime);
-  updateLandingSquish(deltaTime);
+  updateTankDimensions(deltaTime);
   renderManager.updateExplosions(deltaTime);
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
+  renderManager.updateMuzzleFlashes(deltaTime);
+  renderManager.updateShotTeleportEffects(deltaTime);
+  renderManager.updateJumpJets(tanks, deltaTime, gameConfig);
   if (gameConfig) {
     renderManager.updateClouds(deltaTime, gameConfig.MAP_SIZE || 100);
   }

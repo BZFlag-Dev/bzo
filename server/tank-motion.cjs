@@ -1,0 +1,181 @@
+/*
+ * Copyright (C) 2025-2026 Tim Riker <timriker@gmail.com>
+ * Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+ * Source: https://github.com/timriker/bzo
+ * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
+ */
+
+// tank-motion.mjs - Tank movement against solid geometry, ported from BZFlag's
+// LocalPlayer::doUpdateMotion (LocalPlayer.cxx:520-666).
+//
+// BZFlag does not push a tank out of an obstacle it already overlaps. It
+// advances the tank over the timestep, and when that lands in something it
+// binary-searches the timestep for the last moment the tank was clear, stops
+// there, cancels the velocity component along the surface normal, and spends
+// the remaining time sliding. Repeat until the time is used up.
+//
+// That matters for an oriented box: a rotated rectangle's Minkowski sum with a
+// rectangle is a hexagon, so there is no radius by which an obstacle can be
+// grown to turn the tank into a point. Searching in time sidesteps the shape
+// question entirely -- it only ever asks "is the tank clear here", which the
+// collision test already answers exactly.
+
+const MIN_SEARCH_STEP = 0.0001;
+const MAX_SEARCH_STEPS = 7;
+const TINY_DISTANCE = 0.001;
+const MAX_BUMP_HEIGHT = 0.33;
+const ZERO_TOLERANCE = 1e-8;
+// Upstream loops until the timestep is spent; this bounds a pathological wedge.
+const MAX_SLIDE_PASSES = 4;
+
+function nearZero(value) {
+  return Math.abs(value) < ZERO_TOLERANCE;
+}
+
+// `hitTest(fromX, fromY, fromZ, fromAz, toX, toY, toZ, toAz)` returns the
+// blocking obstacle or null. `getNormal(obstacle, x, y, z, az, hitX, hitY, hitZ,
+// hitAz)` returns a unit {x, y, z} pointing out of the surface.
+function resolveTankMotion({
+  x, y, z, azimuth,
+  velocityX, velocityY, velocityZ,
+  angularVelocity = 0,
+  timeStep,
+  groundLimit = 0,
+  onGround = true,
+  hitTest,
+  getNormal,
+  isFlatTop = () => false,
+  getObstacleTop = () => 0,
+}) {
+  let posX = x;
+  let posY = y;
+  let posZ = z;
+  let az = azimuth;
+  let velX = velocityX;
+  let velY = velocityY;
+  let velZ = velocityZ;
+  let angVel = angularVelocity;
+  let remaining = timeStep;
+  let obstacle = null;
+  let onBuilding = false;
+
+  for (let pass = 0; pass < MAX_SLIDE_PASSES && remaining > MIN_SEARCH_STEP; pass++) {
+    const fromX = posX;
+    const fromY = posY;
+    const fromZ = posZ;
+    const fromAz = az;
+
+    let toAz = fromAz + remaining * angVel;
+    let toX = fromX + remaining * velX;
+    let toY = fromY + remaining * velY;
+    let toZ = fromZ + remaining * velZ;
+    if (toY < groundLimit && velY < 0) toY = groundLimit;
+
+    // The final pass of a slide normally ends clear, so remember the last
+    // obstacle actually struck rather than whatever the last pass saw.
+    let hit = hitTest(fromX, fromY, fromZ, fromAz, toX, toY, toZ, toAz);
+    if (!hit) {
+      posX = toX; posY = toY; posZ = toZ; az = toAz;
+      remaining = 0;
+      break;
+    }
+    obstacle = hit;
+
+    // Drive over a low flat-topped ledge rather than stopping dead against it.
+    if (onGround && isFlatTop(hit)) {
+      const top = getObstacleTop(hit);
+      if (top !== fromY && top < fromY + MAX_BUMP_HEIGHT) {
+        const bumpY = top;
+        if (!hitTest(fromX, bumpY, fromZ, fromAz, fromX, bumpY, fromZ, toAz)) {
+          posX = fromX + velX * remaining * 0.5;
+          posY = bumpY;
+          posZ = fromZ + velZ * remaining * 0.5;
+          az = toAz;
+          remaining = 0;
+          break;
+        }
+      }
+    }
+
+    // Latest time in the step at which the tank is still clear.
+    let hitX = toX;
+    let hitY = toY;
+    let hitZ = toZ;
+    let hitAz = toAz;
+    let searchTime = 0;
+    let searchStep = 0.5 * remaining;
+    for (let i = 0; searchStep > MIN_SEARCH_STEP && i < MAX_SEARCH_STEPS; searchStep *= 0.5, i++) {
+      const t = searchTime + searchStep;
+      const tryAz = fromAz + t * angVel;
+      const tryX = fromX + t * velX;
+      let tryY = fromY + t * velY;
+      const tryZ = fromZ + t * velZ;
+      if (tryY < groundLimit && velY < 0) tryY = groundLimit;
+
+      const found = hitTest(fromX, fromY, fromZ, fromAz, tryX, tryY, tryZ, tryAz);
+      if (!found) {
+        searchTime = t;
+      } else {
+        hit = found;
+        obstacle = found;
+        hitX = tryX; hitY = tryY; hitZ = tryZ; hitAz = tryAz;
+      }
+    }
+
+    az = fromAz + searchTime * angVel;
+    posX = fromX + searchTime * velX;
+    posY = fromY + searchTime * velY;
+    posZ = fromZ + searchTime * velZ;
+    if (posY < groundLimit && velY < 0) posY = groundLimit;
+    remaining -= searchTime;
+
+    const normal = getNormal(hit, posX, posY, posZ, az, hitX, hitY, hitZ, hitAz);
+    if (!normal) break;
+
+    if (posY > 0 && normal.y > 0.001) {
+      // Landing on top of something rather than running into its side.
+      onBuilding = true;
+      velY = 0;
+      remaining = 0;
+      break;
+    }
+
+    let mag = normal.x * velX + normal.z * velZ;
+    if (!nearZero(normal.y)) {
+      if (velY < 0 && velY - (mag + normal.y * velY) * normal.y > 0) velY = 0;
+      const horNormal = normal.x * normal.x + normal.z * normal.z;
+      if (!nearZero(horNormal)) mag /= horNormal;
+    }
+
+    if (mag < 0) {
+      velX -= mag * normal.x;
+      velZ -= mag * normal.z;
+      // Back off a hair so the next pass does not re-hit the same face.
+      posX -= TINY_DISTANCE * mag * normal.x;
+      posZ -= TINY_DISTANCE * mag * normal.z;
+    }
+    if (mag > -0.01) {
+      // Nothing significant left to cancel, so stop turning too.
+      angVel = 0;
+    }
+  }
+
+  return {
+    x: posX, y: posY, z: posZ,
+    azimuth: az,
+    velocityX: velX, velocityY: velY, velocityZ: velZ,
+    angularVelocity: angVel,
+    obstacle,
+    onBuilding,
+  };
+}
+
+module.exports = {
+  MIN_SEARCH_STEP,
+  MAX_SEARCH_STEPS,
+  TINY_DISTANCE,
+  MAX_BUMP_HEIGHT,
+  ZERO_TOLERANCE,
+  MAX_SLIDE_PASSES,
+  resolveTankMotion,
+};

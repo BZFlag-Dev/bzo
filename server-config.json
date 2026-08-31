@@ -5,19 +5,6 @@
   "motd": "Welcome to the test server!",
   "maxPlayers": 16,
   "port": 3000,
-  "teamMode": {
-    "enabled": false,
-    "autoTeam": false,
-    "teams": ["rogue", "observer", "red", "blue", "green", "purple"],
-    "limits": {
-      "rogue": 10,
-      "observer": 10,
-      "red": 10,
-      "blue": 10,
-      "green": 10,
-      "purple": 10
-    }
-  },
   "tankSpeed": 25.0,
   "tankRotationSpeed": 0.785398,
   "reverseSpeedRatio": 0.5,
@@ -32,12 +19,11 @@
   "shotRange": 350,
   "shotDuration": 3.5,
   "shotDistance": 350,
+  "shotReloadTime": 1000,
   "shotMaxActive": 1,
   "shotRadius": 0.5,
   "shotTailLength": 4.0,
   "shotsKeepVerticalVelocity": false,
-  "voiceNearbyRadius": 60,
-  "voiceIceServers": [],
   "fogMode": "none",
   "fogDensity": 0.001,
   "fogStart": 50,
@@ -46,7 +32,6 @@
     "mode": "strict",
     "linearDriftThreshold": 3.0,
     "linearDriftThresholdVelocityChanged": 20.0,
-    "angularDriftThreshold": 0.5,
-    "collisionSlack": 0.05
+    "angularDriftThreshold": 0.5
   }
 }

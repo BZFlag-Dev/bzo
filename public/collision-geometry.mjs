@@ -63,6 +63,95 @@ export function testOrigRectCircle(halfW, halfD, localX, localZ, radius) {
   return origRectPointDistanceSquared(halfW, halfD, localX, localZ) < radius * radius;
 }
 
+// Tank collision box, matching BZFlag's _tankWidth (2.8) and _tankLength (6.0).
+// Player.cxx:120 sets dimensions[0] = 0.5 * tankLength (forward half-extent) and
+// dimensions[1] = 0.5 * tankWidth (lateral). Every tank shares this box whatever
+// model is selected, so the model is cosmetic and never changes gameplay.
+export const TANK_HALF_LENGTH = 3.0;
+export const TANK_HALF_WIDTH = 1.4;
+
+// A rectangle centred at (localX, localZ), rotated so its lateral axis points
+// along (cos a, sin a), against the axis-aligned rectangle at the origin.
+// Ported from Intersect.cxx testOrigRectRect: dx1/dy1 are the rotated rect's
+// half-extents, dx2/dy2 the origin rect's.
+export function testOrigRectRect(px, pz, angle, dx1, dy1, dx2, dy2) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+
+  // The origin rect's centre inside the rotated rect.
+  const sx = c * px + s * pz;
+  const sy = c * pz - s * px;
+  if (Math.abs(sx) < dx1 && Math.abs(sy) < dy1) return true;
+
+  // Corners of the rotated rect, classified against the origin rect.
+  const box = [[1, 1], [1, -1], [-1, -1], [-1, 1]];
+  const corner = [];
+  const region = [];
+  for (let i = 0; i < 4; i++) {
+    const cx = px + c * dx1 * box[i][0] - s * dy1 * box[i][1];
+    const cz = pz + s * dx1 * box[i][0] + c * dy1 * box[i][1];
+    corner.push([cx, cz]);
+    const rx = cx < -dx2 ? -1 : (cx > dx2 ? 1 : 0);
+    const rz = cz < -dy2 ? -1 : (cz > dy2 ? 1 : 0);
+    region.push([rx, rz]);
+    if (!rx && !rz) return true;
+  }
+
+  // Each edge of the rotated rect against the origin rect.
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    if (region[i][0] === region[j][0]) {
+      if (region[i][0] === 0 && region[i][1] !== region[j][1]) return true;
+      continue;
+    } else if (region[i][1] === region[j][1]) {
+      if (region[i][1] === 0) return true;
+      continue;
+    }
+
+    let c2x;
+    let c2z;
+    if (region[i][0] === 0) {
+      c2x = region[j][0] * dx2;
+      c2z = region[i][1] * dy2;
+    } else if (region[j][0] === 0) {
+      c2x = region[i][0] * dx2;
+      c2z = region[j][1] * dy2;
+    } else if (region[i][1] === 0) {
+      c2x = region[i][0] * dx2;
+      c2z = region[j][1] * dy2;
+    } else {
+      c2x = region[j][0] * dx2;
+      c2z = region[i][1] * dy2;
+    }
+
+    const ex = corner[j][0] - corner[i][0];
+    const ez = corner[j][1] - corner[i][1];
+    const a = ez * (c2x - corner[i][0]) - ex * (c2z - corner[i][1]);
+    const b = ez * (c2x + corner[i][0]) - ex * (c2z + corner[i][1]);
+    if (a * b > 0.0) return true;
+  }
+  return false;
+}
+
+// The tank box against an obstacle, both expressed in the obstacle's local
+// frame. `rotation` is the tank's heading in bzo terms, where forward is
+// (-sin r, -cos r); the lateral axis leads by a quarter turn.
+export function testOrigRectTank(halfW, halfD, localX, localZ, tankAngle, slack = 0) {
+  // Slack shrinks the tank, never the obstacle, mirroring how the circle path
+  // reduces the tested radius.
+  const trim = Math.max(0, Math.min(slack, TANK_HALF_WIDTH));
+  return testOrigRectRect(
+    localX, localZ, tankAngle,
+    TANK_HALF_WIDTH - trim, TANK_HALF_LENGTH - trim,
+    halfW, halfD
+  );
+}
+
+// The tank's lateral axis angle inside an obstacle's local frame.
+export function getTankLocalAngle(rotation, obsRotation = 0) {
+  return Math.PI - rotation + (obsRotation || 0);
+}
+
 // Height of the pyramid's sloped surface above its base, at a local point.
 // Returns null outside the base footprint. This is the inverse of
 // pyramidShrinkFactor: the surface sits where the shrunk rectangle's edge
@@ -183,4 +272,24 @@ export function pyramidIntersectsCylinder(obs, x, y, z, radius, height) {
 
   const local = getColliderLocalPoint(x, z, obs);
   return testOrigRectCircle((obs.w / 2) * shrink, (obs.d / 2) * shrink, local.x, local.z, radius);
+}
+
+// The tank box against a pyramid. The pyramid's cross-section shrinks with
+// height exactly as it does for the cylinder test, so only the shape tested
+// against it differs.
+export function pyramidIntersectsTank(obs, x, y, z, rotation, height, slack = 0) {
+  const baseY = obs.baseY || 0;
+  if (y + height < baseY) return false;
+  if (y >= baseY + getPyramidHeight(obs)) return false;
+
+  const shrink = pyramidShrinkFactor(obs, y, height);
+  if (shrink <= 0) return false;
+
+  const local = getColliderLocalPoint(x, z, obs);
+  return testOrigRectTank(
+    (obs.w / 2) * shrink, (obs.d / 2) * shrink,
+    local.x, local.z,
+    getTankLocalAngle(rotation, obs.rotation),
+    slack
+  );
 }

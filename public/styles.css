@@ -26,6 +26,8 @@ html, body {
   --color-fg: #fff;
   --color-accent: #4CAF50;
   --color-accent-light: #66bb6a;
+  --color-state-on: #66bb6a;
+  --color-state-off: #e57373;
   --color-btn-bg: rgba(76,175,80,0.15);
   --color-btn-bg-active: #4CAF50;
   --color-btn-bg-hover: rgba(76,175,80,0.35);
@@ -1337,27 +1339,14 @@ canvas {
   color: var(--color-fg);
 }
 
-.settingsQualityRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  column-gap: 24px;
-  align-items: center;
-  width: 100%;
-  min-height: 58px;
-  padding: 10px 12px;
-  box-sizing: border-box;
+/* On and Off read as state, not as decoration, so they are the only values that
+   get a colour. Set after the .active rule so an enabled toggle stays green. */
+.settingsMenuRow[data-menu-state="off"] .settingsMenuValue {
+  color: var(--color-state-off);
 }
 
-.settingsQualitySelect {
-  width: 100%;
-  min-height: 38px;
-  padding: 0.35rem 0.55rem;
-  border: 1px solid var(--color-accent);
-  border-radius: 3px;
-  background: #222;
-  color: var(--color-accent-light);
-  font: inherit;
-  font-weight: bold;
+.settingsMenuRow[data-menu-state="on"] .settingsMenuValue {
+  color: var(--color-state-on);
 }
 
 @media (max-width: 600px) {
