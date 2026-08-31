@@ -755,7 +755,10 @@ function getSettingsMenuValue(id, item) {
     if (item.button.disabled) return 'Unavailable';
     return /exit/i.test(item.button.title) ? 'Exit VR' : 'Enter VR';
   }
-  if (item.kind === 'toggle') return item.button.classList.contains('active') ? 'On' : 'Off';
+  if (item.kind === 'toggle') {
+    if (item.button.disabled) return 'Unavailable';
+    return item.button.classList.contains('active') ? 'On' : 'Off';
+  }
   if (item.kind === 'submenu') return 'Open >';
   if (id === 'closeSettingsHud') return '';
   return 'Activate';

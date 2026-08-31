@@ -100,6 +100,7 @@ import {
   updateShotStatus
 } from './hud.js';
 import { renderManager } from './render.js';
+import { describeRenderCapabilities } from './render-capabilities.mjs';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import {
@@ -2297,13 +2298,20 @@ window.addEventListener('DOMContentLoaded', () => {
         if (savedDynamicLighting !== null) {
           dynamicLightingEnabled = savedDynamicLighting === 'true';
         }
-        renderManager.dynamicLightingEnabled = dynamicLightingEnabled;
+        // A context that cannot light the scene overrides the saved preference:
+        // the row goes dead rather than promising something it cannot draw.
+        const canLight = renderManager.canUseDynamicLighting();
+        renderManager.dynamicLightingEnabled = dynamicLightingEnabled && canLight;
         if (dynamicLightingBtn) {
           const updateBtn = () => {
             dynamicLightingBtn.classList.toggle('active', renderManager.dynamicLightingEnabled);
-            dynamicLightingBtn.title = renderManager.dynamicLightingEnabled ? 'Disable Dynamic Lighting' : 'Enable Dynamic Lighting';
+            dynamicLightingBtn.disabled = !canLight;
+            dynamicLightingBtn.title = canLight
+              ? (renderManager.dynamicLightingEnabled ? 'Disable Dynamic Lighting' : 'Enable Dynamic Lighting')
+              : 'Dynamic Lighting needs more shader uniforms than this browser reports';
           };
           dynamicLightingBtn.addEventListener('click', () => {
+            if (!canLight) return;
             renderManager.dynamicLightingEnabled = !renderManager.dynamicLightingEnabled;
             localStorage.setItem('dynamicLightingEnabled', renderManager.dynamicLightingEnabled.toString());
             updateBtn();
@@ -2692,6 +2700,8 @@ function init() {
       debugLog(
         `renderer.init.ok viewport=${window.innerWidth}x${window.innerHeight} canvas=${renderer.domElement.width}x${renderer.domElement.height} css=${rendererSize.x}x${rendererSize.y} drawbuf=${drawingBufferSize.x}x${drawingBufferSize.y}`,
       );
+      const capabilities = renderManager.getRenderCapabilities();
+      if (capabilities) debugLog(`renderer.capabilities ${describeRenderCapabilities(capabilities)}`);
     }
   } catch (error) {
     console.error('Failed to initialize 3D renderer:', error);

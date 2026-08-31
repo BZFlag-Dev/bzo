@@ -10,6 +10,12 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { AnaglyphEffect } from './anaglyph.js';
 import { xrState } from './webxr.js';
 import {
+  collectDeviceHints,
+  detectRenderCapabilities,
+  supportsDynamicLighting,
+  supportsProjectedShadows,
+} from './render-capabilities.mjs';
+import {
   GAME_SOUNDS,
   GAME_SOUND_NAMES,
   MASTER_VOLUME,
@@ -389,8 +395,9 @@ class RenderManager {
     this.activeSpawnEffects = [];
     this.activeShotExplosions = [];
 
-    // Dynamic lighting toggle (default true)
+    // Dynamic lighting toggle (default true), and what the context allows.
     this.dynamicLightingEnabled = true;
+    this.renderCapabilities = null;
     this.showGroundGrid = false;
 
     // Tank geometry loaded from public/obj/simple.obj (keyed by object name)
@@ -458,6 +465,7 @@ class RenderManager {
     }
 
     this.renderer.xr.enabled = true;
+    this.renderCapabilities = detectRenderCapabilities(this.renderer, collectDeviceHints());
     this.renderer.setSize(viewport.width, viewport.height);
     // Disable real-time shadow mapping for performance
     this.renderer.shadowMap.enabled = false;
@@ -569,6 +577,22 @@ class RenderManager {
       this.camera.remove(sound);
       sound.disconnect();
     };
+  }
+
+  getRenderCapabilities() {
+    return this.renderCapabilities ? { ...this.renderCapabilities } : null;
+  }
+
+  canUseDynamicLighting() {
+    return supportsDynamicLighting(this.renderCapabilities);
+  }
+
+  canUseProjectedShadows() {
+    return supportsProjectedShadows(this.renderCapabilities);
+  }
+
+  _dynamicLightingActive() {
+    return this.dynamicLightingEnabled && this.canUseDynamicLighting();
   }
 
   _getWorldGroupLocalMatrix(object) {
@@ -818,6 +842,10 @@ class RenderManager {
 
   // Update all projected shadows (call each frame or when light/objects move)
   updateProjectedShadows(tankMeshes = []) {
+    // Each shadow mesh writes the stencil the ground overlay reads. Without a
+    // stencil buffer there is no overlay to read it, so the meshes would draw
+    // for nothing.
+    if (!this.canUseProjectedShadows()) return;
     // Use sun or moon depending on which is visible
     const light = (this.sunLight && this.sunLight.intensity > 0.5) ? this.sunLight : this.moonLight;
     const dir = this._getProjectedShadowDirection(light?.position);
@@ -1261,8 +1289,10 @@ class RenderManager {
     this.ground.receiveShadow = true;
     this.worldGroup.add(this.ground);
 
-    this.projectedShadowOverlay = this._buildProjectedShadowOverlay(groundExtent);
-    this.worldGroup.add(this.projectedShadowOverlay);
+    if (this.canUseProjectedShadows()) {
+      this.projectedShadowOverlay = this._buildProjectedShadowOverlay(groundExtent);
+      this.worldGroup.add(this.projectedShadowOverlay);
+    }
 
     this.setGroundGridEnabled(this.showGroundGrid, mapSize);
   }
@@ -2863,7 +2893,7 @@ class RenderManager {
     this.worldGroup.add(sprite);
 
     let light = null;
-    if (this.dynamicLightingEnabled) {
+    if (this._dynamicLightingActive()) {
       light = new THREE.PointLight(0xffcc80, 1.2, 28, 2.2);
       light.position.copy(position);
       this.worldGroup.add(light);
@@ -3255,7 +3285,7 @@ class RenderManager {
       tailSegments,
     };
     // Only add a point light if dynamic lighting is enabled
-    if (this.dynamicLightingEnabled) {
+    if (this._dynamicLightingActive()) {
       const shotLight = new THREE.PointLight(projectileColor, 1.5, 12, 2);
       shotLight.position.copy(projectile.position);
       this.worldGroup.add(shotLight);
@@ -3301,7 +3331,7 @@ class RenderManager {
     // Dynamic lighting flash
     let explosionLight = null;
     let lightIntensity = 0;
-    if (this.dynamicLightingEnabled && typeof THREE !== 'undefined') {
+    if (this._dynamicLightingActive() && typeof THREE !== 'undefined') {
       explosionLight = new THREE.PointLight(0xffe066, 3, 40, 2.5);
       explosionLight.position.copy(position);
       lightIntensity = 500.0;
@@ -3878,7 +3908,7 @@ class RenderManager {
 
   // TankSceneNode.cxx:308 -- one warm light at the tank while the jets burn.
   _updateJumpJetLight(tank, scale) {
-    if (!this.dynamicLightingEnabled) {
+    if (!this._dynamicLightingActive()) {
       if (tank.userData.jumpJetLight) tank.userData.jumpJetLight.visible = false;
       return;
     }

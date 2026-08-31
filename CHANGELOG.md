@@ -6,6 +6,10 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+### Added
+- Render capability detection, read from the renderer's own WebGL context. A feature the context cannot support is now switched off along with the UI that offers it: no stencil bits means no projected shadows, and a context near the WebGL 1 floor for fragment uniforms means Dynamic Lighting reads Unavailable rather than silently drawing nothing.
+- Every launch logs its `renderer.capabilities` line, so the machines this runs on can be compared before any quality policy is built on them.
+
 ## [1.0.42] - 2026-08-31
 
 ### Removed

@@ -17,6 +17,20 @@ Useful subtrees: `src/obstacle/` (obstacle geometry and collision),
 
 Prefer upstream naming too -- see `docs/tank-model-format.md` for tank part names.
 
+### Capability, not cost
+
+`public/render-capabilities.mjs` reads what the machine can do from the
+renderer's own WebGL context, and answers only **can this run here**, never
+**is this fast enough here**. Where a capability is missing, disable the feature
+*and* the UI that offers it -- a row that promises what the context cannot draw
+is worse than a row that is plainly unavailable. Stencil bits gate the projected
+shadow pass; fragment uniform vectors gate dynamic lighting. Every launch logs
+the full set as `renderer.capabilities` in `server.log`, which is how the
+measurements for a future render level get collected.
+
+Do not add a second GL context to probe with. The renderer's own context
+answers everything, and a spare one is a real cost on a phone.
+
 ### Intentional deviations from BZFlag
 
 These are deliberate. Do not "fix" them without being asked.
@@ -34,6 +48,14 @@ These are deliberate. Do not "fix" them without being asked.
   so that tradeoff does not apply. **Implement upstream's default variant and
   no setting.** Add a toggle only when a measured frame-rate impact justifies
   it, not for parity with the upstream options list.
+
+  Render levels chosen from the hardware -- a low/balanced/high policy, scaled
+  pixel ratio, budgeted effects -- are wanted **eventually**, and are not ready
+  now. Nothing here has been measured on the machines that matter, and a policy
+  built on guesses is worse than none: it hides the cost it claims to manage.
+  Frame *interval* in particular is not the measurement to build on, since a
+  vsync-limited client reports its refresh rate however much headroom it has.
+  Land the measurements first.
 - **Tanks are selectable OBJ models, not one compiled-in model.** BZFlag ships a
   single tank in `src/geometry/models/tank/` at three LODs, varied only by the
   `animatedTreads` and `treadStyle` settings. bzo loads several models from
@@ -117,6 +139,7 @@ version appears.
 | `public/settings-menu.js` | Declarative Settings rows + DOM renderer |
 | `public/xr-menu.js` | `XRMenuRenderer`: CanvasTexture menu panel for immersive XR |
 | `public/webxr.js` | XR session lifecycle and controller input |
+| `public/render-capabilities.mjs` | What the WebGL context supports; gates features and their UI |
 | `public/voice.js` | WebRTC nearby-voice manager |
 | `public/audio.js` | Procedurally generated audio buffers |
 | `public/sw.js` | Service worker: install support and asset caching |
