@@ -19,6 +19,31 @@ or deployment configuration.
   controls still work.
 - Confirm that the VR Mode button is disabled when WebXR is unavailable.
 
+## Entry points
+
+- On an Android phone in Chrome, confirm that the VR button beside the settings
+  gear is absent and that Settings still lists VR Mode.
+- On a headset, confirm that the VR button beside the settings gear is present.
+- Install the app on a headset, join once so a name is saved, then launch it
+  from its icon and confirm that it opens in VR without touching a button.
+  `server.log` records the outcome as `Launch session: granted` or `refused`.
+- Reload the page in the installed app and confirm that the refused request
+  leaves the game playable, with the first click entering VR.
+- Leave VR in the installed app and confirm the window closes rather than
+  staying on the headset's desktop.
+- Clear the saved name, launch the installed app again, and confirm that the
+  session starts and the menu opens on Join Game rather than on Settings.
+- From Join Game, activate Name and confirm the system keyboard appears, that
+  the typed name reaches the row, and that Join enters the game under it.
+- Confirm the name survives a restart, and that the app then joins straight into
+  VR without opening the menu.
+- Exit VR before joining and confirm the 2D entry dialog appears.
+- On a headset with no system keyboard, confirm Name reads Desktop only and that
+  Join still works under the server-assigned name.
+- While the system keyboard is up, hold a thumbstick and confirm the tank does
+  not move.
+- In Operator, activate MOTD, type a message, and confirm the server adopts it.
+
 ## Session startup and head tracking
 
 - On a supported headset, start VR Mode from the in-game button.

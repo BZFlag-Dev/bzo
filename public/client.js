@@ -104,6 +104,11 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import {
   initXR,
+  hasLaunchSession,
+  isHeadsetAppLaunch,
+  isHeadsetDevice,
+  isSystemKeyboardSupported,
+  XR_LAUNCH_SESSION_EVENT,
   toggleXRSession,
   updateXRControllerInput,
   getXRControllerInput,
@@ -210,11 +215,14 @@ let xrScoreboardTextureMesh = null;
 const XR_HUD_PLANE_Z = -0.85;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
-const RADAR_ZOOM_STORAGE_KEY = 'radarZoomLevel';
+// BZFlag's displayRadarRange default (defaultBZDB.cxx). The level is deliberately
+// not persisted: a headset has no key or button to zoom with, so every session
+// starts at a range that reads well on every device.
+const RADAR_ZOOM_DEFAULT = 0.5;
 const RADAR_ZOOM_MIN = 0.005;
 const RADAR_ZOOM_MAX = 2.0;
 const RADAR_ZOOM_STEP = 1.05;
-let radarZoomLevel = 1.0;
+let radarZoomLevel = RADAR_ZOOM_DEFAULT;
 const pendingDebugPackets = [];
 let pendingJoinRequest = null;
 let renderReadyForJoin = false;
@@ -297,7 +305,7 @@ function isObserver() {
 
 function normalizeRadarZoomLevel(value) {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 1.0;
+  if (!Number.isFinite(numeric)) return RADAR_ZOOM_DEFAULT;
   return Math.max(RADAR_ZOOM_MIN, Math.min(RADAR_ZOOM_MAX, numeric));
 }
 
@@ -320,7 +328,6 @@ function setRadarZoomLevel(level, { announce = true } = {}) {
   const normalized = normalizeRadarZoomLevel(level);
   if (normalized === radarZoomLevel) return false;
   radarZoomLevel = normalized;
-  localStorage.setItem(RADAR_ZOOM_STORAGE_KEY, String(radarZoomLevel));
   updateRadarZoomButton();
   if (announce) {
     showMessage(`Radar range: ${getRadarZoomLabel(radarZoomLevel)}`);
@@ -1012,6 +1019,29 @@ function queueDebugPacket(payload) {
   }
 }
 
+// A server-assigned 'Player' or 'Player n' is a placeholder, not a name the
+// player chose, so it does not count as one to join under.
+function isDefaultPlayerName(name) {
+  return name === 'Player' || /^Player \d+$/.test(name);
+}
+
+function savePlayerName(name) {
+  const trimmed = String(name).trim().substring(0, 20);
+  localStorage.setItem('playerName', trimmed);
+  myPlayerName = trimmed;
+  const entryInput = document.getElementById('entryInput');
+  if (entryInput) entryInput.value = trimmed;
+  return trimmed;
+}
+
+function getSavedJoinableName() {
+  const savedName = localStorage.getItem('playerName');
+  if (typeof savedName !== 'string') return '';
+  const trimmed = savedName.trim();
+  if (!trimmed || isDefaultPlayerName(trimmed)) return '';
+  return trimmed;
+}
+
 function getDebugSenderName() {
   if (typeof myPlayerName === 'string' && myPlayerName.trim().length > 0) {
     return myPlayerName.trim();
@@ -1091,6 +1121,10 @@ function getPlayerShotColor(playerId) {
 // Input state
 
 // Entry Dialog
+function isEntryDialogOpen() {
+  return document.getElementById('entryDialog')?.style.display === 'block';
+}
+
 function toggleEntryDialog(name = '') {
   const entryDialog = document.getElementById('entryDialog');
   const entryInput = document.getElementById('entryInput');
@@ -2177,7 +2211,7 @@ function handleGameplayKeydown(event) {
     return true;
   }
   if (event.code === 'Backslash') {
-    setRadarZoomLevel(1.0);
+    setRadarZoomLevel(RADAR_ZOOM_DEFAULT);
     event.preventDefault();
     return true;
   }
@@ -2247,7 +2281,6 @@ function updateDebugLabelsButton() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-      setRadarZoomLevel(localStorage.getItem(RADAR_ZOOM_STORAGE_KEY), { announce: false });
       updateRadarZoomButton();
 
       const radarZoomBtn = document.getElementById('radarZoomBtn');
@@ -2408,8 +2441,20 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('webxrsessionchange', event => {
     if (event.detail?.enabled) return;
     closeXRSettingsMenu();
+    document.getElementById('xrTextInput')?.blur();
     xrSettingsShortcutLatched = false;
     setXRButtonState(false);
+    // An app launched from a headset icon has no useful window behind the
+    // session, so leaving VR leaves the app rather than stranding a flat
+    // window on the headset's desktop.
+    if (isHeadsetAppLaunch()) {
+      window.close();
+      return;
+    }
+    // A player who left XR before joining needs the dialog they never saw.
+    if (!gameplayJoinConfirmed && isDefaultPlayerName(myPlayerName) && !isEntryDialogOpen()) {
+      toggleEntryDialog(myPlayerName);
+    }
   });
 
   initXR().then(mode => {
@@ -2423,12 +2468,12 @@ window.addEventListener('DOMContentLoaded', () => {
         xrBtn.classList.add('disabled');
       }
     } else {
-      const xrClickHandler = async () => {
+      const toggleXRFromUi = async ({ announceFailure = true } = {}) => {
         showMessage('Requesting VR...');
         const renderer = renderManager.getRenderer();
         if (!renderer) {
           showMessage('Error: Renderer not available');
-          return;
+          return false;
         }
 
         const wasEnabled = isXREnabled();
@@ -2438,19 +2483,49 @@ window.addEventListener('DOMContentLoaded', () => {
           closeSettingsDialog();
           // Force first-person camera when entering VR
           cameraMode = 'first-person';
+          // Whatever the 2D dialog was asking for, ask for it on the XR panel.
+          if (isEntryDialogOpen()) openXRJoinMenu();
           showMessage('✓ WebXR VR Mode: ON');
-        } else {
-          setXRButtonState(false);
-          if (!wasEnabled) {
-            showMessage('✗ VR request failed - check server.log');
-          }
-          showMessage('WebXR VR Mode: OFF');
+          return true;
         }
+
+        setXRButtonState(false);
+        if (!wasEnabled && announceFailure) {
+          showMessage('✗ VR request failed - check server.log');
+        }
+        showMessage('WebXR VR Mode: OFF');
+        return false;
+      };
+      const xrClickHandler = () => {
+        void toggleXRFromUi();
       };
       if (xrBtn) xrBtn.addEventListener('click', xrClickHandler);
       if (xrQuickBtn) {
-        xrQuickBtn.classList.add('xrAvailable');
         xrQuickBtn.addEventListener('click', xrClickHandler);
+        if (isHeadsetDevice()) xrQuickBtn.classList.add('xrAvailable');
+      }
+      // A headset launched from its own icon has nothing to show in 2D: a saved
+      // name joins with no dialog at all, and without one the XR menu asks.
+      if (isHeadsetAppLaunch()) {
+        debugLog(
+          `autolaunch mode=${mode} display=${getDisplayMode()}`
+          + ` digitalGoods=${typeof window.getDigitalGoodsService}`
+          + ` activation=${navigator.userActivation?.isActive}/${navigator.userActivation?.hasBeenActive}`
+          + ` t=${Math.round(performance.now())}ms`,
+          'WebXR',
+        );
+        // The launch keeps asking for a session in the background, on every
+        // signal that could carry the activation it needs, so enter VR whenever
+        // one lands rather than only on this first attempt.
+        window.addEventListener(XR_LAUNCH_SESSION_EVENT, () => {
+          void toggleXRFromUi({ announceFailure: false });
+        });
+        toggleXRFromUi({ announceFailure: false }).then((entered) => {
+          // A session granted while that attempt was in flight has no event
+          // left to announce it.
+          if (entered || hasLaunchSession()) return;
+          enterXROnFirstGesture(toggleXRFromUi);
+        });
       }
     }
   });
@@ -2739,9 +2814,7 @@ function init() {
 
   if (playerNameEl && entryDialog) {
     entryOkButton.addEventListener('click', () => {
-      const newName = entryInput.value.trim().substring(0, 20);
-      localStorage.setItem('playerName', newName);
-      myPlayerName = newName;
+      savePlayerName(entryInput.value);
       setPendingJoinRequest(myPlayerName);
       maybeSendPendingJoinRequest();
       toggleEntryDialog();
@@ -2955,24 +3028,18 @@ function handleServerMessage(message) {
       playerZ = message.player.z;
       playerRotation = message.player.rotation;
 
-      // Only send join if there is a saved name that is not 'Player' or 'Player n'
-      const savedName = localStorage.getItem('playerName');
-      if (savedName && savedName.trim().length > 0) {
-        const trimmed = savedName.trim();
-        // Check for 'Player' or 'Player n' (where n is a number)
-        if (
-          trimmed !== 'Player' &&
-          !/^Player \d+$/.test(trimmed)
-        ) {
-          myPlayerName = trimmed;
-        }
+      // Only send join if there is a saved name of the player's own choosing
+      const savedName = getSavedJoinableName();
+      if (savedName) {
+        myPlayerName = savedName;
       }
-      if (myPlayerName !== 'Player' && !/^Player \d+$/.test(myPlayerName)) {
+      if (!isDefaultPlayerName(myPlayerName)) {
         setPendingJoinRequest(myPlayerName);
       } else {
-        // Show name entry dialog
+        // Ask for a name: in XR on the menu panel, otherwise in the 2D dialog
         myPlayerName = message.player.name;
-        toggleEntryDialog(myPlayerName);
+        if (isXREnabled()) openXRJoinMenu();
+        else toggleEntryDialog(myPlayerName);
       }
 
       // Initialize dead reckoning state (velocity-based)
@@ -6743,14 +6810,39 @@ const XR_HELP_ITEMS = Object.freeze([
   { id: 'backXR', label: 'Back', value: '' },
 ]);
 
+// Name, team, and tank are what the 2D entry dialog asks for, so before the
+// player has joined this screen stands in for it and the menu opens here.
 function getXRPlayerOptionsMenuItems() {
   const tankModel = getTankModelById(selectedTankModelId) || getDefaultTankModel();
+  const keyboard = isSystemKeyboardSupported();
   return [
+    {
+      id: 'nameXR',
+      label: 'Name',
+      value: keyboard ? myPlayerName : 'Desktop only',
+      disabled: !keyboard,
+    },
     { id: 'teamXR', label: 'Team', value: PLAYER_TEAM_LABELS[selectedPlayerTeam], adjustable: true },
     { id: 'tankXR', label: 'Tank', value: tankModel.label || tankModel.id, adjustable: true },
-    { id: 'rejoinXR', label: 'Apply & Rejoin', value: '' },
+    { id: 'rejoinXR', label: gameplayJoinConfirmed ? 'Apply & Rejoin' : 'Join', value: '' },
     { id: 'backXR', label: 'Back', value: '' },
   ];
+}
+
+// The headset keyboard opens a fresh editing session every time, so the first
+// key replaces the whole field: the current value is a prompt to retype, not
+// something the player can edit in place. Text comes back through the field's
+// value, since the keyboard sends no key events of its own.
+function beginXRTextEntry(value, commit) {
+  const input = document.getElementById('xrTextInput');
+  if (!input || !isSystemKeyboardSupported()) return;
+  input.value = value;
+  input.addEventListener('blur', () => {
+    const typed = input.value.trim();
+    input.value = '';
+    if (typed) commit(typed);
+  }, { once: true });
+  input.focus();
 }
 
 function getXRVoiceMenuItems() {
@@ -6783,20 +6875,31 @@ function getXROperatorMenuItems() {
   const mapList = document.getElementById('mapList');
   const shotInput = document.getElementById('shotMaxActiveInput');
   const currentMap = mapList?.selectedOptions?.[0]?.textContent || 'Loading...';
+  const keyboard = isSystemKeyboardSupported();
   return [
-    { id: 'operatorMotdXR', label: 'MOTD', value: serverMotdText || '(empty)', disabled: true },
+    {
+      id: 'operatorMotdXR',
+      label: 'MOTD',
+      value: keyboard ? (serverMotdText || '(empty)') : 'Desktop only',
+      disabled: !keyboard,
+    },
     { id: 'operatorMapXR', label: 'Map', value: currentMap, adjustable: true, disabled: !mapList?.options?.length },
     { id: 'operatorRestartXR', label: 'Restart with Map', value: '', disabled: !mapList?.value },
     { id: 'operatorShotsXR', label: 'Shot Limit', value: shotInput?.value || String(gameConfig?.SHOT_MAX_ACTIVE || 5), adjustable: true },
     { id: 'operatorApplyShotsXR', label: 'Apply Shot Limit', value: '' },
     { id: 'operatorRefreshXR', label: 'Refresh Server Data', value: '' },
-    { id: 'operatorDesktopXR', label: 'MOTD / Upload', value: 'Desktop only', disabled: true },
+    { id: 'operatorDesktopXR', label: 'Upload Map', value: 'Desktop only', disabled: true },
     { id: 'backXR', label: 'Back', value: '' },
   ];
 }
 
 function getXRSettingsMenuDefinition() {
-  if (xrSettingsMenuScreen === 'player') return { title: 'Player Options', items: getXRPlayerOptionsMenuItems() };
+  if (xrSettingsMenuScreen === 'player') {
+    return {
+      title: gameplayJoinConfirmed ? 'Player Options' : 'Join Game',
+      items: getXRPlayerOptionsMenuItems(),
+    };
+  }
   if (xrSettingsMenuScreen === 'help') return { title: 'Help', items: XR_HELP_ITEMS };
   if (xrSettingsMenuScreen === 'voice') return { title: 'Voice', items: getXRVoiceMenuItems() };
   if (xrSettingsMenuScreen === 'operator') return { title: 'Operator', items: getXROperatorMenuItems() };
@@ -6836,7 +6939,34 @@ function adjustXRSettingsMenuItem(item, direction) {
   return false;
 }
 
+function getDisplayMode() {
+  const modes = ['fullscreen', 'standalone', 'minimal-ui', 'browser'];
+  return modes.find((mode) => window.matchMedia(`(display-mode: ${mode})`).matches) || 'unknown';
+}
+
+// The launch did not carry the activation an immersive session needs, so the
+// player's own first click has to. Clicks meant for a control are left alone:
+// reaching for the name field is not a request to put the headset on.
+function enterXROnFirstGesture(enterXR) {
+  showMessage('Click anywhere to enter VR');
+  const handler = (event) => {
+    if (event.target?.closest?.('button, input, select, a, label')) return;
+    window.removeEventListener('pointerdown', handler, true);
+    void enterXR();
+  };
+  window.addEventListener('pointerdown', handler, true);
+}
+
+// Opened in place of the 2D entry dialog, which a headset player cannot see.
+function openXRJoinMenu() {
+  if (!xrSettingsMenuOpen) toggleXRSettingsMenu();
+  setXRSettingsMenuScreen('player');
+}
+
 function applyXRJoinSelection() {
+  // The 2D dialog is open if the player entered XR from it, and it holds the
+  // game paused until it closes.
+  if (isEntryDialogOpen()) toggleEntryDialog();
   gameplayJoinConfirmed = false;
   updatePlayerTeamSelectorAvailability();
   sendToServer({
@@ -6863,11 +6993,20 @@ function activateXRSettingsMenuSelection(item) {
   else if (item.id === 'voiceBtn') setXRSettingsMenuScreen('voice');
   else if (item.id === 'operatorBtn') setXRSettingsMenuScreen('operator');
   else if (item.id === 'rejoinXR') applyXRJoinSelection();
+  else if (item.id === 'nameXR') beginXRTextEntry(myPlayerName, savePlayerName);
   else if (item.id === 'voicePermissionXR') requestVoicePermission();
   else if (item.id === 'voiceMicrophoneXR') toggleVoiceMicrophone();
   else if (item.id === 'voiceEchoXR') document.getElementById('voiceEchoCancellation')?.click();
   else if (item.id === 'voiceNoiseXR') document.getElementById('voiceNoiseSuppression')?.click();
   else if (item.id === 'voiceGainXR') document.getElementById('voiceAutoGainControl')?.click();
+  else if (item.id === 'operatorMotdXR') {
+    beginXRTextEntry(serverMotdText, (typed) => {
+      const motdInput = document.getElementById('motdInput');
+      if (!motdInput) return;
+      motdInput.value = typed;
+      document.getElementById('setMotdBtn')?.click();
+    });
+  }
   else if (item.id === 'operatorRestartXR') document.getElementById('restartBtn')?.click();
   else if (item.id === 'operatorApplyShotsXR') document.getElementById('setShotMaxActiveBtn')?.click();
   else if (item.id === 'operatorRefreshXR') setXRSettingsMenuScreen('operator');

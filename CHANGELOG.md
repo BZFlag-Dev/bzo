@@ -6,6 +6,27 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+### Added
+- A headset browser launching the installed app asks for an immersive session ahead of the rest of the client, so an app launched from its own icon can open in VR with no 2D landing page.
+- The XR menu asks for a name, team, and tank before an unjoined player joins, standing in for the entry dialog, which an immersive session cannot show.
+- Name and MOTD can be typed in XR through the headset's system keyboard. Headsets without one mark those rows Desktop only.
+- `[INSTALL]` log lines record the manifest and icon fetches that make up an install, with the browser that asked, since which icon a launcher takes is documented nowhere.
+
+### Fixed
+- Icons revalidate instead of being cached for a week, and the manifest points at a URL carrying each file's timestamp. A launcher keeps whichever icon it was shown at install time, so a stale one outlived every cache it came from.
+- The Settings Install row reads Installed inside the installed app. It asked whether the display mode was `standalone`, which an app launched from a `display: fullscreen` manifest is not, so the app reported itself uninstallable.
+
+### Changed
+- Every icon is green. BZFlag's marks are red and its forums are blue, so the colour is what tells a bzo icon from a BZFlag one; the manifest and page theme colour follow it.
+- Icon files are named for the manifest role they fill -- `any-`, `maskable-`, `tile-` -- with no product prefix, since nothing but icons lives in that directory.
+- The Settings Install row reads Browser menu where the browser never offers the install event, rather than Unavailable. Safari, Firefox and the headset browsers all install from their own menus.
+- Headset browsers are served their own app icons. A phone launcher crops a maskable icon and needs the art padded inside it; the Meta Quest app library letterboxes the same file and needs it padded not at all, which left the mark at half the tile inside a ring. The manifest, already generated per request, now branches on the user agent.
+- Leaving VR closes the window when the app was launched from a headset icon, instead of dropping the player onto a flat window they have no use for.
+- A headset launch keeps asking for its immersive session on each signal that could carry the activation it needs -- window load, focus, page show, visibility, and the Launch Handler -- rather than only once at load. If none of them lands, the first click in the window enters VR.
+- The radar range starts at Medium every session and is no longer remembered. It matches BZFlag's `displayRadarRange` default, and a headset has no way to zoom the radar, so a level saved on a desktop no longer follows the player into VR.
+- The one-tap VR button beside the settings gear is shown only on a device with a headset. Chrome on Android reports VR support on any phone through Cardboard, which put the button under the player's thumb during play; VR Mode is still in the Settings menu there.
+- Controller input is dropped whenever the headset reports the session unfocused, rather than only when it is hidden, so a stick held while the system keyboard or the headset's own menu is up no longer drives the tank.
+
 ## [1.0.40] - 2026-08-31
 
 ### Added

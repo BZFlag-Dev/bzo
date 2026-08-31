@@ -13,6 +13,18 @@
 // and Firefox never fire it and have no programmatic install, so the row reads
 // Unavailable there and the player uses the browser's own menu.
 
+// An installed launch runs in its own window rather than a browser tab. The
+// manifest asks for `display: fullscreen`, and the Fullscreen API reports that
+// same display mode, so the reading is taken once here, at load, before
+// anything in the page can go fullscreen and blur the two together.
+const launchedAsApp = ['fullscreen', 'standalone', 'minimal-ui']
+  .some((mode) => window.matchMedia(`(display-mode: ${mode})`).matches)
+  || window.navigator.standalone === true;
+
+export function isInstalledApp() {
+  return launchedAsApp;
+}
+
 let deferredPrompt = null;
 let installButton = null;
 let onStateChange = null;
@@ -30,25 +42,26 @@ window.addEventListener('appinstalled', () => {
   refreshInstallButton();
 });
 
-// An installed launch runs in its own window rather than a browser tab. The XR
-// session also reports fullscreen, which is harmless: either way the player is
-// past needing an install row.
-function isInstalled() {
-  return window.matchMedia('(display-mode: standalone)').matches
-    || window.matchMedia('(display-mode: minimal-ui)').matches
-    || window.navigator.standalone === true;
-}
-
 function installState() {
-  if (isInstalled()) return 'installed';
+  if (isInstalledApp()) return 'installed';
   return deferredPrompt ? 'available' : 'unavailable';
 }
+
+const INSTALL_TITLES = {
+  installed: 'Already installed',
+  available: 'Install as an app',
+  // Safari, Firefox and the headset browsers install from their own menus and
+  // never offer the event, so the row cannot do it for the player. Point at the
+  // menu that can rather than reporting a dead end.
+  unavailable: 'Install from the browser menu',
+};
 
 function refreshInstallButton() {
   if (!installButton) return;
   const state = installState();
   installButton.dataset.installState = state;
   installButton.disabled = state !== 'available';
+  installButton.title = INSTALL_TITLES[state];
   onStateChange?.();
 }
 

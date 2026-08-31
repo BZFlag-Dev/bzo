@@ -28,14 +28,19 @@ const PRECACHE = [
   '/index.html',
   '/styles.css',
   '/client.js',
+  '/xr-launch.js',
+  '/webxr.js',
+  '/install.js',
   '/vendor/three/three.module.js',
   '/vendor/three/three.core.js',
   '/favicon.svg',
 ];
 
 // Paths whose contents change only on release, and which cannot cause a
-// protocol desync if they lag.
-const ASSET_PATHS = /^\/(?:textures|obj|audio|icons|vendor)\//;
+// protocol desync if they lag. Icons are excluded: a launcher keeps whichever
+// one it was shown at install time, so a stale icon is the one kind that
+// outlives the cache it came from.
+const ASSET_PATHS = /^\/(?:textures|obj|audio|vendor)\//;
 
 self.addEventListener('install', (event) => {
   // Individually, so one missing asset does not fail the whole install.

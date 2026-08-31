@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="Battlezone Online">
   <title>Battlezone Online</title>
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#cc0000">
+  <meta name="theme-color" content="#4caf50">
   <meta name="description" content="Web based BZFlag like 3D multiplayer tank game, Battlezone Online">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="icon" sizes="48x48" href="favicon.ico">
@@ -72,7 +72,7 @@
         <button id="debugBtn" class="settingsHudBtn">Debug</button>
         <button id="debugGeometryBtn" class="settingsHudBtn" title="Show Debug Geometry">Debug Geometry</button>
         <button id="debugLabelsBtn" class="settingsHudBtn">Debug Labels</button>
-        <button id="radarZoomBtn" class="settingsHudBtn" title="Radar range preset">Radar: Long</button>
+        <button id="radarZoomBtn" class="settingsHudBtn" title="Radar range preset">Radar: Medium</button>
         <button id="cameraBtn" class="settingsHudBtn">Camera</button>
         <button id="helpBtn" class="settingsHudBtn">Help</button>
         <button id="operatorBtn" class="settingsHudBtn">Operator</button>
@@ -193,6 +193,11 @@
     </div>
   </div>
 
+  <!-- Raises the headset's system keyboard for the XR menus. It has to be a
+       real, laid-out field for focus to reach it, and one the page never
+       scrolls to, so it sits invisible in the corner of the viewport. -->
+  <input type="text" id="xrTextInput" class="xrTextField" maxlength="140" autocomplete="off" aria-hidden="true" tabindex="-1">
+
   <div id="helpPanel">
     <div class="dialogTitle">Help <button id="closeHelpBtn" class="closeBtn" type="button">&times;</button></div>
     <div id="helpContent" class="dialogContent">
@@ -202,7 +207,7 @@
         <li><strong>I</strong> — <b>Debug HUD</b> (or click the Debug button)</li>
         <li><strong>M</strong> — <b>Mouse Movement</b> (or click the Mouse Mode button)</li>
         <li><strong>-</strong>/<strong>+</strong> or <strong>Numpad -/+</strong> — <b>Radar Zoom</b></li>
-        <li><strong>\</strong> — <b>Radar Zoom Reset (Long)</b></li>
+        <li><strong>\</strong> — <b>Radar Zoom Reset (Medium)</b></li>
         <li><strong>Radar: ...</strong> button in Settings — <b>Cycle Short/Medium/Long presets</b></li>
         <li><strong>C</strong> — <b>Camera View</b> (or click the Camera button)</li>
         <li><strong>O</strong> — <b>Operator Panel</b> (or click the Operator button)</li>
@@ -294,6 +299,7 @@
       }
     }
   </script>
+  <script type="module" src="xr-launch.js"></script>
   <script type="module" src="client.js"></script>
 <!-- Mobile Controls Overlay (only visible on mobile) -->
 <div id="controlsOverlay">

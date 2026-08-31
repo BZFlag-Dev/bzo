@@ -742,14 +742,14 @@ function getSettingsMenuValue(id, item) {
   if (id === 'cameraBtn') return cameraModeLabel(hudContext.getCameraMode());
   if (id === 'radarZoomBtn') {
     const match = item.button.title.match(/Radar range preset:\s*(.+)/i);
-    return match?.[1] || 'Long';
+    return match?.[1] || 'Medium';
   }
   if (id === 'fullscreenBtn') return document.fullscreenElement ? 'On' : 'Off';
   if (id === 'wireframeBtn') return wireframeEnabled ? 'On' : 'Off';
   if (id === 'installBtn') {
     const state = item.button.dataset.installState;
     if (state === 'installed') return 'Installed';
-    return state === 'available' ? 'Install' : 'Unavailable';
+    return state === 'available' ? 'Install' : 'Browser menu';
   }
   if (id === 'xrBtn') {
     if (item.button.disabled) return 'Unavailable';

@@ -228,7 +228,7 @@ If you want automatic container updates, use your preferred container update man
 - `I` — toggle debug HUD
 - `+` or `Numpad +` — zoom radar out (increase range)
 - `-` or `Numpad -` — zoom radar in (decrease range)
-- `\` — reset radar zoom to baseline range (1.0x shot-distance)
+- `\` — reset radar zoom to the default medium range (0.5x shot-distance)
 - `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets
 - `B` — toggle nearby voice microphone
 - `/` or `?` — show/hide help panel
@@ -240,6 +240,29 @@ The VR mode uses native WebXR and requires a browser and headset that support
 For remote access, terminate TLS at the reverse proxy and open the game over
 `https://`; the client automatically uses `wss://` for its WebSocket connection
 when the page is served over HTTPS.
+
+A headset browser launching the installed app tries to enter VR with no 2D
+landing page. `xr-launch.js` asks for the session before the rest of the client
+loads, and keeps asking on each signal that could carry the user activation an
+immersive session needs -- window load, focus, page show, visibility change, and
+the Launch Handler -- with the renderer picking up whichever session results. If
+none of them lands, the first click in the flat window enters VR instead. Leaving VR closes that window, since the app was
+launched for VR and nothing behind the session is worth keeping. Everywhere else
+VR Mode starts from the button.
+
+A saved name joins immediately, and without one the XR menu opens on a Join
+screen carrying the same name, team, and tank choices as the 2D entry dialog, so
+nothing waits on a screen the player cannot see.
+
+Typing in XR uses the headset's own system keyboard, raised when the Name or
+MOTD row takes focus. Quest Browser 26.1 and later provide one; a headset that
+does not marks those rows Desktop only, and the player can still join under the
+name the server assigns. Each time the keyboard opens it starts a fresh edit, so
+the first key replaces the whole field rather than appending to it.
+
+The one-tap VR button beside the settings gear is shown only on a device with a
+headset, because Chrome on Android reports `immersive-vr` support on any phone
+through Cardboard; VR Mode stays in the Settings menu there.
 
 If the deployment sets a restrictive `Permissions-Policy` header, allow
 `xr-spatial-tracking=(self)`. The Node.js server does not terminate TLS itself,

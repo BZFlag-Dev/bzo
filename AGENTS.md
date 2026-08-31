@@ -43,6 +43,17 @@ These are deliberate. Do not "fix" them without being asked.
   it differs from upstream's as a consequence. Accepted for now -- do not report
   the model set or the explosion as parity gaps.
 
+- **The radar range is not saved between sessions.** BZFlag persists
+  `displayRadarRange` with the rest of BZDB. bzo starts every session at
+  upstream's `0.5` default (Medium) instead, because a headset has no key,
+  scroll wheel, or on-screen control to zoom the radar with -- a level left
+  behind by a desktop session would strand a headset player at a range they
+  cannot change.
+- **The one-tap VR button on the HUD is hidden on phones.** Chrome on Android
+  reports `immersive-vr` support on any phone, through Cardboard, so support
+  alone does not mean a headset is present. The Settings menu still offers VR
+  Mode there.
+
 The first two exist so a test session can be driven from the server alone. Re-testing
 otherwise means walking to every browser, phone, and headset and clicking. They
 may change once that stops being the dominant cost.
@@ -119,8 +130,8 @@ version appears.
 
 Because the client is unbundled ESM and the server is CommonJS, logic needed on
 both sides is kept as a **hand-maintained pair**: `public/<name>.mjs` and
-`server/<name>.cjs`. Current pairs are `shot-limits`, `player-teams`, `collision-geometry` and
-`tank-motion`. `npm run check:shared-pairs` enforces them: the two mirrored
+`server/<name>.cjs`. Current pairs are `shot-limits`, `player-teams`, `collision-geometry`,
+`tank-motion` and `headset-ua`. `npm run check:shared-pairs` enforces them: the two mirrored
 pairs must match line for line, and any name a hand-written pair exports on
 both sides must agree in type and arity. A pair that drifts does not throw --
 the client and server just quietly disagree about geometry, which surfaces as
@@ -274,6 +285,36 @@ flags, and `laser`/`shock`/`missile`/`burrow`/`phantom`/`steamroller`/`lock`
 need superflags. When adding one of those features, take its sound from upstream
 at the same time. The BZFlag sound codes are in `src/bzflag/sound.h`, resolved
 through the `soundFiles[]` table in `src/bzflag/sound.cxx`.
+
+## WebXR
+
+- **An immersive session shows no DOM.** Anything the player must read or answer
+  while in XR belongs on the `XRMenuRenderer` canvas panel, not in a dialog. The
+  Player Options screen doubles as the entry dialog: before the player joins it
+  is titled Join Game and carries name, team, and tank.
+- **The launch grant has not been observed.** Meta documents an app-icon launch
+  as counting for the user activation `requestSession` demands, but a Quest 2
+  installed from the browser reports `navigator.userActivation` as
+  `false/false` half a second into the launch and refuses the request.
+  `public/xr-launch.js` runs ahead of `client.js`, on a module graph small
+  enough to execute before three finishes loading, asks immediately, and then
+  again on window load, focus, page show, visibility change, and the Launch
+  Handler; `startXRSession` adopts whichever session results. Read
+  `server.log` for the `Launch session:` line, which names the signal and the
+  activation state at the time. Do not move that request into the client's own
+  startup, and do not remove the first-click fallback until a launch is seen to
+  grant one.
+- **Text entry is the headset's system keyboard.** Focusing a DOM text field
+  during a session raises it where the runtime offers one (`isSystemKeyboardSupported`,
+  Quest Browser 26.1+). `#xrTextInput` exists to receive that focus, because a
+  field inside a hidden dialog cannot take it and an off-screen field makes the
+  page scroll. The keyboard sends no key events -- only the field's value is
+  readable -- and each showing starts a new edit, so the first key replaces the
+  whole value. Do not build an in-panel keyboard for a case the runtime covers.
+- **Controller input is neutralized whenever `visibilityState` is not
+  `visible`.** The system keyboard and the headset's own menus both report
+  `visible-blurred`, and a stick left at full deflection behind either would
+  drive the tank blind.
 
 ## Dev Workflow
 

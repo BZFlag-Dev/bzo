@@ -7,6 +7,125 @@
 
 // WebXR Manager for VR/AR support (Quest 2, Viture Luma Ultra, etc.)
 
+import { isInstalledApp } from './install.js';
+import { isHandheldUA, isHeadsetBrowserUA } from './headset-ua.mjs';
+
+export function isHeadsetBrowser() {
+  return isHeadsetBrowserUA(navigator.userAgent);
+}
+
+// Only Settings offers VR Mode on a handheld: the one-tap HUD button would sit
+// under a thumb during play, and Cardboard support is not a headset. A desktop
+// reports support only when a runtime is attached, so it counts as having one.
+export function isHeadsetDevice() {
+  return isHeadsetBrowser() || !isHandheldUA(navigator.userAgent);
+}
+
+// Quest treats the app-icon launch itself as the user activation requestSession
+// demands, so an installed app can open immersive mode with no 2D landing page.
+export function isHeadsetAppLaunch() {
+  return isInstalledApp() && isHeadsetBrowser();
+}
+
+const XR_SESSION_FEATURES = { optionalFeatures: ['hand-tracking', 'local-floor'] };
+
+// An app launched from its own icon is meant to be able to open an immersive
+// session with no gesture of its own, but the headset does not necessarily hand
+// the activation over at navigation: asked at 0.5s into the load, Quest reports
+// `navigator.userActivation.hasBeenActive` still false. So ask once
+// immediately, from a module that depends on almost nothing, and then again on
+// each signal that could plausibly carry the grant, until one lands or the
+// launch window closes. `startXRSession` adopts whichever session results.
+export const XR_LAUNCH_SESSION_EVENT = 'webxrlaunchsession';
+const LAUNCH_RETRY_EVENTS = ['load', 'focus', 'pageshow'];
+const LAUNCH_WINDOW_MS = 15000;
+
+let pendingLaunchSession = null;
+let launchAttemptInFlight = false;
+let launchSessionTaken = false;
+let stopLaunchRetries = null;
+let launchReport = 'skipped';
+
+function describeActivation() {
+  const activation = navigator.userActivation;
+  return `${activation?.isActive}/${activation?.hasBeenActive}`;
+}
+
+function attemptLaunchSession(reason) {
+  if (xrSession || launchAttemptInFlight || launchSessionTaken || pendingLaunchSession) return;
+  launchAttemptInFlight = true;
+  const activation = describeActivation();
+  const attempt = navigator.xr.requestSession('immersive-vr', XR_SESSION_FEATURES)
+    .then((session) => {
+      launchReport = `granted on ${reason} (activation ${activation})`;
+      debugLog('Launch session ' + launchReport);
+      session.addEventListener('end', () => {
+        pendingLaunchSession = null;
+      }, { once: true });
+      return session;
+    })
+    .catch((error) => {
+      launchReport = `refused on ${reason} (activation ${activation}): ${error?.message || error}`;
+      debugLog('Launch session ' + launchReport);
+      return null;
+    });
+
+  pendingLaunchSession = attempt;
+  void attempt.then((session) => {
+    launchAttemptInFlight = false;
+    if (!session) {
+      // A promise that resolves to nothing must not read as a session in hand.
+      pendingLaunchSession = null;
+      return;
+    }
+    stopLaunchRetries?.();
+    window.dispatchEvent(new window.CustomEvent(XR_LAUNCH_SESSION_EVENT));
+  });
+}
+
+export function preflightHeadsetLaunch() {
+  if (!navigator.xr || !isHeadsetAppLaunch()) return;
+
+  const listener = (event) => attemptLaunchSession(event.type);
+  const consumeLaunch = () => attemptLaunchSession('launchQueue');
+  stopLaunchRetries = () => {
+    stopLaunchRetries = null;
+    for (const type of LAUNCH_RETRY_EVENTS) window.removeEventListener(type, listener);
+    document.removeEventListener('visibilitychange', listener);
+  };
+
+  for (const type of LAUNCH_RETRY_EVENTS) window.addEventListener(type, listener);
+  document.addEventListener('visibilitychange', listener);
+  // The Launch Handler API reports the launch itself, which is the moment the
+  // activation is meant to exist.
+  window.launchQueue?.setConsumer?.(consumeLaunch);
+  window.setTimeout(() => stopLaunchRetries?.(), LAUNCH_WINDOW_MS);
+
+  attemptLaunchSession('load start');
+}
+
+export function hasLaunchSession() {
+  return Boolean(pendingLaunchSession);
+}
+
+async function takePendingLaunchSession() {
+  if (!pendingLaunchSession) return null;
+  const session = await pendingLaunchSession;
+  pendingLaunchSession = null;
+  if (session) {
+    launchSessionTaken = true;
+    stopLaunchRetries?.();
+  }
+  return session;
+}
+
+// Focusing a DOM text field during a session raises the headset's own keyboard
+// where the runtime offers one, which is the only text entry an immersive
+// session has short of a paired hardware keyboard.
+export function isSystemKeyboardSupported() {
+  return Boolean(xrSession?.isSystemKeyboardSupported);
+}
+
 let xrSession = null;
 let xrSupported = false;
 let xrEnabled = false;
@@ -140,12 +259,14 @@ async function startXRSession(renderer, animationCallback) {
   let session = null;
 
   try {
-    debugLog('About to call navigator.xr.requestSession with mode: ' + xrMode);
-    // Request XR session (AR or VR based on device support)
-    const sessionFeatures = {
-      optionalFeatures: ['hand-tracking', 'local-floor'],
-    };
-    session = await navigator.xr.requestSession(xrMode, sessionFeatures);
+    session = await takePendingLaunchSession();
+    if (session) {
+      debugLog('Adopting the session requested at launch');
+      xrMode = 'immersive-vr';
+    } else {
+      debugLog('About to call navigator.xr.requestSession with mode: ' + xrMode);
+      session = await navigator.xr.requestSession(xrMode, XR_SESSION_FEATURES);
+    }
 
     debugLog('XR session (mode=' + xrMode + ') created successfully');
     xrSession = session;
@@ -212,7 +333,7 @@ function createXRSessionLifecycle(session, renderer) {
       return;
     }
 
-    if (session.visibilityState === 'hidden') {
+    if (session.visibilityState !== 'visible') {
       xrState.headPose = null;
       resetXRControllerStates();
       xrState.controllers.clear();
@@ -427,7 +548,9 @@ export function updateXRControllerInput() {
     return;
   }
 
-  if (xrSession.visibilityState === 'hidden') {
+  // The system keyboard and the headset's own menus report visible-blurred, and
+  // neither should leave a stick or trigger driving the tank behind them.
+  if (xrSession.visibilityState !== 'visible') {
     resetXRControllerStates();
     xrState.controllers.clear();
     return;
@@ -553,7 +676,19 @@ export function getXRControllerInput() {
 
 // Export API
 export async function initXR() {
-  return await checkXRSupport();
+  // Settle the first request before reporting: it is the one attempt whose
+  // outcome predates the debug channel.
+  if (pendingLaunchSession) await pendingLaunchSession;
+  debugLog('Launch session: ' + launchReport);
+  const mode = await checkXRSupport();
+  // A granted launch session is proof enough, whatever the support probe said.
+  if (pendingLaunchSession) {
+    xrMode = 'immersive-vr';
+    xrSupported = true;
+    xrState.isSupported = true;
+    return 'vr';
+  }
+  return mode;
 }
 
 export async function toggleXRSession(renderer, animationCallback) {

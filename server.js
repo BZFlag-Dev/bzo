@@ -34,6 +34,7 @@ const {
 } = require('./server/player-teams.cjs');
 const path = require('path');
 const fs = require('fs');
+const { isHeadsetBrowserUA } = require('./server/headset-ua.cjs');
 
 
 // Common log function: logs to console and to server.log
@@ -69,12 +70,14 @@ const EXAMPLE_CONFIG_PATH = path.join(__dirname, 'example-server.json');
 // Cache policy. Markup, styles and scripts must revalidate on every load: the
 // client/server protocol is lockstep, so a client older than the running server
 // is a desync, not a stale pixel. Only content that cannot change behaviour --
-// textures, models, audio, icons -- is cached without asking.
+// textures, models, audio -- is cached without asking. Icons are not among
+// them: a launcher captures one at install time and keeps it for the life of
+// the installation, so a stale icon outlives every other kind.
 const REVALIDATE = 'no-cache';
 const ASSET_MAX_AGE = 604800; // 7 days
 
 function setStaticHeaders(res, filePath) {
-  if (/\.(?:html|css|js|mjs)$/.test(filePath)) {
+  if (/\.(?:html|css|js|mjs)$/.test(filePath) || filePath.includes(`${path.sep}icons${path.sep}`)) {
     res.setHeader('Cache-Control', REVALIDATE);
   } else {
     res.setHeader('Cache-Control', `public, max-age=${ASSET_MAX_AGE}`);
@@ -149,6 +152,16 @@ app.get(['/', '/index.html'], (req, res) => {
   res.type('html').send(renderIndex(host));
 });
 
+// Which icon a launcher takes from the manifest is documented nowhere and the
+// platforms disagree, so log the fetches: the pair of lines names the browser
+// that asked and the file it settled on.
+app.use((req, res, next) => {
+  if (req.path === '/manifest.webmanifest' || req.path.startsWith('/icons/')) {
+    log(`[INSTALL] ${req.path} ua="${req.get('user-agent') || ''}"`);
+  }
+  next();
+});
+
 // Serve static files
 app.use(express.static('public', { setHeaders: setStaticHeaders }));
 
@@ -210,18 +223,28 @@ app.get('/api/tank-models', (req, res) => {
 // host the client asked for, verbatim. Two hosts pointing at different servers
 // then install as two separately-named apps. TLS terminates at a reverse proxy
 // (see README), so the forwarded header carries the host the client sent.
+//
+// The icons vary by browser for a second reason, in `docs/icons.md`: a phone
+// launcher crops a maskable icon and needs the art padded inside it, while a
+// headset library letterboxes the same file and needs it padded not at all.
 app.get('/manifest.webmanifest', (req, res) => {
   const host = requestHost(req);
   if (!host) {
     res.status(400).type('text/plain').send('Malformed Host header');
     return;
   }
+  const headset = isHeadsetBrowserUA(req.get('user-agent'));
+  // The icon URL carries the file's own timestamp: a browser that cached an
+  // icon days ago holds a response it still considers fresh, and would not ask
+  // again until it expired, long after the artwork changed.
   const icon = (file, size, purpose) => ({
-    src: `/icons/${file}`,
+    src: `/icons/${file}?v=${Math.floor(fs.statSync(path.join(__dirname, 'public', 'icons', file)).mtimeMs)}`,
     sizes: `${size}x${size}`,
     type: 'image/png',
     purpose,
   });
+  // A shared cache must not hand one device the other's manifest.
+  res.set('Vary', 'User-Agent');
   res.set('Cache-Control', REVALIDATE);
   res.type('application/manifest+json').send(JSON.stringify({
     id: '/',
@@ -234,15 +257,15 @@ app.get('/manifest.webmanifest', (req, res) => {
     display_override: ['fullscreen', 'standalone', 'minimal-ui'],
     orientation: 'any',
     background_color: '#000000',
-    theme_color: '#cc0000',
+    theme_color: '#4caf50',
     categories: ['games'],
     launch_handler: { client_mode: 'focus-existing' },
     icons: [
-      icon('bzflag-192.png', 192, 'any'),
-      icon('bzflag-512.png', 512, 'any'),
-      icon('bzflag-1024.png', 1024, 'any'),
-      icon('bzflag-maskable-192.png', 192, 'maskable'),
-      icon('bzflag-maskable-512.png', 512, 'maskable'),
+      icon(headset ? 'tile-192.png' : 'any-192.png', 192, 'any'),
+      icon(headset ? 'tile-512.png' : 'any-512.png', 512, 'any'),
+      icon(headset ? 'tile-1024.png' : 'any-1024.png', 1024, 'any'),
+      icon(headset ? 'tile-192.png' : 'maskable-192.png', 192, 'maskable'),
+      icon(headset ? 'tile-512.png' : 'maskable-512.png', 512, 'maskable'),
     ],
   }, null, 2));
 });
