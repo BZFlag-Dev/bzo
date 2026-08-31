@@ -6,6 +6,34 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.40] - 2026-08-31
+
+### Added
+- Installable as an app on mobile, desktop, and Meta Quest. The web app manifest is generated per request, so a server installs under the host it was reached at and two servers appear as separate apps.
+- Added the BZFlag application icon at up to 1024x1024 for launchers and home screens, including maskable variants that survive Android's circular crop and an Apple touch icon. The simple tank mark stays the browser tab icon.
+- Added a service worker. Images, audio, models, and Three.js load from disk; HTML and JavaScript revalidate on every start, so a cached client can never outlive the server it talks to.
+- Added an Install App row to Settings, offered only when the browser reports the game is installable and not already installed.
+- Added `maps/collision-test.bzw` and an optional `testSpawn` block in `server.json`, which place a named player at a fixed position for automated collision testing.
+- Added `npm run check:shared-pairs`, which fails when a `public/*.mjs` and `server/*.cjs` pair drift apart. A drifted pair does not throw; the client and server just disagree about geometry.
+
+### Changed
+- Tanks collide as BZFlag's oriented 2.8 x 6.0 box rather than a 4-unit circle, so a tank is narrower across and longer front to back, and turning near a wall behaves as it does upstream. Every tank uses this box whatever model is selected, so the model stays cosmetic.
+- Movement resolves the way BZFlag does: on contact the timestep is searched for the last moment the tank was clear, then the velocity component along the surface normal is cancelled and the rest of the step is spent sliding. This replaces expanding obstacles by the tank radius, which cannot work for a rotated box.
+- Serve Three.js from the installed dependency instead of a CDN, so the game has no third-party origins and loads on a headset or a LAN with no route to the internet.
+- Fire rate is limited by shot slots alone, matching bzfs, which has no elapsed-time check. The previous reload timer compared consecutive shots one reload apart, the interval network jitter lands in, and rejected honest shots.
+- Rejected shots are logged as anti-cheat events and counted in the periodic summary, and shot logs use the `shotBegin` and `shotEnd` names the protocol already uses.
+- `npm run dev` restarts the server if it exits, so a crash no longer leaves it stopped.
+- Settings toggles show On in green and Off in red. Off was previously green, which read as backwards.
+
+### Fixed
+- A malformed WebSocket frame from any client crashed the whole server. Sockets had no error listener, so a protocol violation became an uncaught exception.
+- Clicking the settings, VR, or player-name controls no longer fires the tank.
+- Clicking outside a dialog closes it without firing, and the next click fires normally.
+- Driving off the edge of an obstacle no longer strands the tank. Support and standing-on-top now use the same test, rather than a margin tuned for the old circular footprint.
+- `public/favicon.ico` was a text file containing a data URI, so any client requesting the default icon path received garbage. It is now a real multi-size icon.
+- Styles are revalidated rather than cached for a week, so a CSS change reaches players without a forced reload.
+- The page title and iOS home-screen name identify the server rather than reading "Battlezone Online" on every host.
+
 ## [1.0.39] - 2026-08-30
 
 ### Added
