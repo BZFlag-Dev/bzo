@@ -26,6 +26,11 @@ import {
   loadAudioBuffer,
 } from './audio.js';
 import {
+  createAudioVolumeState,
+  setAudioVolume as setAudioVolumeState,
+  toggleAudioMute,
+} from './audio-volume.mjs';
+import {
   createBoundaryTexture,
   createBoxWallTexture,
   createBaseTopTexture,
@@ -455,6 +460,7 @@ class RenderManager {
     this.renderer = null;
     this.labelRenderer = null;
     this.audioListener = null;
+    this.audioVolumeState = createAudioVolumeState();
     // Gameplay sample buffers, keyed by GAME_SOUNDS name.
     this.soundBuffers = new Map();
     this.container = null;
@@ -584,6 +590,7 @@ class RenderManager {
 
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
+    this._applyGameAudioVolume();
     // Sample buffers are filled by preloadGameplayAudio() on map entry.
 
     this._initDynamicLights();
@@ -672,6 +679,33 @@ class RenderManager {
       this.camera.remove(sound);
       sound.disconnect();
     };
+  }
+
+  getGameAudioState() {
+    return { ...this.audioVolumeState };
+  }
+
+  setGameAudioState(state) {
+    this.audioVolumeState = createAudioVolumeState(state);
+    this._applyGameAudioVolume();
+    return this.getGameAudioState();
+  }
+
+  setGameAudioVolume(value) {
+    this.audioVolumeState = setAudioVolumeState(this.audioVolumeState, value);
+    this._applyGameAudioVolume();
+    return this.getGameAudioState();
+  }
+
+  toggleGameAudioMute() {
+    this.audioVolumeState = toggleAudioMute(this.audioVolumeState);
+    this._applyGameAudioVolume();
+    return this.getGameAudioState();
+  }
+
+  _applyGameAudioVolume() {
+    if (!this.audioListener || typeof this.audioListener.setMasterVolume !== 'function') return;
+    this.audioListener.setMasterVolume(this.audioVolumeState.volume / 100);
   }
 
   getRenderCapabilities() {

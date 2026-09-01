@@ -12,6 +12,7 @@ import { getXRControllerInput, xrState } from './webxr.js';
 import { focusFirstDialogControl, getVisibleDialogRoot, handleDialogControllerInput, handleDialogKeydown, hideDialog, showDialog } from './menus.js';
 import { initSettingsMenu } from './settings.js';
 import { INPUT_CONTEXT, InputContextManager } from './input-context.mjs';
+import { createAudioVolumeState } from './audio-volume.mjs';
 
 // Shared virtual input state exposed to the game loop.
 export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
@@ -560,6 +561,9 @@ const defaultHudContext = {
   toggleEntryDialog: () => {},
   getChatInput: () => null,
   handleGameplayKeydown: () => false,
+  getGameAudioState: () => createAudioVolumeState(),
+  setGameAudioVolume: () => createAudioVolumeState(),
+  toggleGameAudioMute: () => createAudioVolumeState(),
 };
 
 let hudContext = { ...defaultHudContext };
@@ -575,6 +579,10 @@ const domRefs = {
   helpBtn: null,
   playerOptionsBtn: null,
   settingsBtn: null,
+  audioBtn: null,
+  audioVolumePanel: null,
+  audioVolumeSlider: null,
+  audioVolumeValue: null,
   settingsHud: null,
   voiceBtn: null,
   voiceOverlay: null,
@@ -644,8 +652,8 @@ const GAMEPLAY_OWNED_KEYS = new Set([
   'KeyN', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'BracketLeft', 'BracketRight', 'Period', 'Comma',
   'PageUp', 'PageDown', 'End',
-  // View, HUD, radar, help
-  'KeyM', 'KeyC', 'KeyO', 'KeyF', 'KeyI', 'KeyB',
+  // View, HUD, radar, help, and game audio
+  'KeyM', 'KeyC', 'KeyO', 'KeyF', 'KeyI', 'KeyB', 'KeyV',
   'Slash', 'Backslash', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract',
   // Not a binding: Firefox opens its link quick-find on an apostrophe and eats
   // the keyboard until dismissed, which from inside a tank looks like a freeze.
@@ -841,8 +849,81 @@ function updateSettingsBtn() {
   domRefs.settingsBtn.title = visible ? 'Hide Settings' : 'Show Settings';
 }
 
+function getGameAudioState() {
+  try {
+    return createAudioVolumeState(hudContext.getGameAudioState());
+  } catch {
+    return createAudioVolumeState();
+  }
+}
+
+function updateAudioVolumeUi(state = null) {
+  const current = createAudioVolumeState(state || getGameAudioState());
+  const value = current.muted ? 0 : current.volume;
+  if (domRefs.audioVolumeSlider) {
+    domRefs.audioVolumeSlider.value = String(value);
+    domRefs.audioVolumeSlider.setAttribute('aria-valuenow', String(value));
+    domRefs.audioVolumeSlider.setAttribute('aria-valuetext', `${value}%${current.muted ? ' (muted)' : ''}`);
+  }
+  if (domRefs.audioVolumeValue) {
+    domRefs.audioVolumeValue.textContent = `${value}%`;
+  }
+  if (domRefs.audioBtn) {
+    domRefs.audioBtn.dataset.muted = String(current.muted);
+    domRefs.audioBtn.setAttribute('aria-pressed', String(current.muted));
+    domRefs.audioBtn.title = current.muted ? 'Unmute game audio (V)' : 'Mute game audio (V)';
+    domRefs.audioBtn.setAttribute('aria-label', current.muted ? 'Unmute game audio' : 'Mute game audio');
+  }
+  return current;
+}
+
+function updateAudioPanelMetrics() {
+  const button = domRefs.audioBtn;
+  const shell = button?.closest('#playerHudShell');
+  if (!button || !shell) return;
+  const width = Math.round(button.getBoundingClientRect().width);
+  if (width > 0) shell.style.setProperty('--audio-control-width', `${width}px`);
+  const mainHud = document.getElementById('mainhud');
+  const height = Math.round(mainHud?.getBoundingClientRect().height || 0);
+  if (height > 0) document.documentElement.style.setProperty('--player-hud-height', `${height}px`);
+}
+
+function setAudioVolumePanelOpen(open, { focusSlider = false } = {}) {
+  if (!domRefs.audioVolumePanel) return false;
+  const visible = Boolean(open);
+  domRefs.audioVolumePanel.classList.toggle('is-open', visible);
+  domRefs.audioVolumePanel.setAttribute('aria-hidden', String(!visible));
+  domRefs.audioBtn?.setAttribute('aria-expanded', String(visible));
+  if (visible) {
+    updateAudioPanelMetrics();
+    if (focusSlider) domRefs.audioVolumeSlider?.focus();
+  }
+  return visible;
+}
+
+function closeAudioVolumePanel({ restoreFocus = false } = {}) {
+  if (!domRefs.audioVolumePanel?.classList.contains('is-open')) return false;
+  setAudioVolumePanelOpen(false);
+  if (restoreFocus) domRefs.audioBtn?.focus();
+  return true;
+}
+
+function setAudioVolumeFromUi(value) {
+  const state = hudContext.setGameAudioVolume(Number(value));
+  return updateAudioVolumeUi(state);
+}
+
+function toggleGameAudioMuteFromUi({ announce = true } = {}) {
+  const state = updateAudioVolumeUi(hudContext.toggleGameAudioMute());
+  if (announce) {
+    hudContext.showMessage(`Game audio: ${state.muted ? 'Muted' : `${state.volume}%`}`);
+  }
+  return state;
+}
+
 function toggleSettingsHud() {
   if (!domRefs.settingsHud) return;
+  closeAudioVolumePanel();
   const visible = domRefs.settingsHud.style.display === 'block';
   if (visible) {
     hideDialog(domRefs.settingsHud);
@@ -883,6 +964,7 @@ function updateVoiceBtn() {
 
 function toggleVoiceOverlay() {
   if (!domRefs.voiceOverlay) return;
+  closeAudioVolumePanel();
   const visible = domRefs.voiceOverlay.style.display === 'block';
   if (visible) {
     hideDialog(domRefs.voiceOverlay);
@@ -906,6 +988,7 @@ function updateHelpBtn() {
 
 function toggleHelpPanel() {
   if (!domRefs.helpPanel) return;
+  closeAudioVolumePanel();
   const visible = domRefs.helpPanel.style.display === 'block';
   if (visible) {
     hideDialog(domRefs.helpPanel);
@@ -1089,6 +1172,7 @@ function updateOperatorBtn() {
 
 export function toggleOperatorPanel() {
   if (!domRefs.operatorOverlay) return;
+  closeAudioVolumePanel();
   const currentVisible = isOperatorPanelVisible();
   if (currentVisible) {
     hideDialog(domRefs.operatorOverlay);
@@ -1119,6 +1203,14 @@ export function toggleOperatorPanel() {
 // A click outside an open dialog dismisses it. The entry dialog is excluded:
 // it is the join prompt, not something a stray click should cancel.
 export function dismissDialogFromOutsideClick(target) {
+  if (
+    domRefs.audioVolumePanel?.classList.contains('is-open') &&
+    !domRefs.audioVolumePanel.contains(target) &&
+    !domRefs.audioBtn?.contains(target)
+  ) {
+    closeAudioVolumePanel();
+    return true;
+  }
   const visibleDialog = getVisibleDialogRoot();
   if (!visibleDialog || visibleDialog.id === 'entryDialog') return false;
   if (visibleDialog.contains(target)) return false;
@@ -1176,6 +1268,10 @@ function bindHudElements() {
   domRefs.helpBtn = document.getElementById('helpBtn');
   domRefs.playerOptionsBtn = document.getElementById('playerOptionsBtn');
   domRefs.settingsBtn = document.getElementById('settingsBtn');
+  domRefs.audioBtn = document.getElementById('audioBtn');
+  domRefs.audioVolumePanel = document.getElementById('audioVolumePanel');
+  domRefs.audioVolumeSlider = document.getElementById('audioVolumeSlider');
+  domRefs.audioVolumeValue = document.getElementById('audioVolumeValue');
   domRefs.settingsHud = document.getElementById('settingsHud');
   domRefs.voiceBtn = document.getElementById('voiceBtn');
   domRefs.voiceOverlay = document.getElementById('voiceOverlay');
@@ -1198,6 +1294,7 @@ function bindHudElements() {
   stopPropagationForHud(['chatHud', 'debugHud', 'radarHud', 'controlsOverlay', 'helpPanel']);
   // Settings controls include native selects and checkboxes. Stop gameplay
   // input from escaping the panel without cancelling their default behavior.
+  stopPropagationForHud(['audioVolumePanel'], false);
   stopPropagationForHud(['settingsHud'], false);
   stopPropagationForHud(['voiceOverlay'], false);
   stopPropagationForHud(['operatorOverlay'], false);
@@ -1271,6 +1368,24 @@ function bindHudElements() {
       e.stopPropagation();
       toggleSettingsHud();
     });
+  }
+
+  if (domRefs.audioBtn) {
+    domRefs.audioBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleGameAudioMuteFromUi();
+      setAudioVolumePanelOpen(true);
+    });
+  }
+
+  if (domRefs.audioVolumeSlider) {
+    const handleAudioVolumeInput = (e) => {
+      e.stopPropagation();
+      setAudioVolumeFromUi(e.currentTarget.value);
+    };
+    domRefs.audioVolumeSlider.addEventListener('input', handleAudioVolumeInput);
+    domRefs.audioVolumeSlider.addEventListener('change', handleAudioVolumeInput);
   }
 
   if (domRefs.playerOptionsBtn) {
@@ -1367,6 +1482,10 @@ function bindHudElements() {
       if (handleDialogKeydown(e, { dismissDialog: dismissVisibleDialog })) {
         return;
       }
+      if (e.key === 'Escape' && closeAudioVolumePanel({ restoreFocus: true })) {
+        e.preventDefault();
+        return;
+      }
       if (activeElement === chatInput) return;
       const entryInput = document.getElementById('entryInput');
       if (activeElement === entryInput) return;
@@ -1378,6 +1497,10 @@ function bindHudElements() {
       if (isGameplayOwnedKey(e)) e.preventDefault();
 
       setGameplayKeyState(e.code, true);
+      if ((e.code === 'KeyV' || e.key === 'v' || e.key === 'V') && !e.repeat) {
+        toggleGameAudioMuteFromUi();
+        return;
+      }
       if (hudContext.handleGameplayKeydown(e)) return;
 
       if (e.key === 'm' || e.key === 'M') {
@@ -1432,6 +1555,16 @@ function bindHudElements() {
     refreshHudButtons();
   });
   restoreFullscreenOnFirstGesture();
+
+  updateAudioVolumeUi();
+  updateAudioPanelMetrics();
+  window.addEventListener('resize', updateAudioPanelMetrics);
+  if (domRefs.audioBtn && typeof window.ResizeObserver === 'function') {
+    const hudLayoutObserver = new window.ResizeObserver(updateAudioPanelMetrics);
+    hudLayoutObserver.observe(domRefs.audioBtn);
+    const mainHud = document.getElementById('mainhud');
+    if (mainHud) hudLayoutObserver.observe(mainHud);
+  }
 
   updateSettingsBtn();
   updateHelpBtn();

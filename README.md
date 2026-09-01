@@ -241,6 +241,7 @@ If you want automatic container updates, use your preferred container update man
 - `\` — reset radar zoom to the default medium range (0.5x shot-distance)
 - `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets
 - `B` — toggle nearby voice microphone
+- `V` — mute/unmute game audio; click the speaker button to reveal the 0–100% volume slider
 - `/` or `?` — show/hide help panel
 
 ## WebXR

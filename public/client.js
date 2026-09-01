@@ -137,6 +137,7 @@ import { createVoiceManager } from './voice.js';
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
 import { getSoundPaths } from './audio.js';
+import { readAudioVolumeState, writeAudioVolumeState } from './audio-volume.mjs';
 import { setupInstallPrompt } from './install.js';
 import {
   getColliderLocalPoint,
@@ -151,6 +152,38 @@ import {
   testOrigRectTank,
 } from './collision.mjs';
 import { resolveTankMotion } from './motion.mjs';
+
+function readPersistedGameAudioState() {
+  try {
+    return readAudioVolumeState(window.localStorage);
+  } catch {
+    return readAudioVolumeState(null);
+  }
+}
+
+function persistGameAudioState(state) {
+  try {
+    writeAudioVolumeState(window.localStorage, state);
+  } catch {
+    // A blocked storage area must not stop the audio controls from working.
+  }
+}
+
+function setGameAudioVolume(value) {
+  const state = renderManager.setGameAudioVolume(value);
+  persistGameAudioState(state);
+  return state;
+}
+
+function toggleGameAudioMute() {
+  const state = renderManager.toggleGameAudioMute();
+  persistGameAudioState(state);
+  return state;
+}
+
+// Hydrate the renderer before the HUD binds, so the first visible state and the
+// AudioListener gain agree even while the initial scene is still loading.
+renderManager.setGameAudioState(readPersistedGameAudioState());
 
 // Register the service worker that makes the game installable and serves its
 // assets from disk. The version rides in the script URL, so a release changes
@@ -2377,6 +2410,9 @@ initHudControls({
   sendToServer: (payload) => sendToServer(payload),
   requestVoicePermission,
   toggleVoiceMicrophone,
+  getGameAudioState: () => renderManager.getGameAudioState(),
+  setGameAudioVolume,
+  toggleGameAudioMute,
   getScene: () => scene,
   getChatInput: () => chatInput,
   toggleEntryDialog,
