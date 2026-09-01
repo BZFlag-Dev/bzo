@@ -147,4 +147,36 @@ assert.deepEqual(getTeamScoreDeltasForKill(undefined, BLUE), [{ team: BLUE, wins
 // Observers are not a colour team either way.
 assert.deepEqual(getTeamScoreDeltasForKill(PLAYER_TEAM.OBSERVER, PLAYER_TEAM.OBSERVER), []);
 
+// Capture scoring, against bzfs.cxx:4010.
+const { getTeamScoreDeltasForCapture } = serverTeams;
+
+// Taking an enemy flag home: a win for the capper, a loss for the flag's team.
+assert.deepEqual(getTeamScoreDeltasForCapture(RED, BLUE), [
+  { team: RED, wins: 1, losses: 0 },
+  { team: BLUE, wins: 0, losses: 1 },
+]);
+
+// Carrying your own flag onto an enemy base wins nobody anything. The capper is
+// on the team that just lost it, so `cappingTeam` is null.
+assert.deepEqual(getTeamScoreDeltasForCapture(null, RED), [{ team: RED, wins: 0, losses: 1 }]);
+// The same holds if a caller names the capping team anyway.
+assert.deepEqual(getTeamScoreDeltasForCapture(RED, RED), [{ team: RED, wins: 0, losses: 1 }]);
+
+// Rogues cannot capture and have no flag to lose.
+assert.deepEqual(getTeamScoreDeltasForCapture(ROGUE, BLUE), [{ team: BLUE, wins: 0, losses: 1 }]);
+assert.deepEqual(getTeamScoreDeltasForCapture(RED, ROGUE), [{ team: RED, wins: 1, losses: 0 }]);
+assert.deepEqual(getTeamScoreDeltasForCapture(ROGUE, ROGUE), []);
+
+// The client and the server must agree about both rules.
+const { getTeamScoreDeltasForCapture: clientCaptureRule } = await import('../public/teams.mjs');
+for (const capping of [RED, BLUE, ROGUE, PLAYER_TEAM.OBSERVER, null, undefined]) {
+  for (const capped of [RED, BLUE, ROGUE, PLAYER_TEAM.OBSERVER]) {
+    assert.deepEqual(
+      getTeamScoreDeltasForCapture(capping, capped),
+      clientCaptureRule(capping, capped),
+      `capture rule diverged for ${String(capping)} capping ${capped}`
+    );
+  }
+}
+
 console.log('player team tests passed');

@@ -12,14 +12,35 @@ require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
 const { normalizeShotSlotCount } = require('./server/shots.cjs');
 const {
+  BASE_SIZE,
+  BZFLAG_TANK_RADIUS,
+  FLAG_ABBREVIATIONS,
+  FLAG_ALTITUDE,
+  FLAG_CLEARANCE,
+  FLAG_ENDURANCE,
+  FLAG_GRAB_LEVEL_TOLERANCE,
+  FLAG_QUALITY,
+  FLAG_RADIUS,
+  FLAG_STATUS,
+  MAX_FLAG_GRABS,
+  SUPER_FLAG_HALF_LIFE_SECONDS,
+  computeFlagFlight,
+  getFlagType,
+  getTeamFlagAbbreviation,
+  isTeamFlag,
+} = require('./server/flags.cjs');
+const {
   documentTitle,
   escapeHtml,
   sanitizeHost,
   shortHostName,
 } = require('./server/server-name.cjs');
 const {
+  getBaseTeamAtPoint,
+  getBaseTopY,
   getColliderLocalPoint,
   getTankLocalAngle,
+  isOverFlatTop,
   pyramidIntersectsCylinder,
   pyramidIntersectsTank,
   testOrigRectTank,
@@ -32,6 +53,10 @@ const {
   getPlayerTeamColor,
   getInitialPlayerColor,
   isColorTeam,
+  isColorTeamIndex,
+  getTeamColorIndex,
+  getTeamFromColorIndex,
+  getTeamScoreDeltasForCapture,
   getTeamScoreDeltasForKill,
 } = require('./server/teams.cjs');
 const path = require('path');
@@ -329,6 +354,7 @@ const GAME_CONFIG = {
   MAX_SPEED_TOLERANCE: 1.5, // Allow 50% tolerance for latency
   SHOT_POSITION_TOLERANCE: 2, // Max distance shot can be from claimed position
   PAUSE_COUNTDOWN: 2000, // ms
+  RESPAWN_DELAY: 5000, // ms; BZFlag _explodeTime, which is also its _rejoinTime
   JUMP_VELOCITY: 19, // BZFlag _jumpVelocity default
   GRAVITY: 9.8, // BZFlag _gravity magnitude (units per second squared)
   JUMP_COOLDOWN: 500, // ms between jumps
@@ -672,11 +698,41 @@ if (MAP_SOURCE !== 'random') {
   }
 }
 
+// The `options` block of a BZW file carries bzfs command-line switches. Team
+// mode is read out of it by the `teams` pair, because both sides need it; these
+// are the ones only the server acts on, so they stay here.
+//
+// Returns undefined for a switch the map does not mention, so the server config
+// keeps its say.
+function parseBZWServerOptions(lines) {
+  let inOptions = false;
+  const options = {};
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (!inOptions) {
+      if (line === 'options') inOptions = true;
+      continue;
+    }
+    if (line === 'end') {
+      inOptions = false;
+      continue;
+    }
+    const [option] = line.split(/\s+/, 1);
+    // -fb: superflags may come to rest on buildings, and may spawn on them.
+    if (option === '-fb') options.flagsOnBuildings = true;
+  }
+
+  return options;
+}
+
 // Parse a BZW file and convert to obstacle format
 function parseBZWMap(filename) {
   const text = fs.readFileSync(filename, 'utf8');
   const lines = text.split(/\r?\n/);
   const teamMode = parseBZWTeamMode(lines);
+  const serverOptions = parseBZWServerOptions(lines);
   const obstacles = [];
   const teleporters = [];
   const parsedLinks = [];
@@ -971,6 +1027,7 @@ function parseBZWMap(filename) {
     obstacles,
     teleporterGraph,
     teamMode,
+    serverOptions,
   };
 }
 
@@ -1032,6 +1089,7 @@ function generateObstacles() {
 let OBSTACLES;
 let TELEPORTER_GRAPH = { teleporters: [], links: [] };
 let mapTeamMode = null;
+let mapServerOptions = {};
 if (MAP_SOURCE === 'random') {
   OBSTACLES = generateObstacles();
   TELEPORTER_GRAPH = { teleporters: [], links: [] };
@@ -1041,6 +1099,7 @@ if (MAP_SOURCE === 'random') {
   OBSTACLES = mapData.obstacles;
   TELEPORTER_GRAPH = mapData.teleporterGraph;
   mapTeamMode = mapData.teamMode;
+  mapServerOptions = mapData.serverOptions;
   log(`Loaded ${OBSTACLES.length} obstacles from ${mapPath}`);
   log(`Loaded ${TELEPORTER_GRAPH.links.length} teleporter face links from ${mapPath}`);
 }
@@ -1088,6 +1147,19 @@ function getTeamScoreState() {
 function broadcastTeamScores() {
   if (!TEAM_MODE.enabled) return;
   broadcastAll({ type: 'teamUpdate', teams: getTeamScoreState() });
+}
+
+// A capture moves the team score, and nothing else does outside a kill.
+function recordTeamScoreForCapture(cappingTeam, cappedTeam) {
+  if (!TEAM_MODE.enabled) return;
+  const deltas = getTeamScoreDeltasForCapture(cappingTeam, cappedTeam);
+  if (deltas.length === 0) return;
+  deltas.forEach(({ team, wins, losses }) => {
+    const score = getTeamScore(team);
+    score.wins += wins;
+    score.losses += losses;
+  });
+  broadcastTeamScores();
 }
 
 function recordTeamScoreForKill(killer, victim) {
@@ -1224,6 +1296,8 @@ class Player {
     this.team = 'rogue';
     this.color = getInitialPlayerColor(TEAM_MODE, this.team, () => Player.pickDistinctColor());
     this.joined = false;
+    // PlayerInfo::restartOnBase. Set for every CTF spawn and after a capture.
+    this.restartOnBase = false;
     this.voiceMicEnabled = false;
     this.voiceRosterSignature = '';
 
@@ -1386,7 +1460,7 @@ class Player {
   }
 
   respawn() {
-    const spawnPos = getTestSpawn(this.name) || findValidSpawnPosition();
+    const spawnPos = getSpawnPosition(this);
     this.x = spawnPos.x;
     this.y = spawnPos.y;
     this.z = spawnPos.z;
@@ -1765,6 +1839,23 @@ function findMapEdgeImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, halfMa
   };
 }
 
+// RandomSpawnPolicy::getPosition. A player waiting to restart at base spawns on
+// a random point of one of their own team's bases, which is every spawn in CTF
+// and every spawn after a capture; everyone else spawns anywhere valid.
+function getSpawnPosition(player) {
+  const testSpawn = getTestSpawn(player.name);
+  if (testSpawn) return testSpawn;
+
+  if (player.restartOnBase) {
+    player.restartOnBase = false;
+    const base = getRandomTeamBase(getTeamColorIndex(player.team));
+    if (base) {
+      return { ...getRandomBasePosition(base), rotation: Math.random() * Math.PI * 2 };
+    }
+  }
+  return findValidSpawnPosition();
+}
+
 // A fixed spawn for automated collision testing, so a probe always starts at a
 // known distance from known geometry instead of somewhere random. Set
 // `testSpawn` in server.json to enable; it is absent from example-server.json,
@@ -1994,6 +2085,592 @@ function broadcastAll(message) {
       player.ws.send(data);
     }
   });
+}
+
+// --- Flags -------------------------------------------------------------
+//
+// Mirrors bzfs: the server owns every flag, and the client animates a flight
+// from the numbers that came with the event that started it. See
+// docs/flags-plan.md, and FlagInfo.cxx / bzfs.cxx upstream.
+//
+// A superflag lying on the ground is sent with `type: null`, because bzfs hides
+// the identity of an unheld superflag from every client (bzfs.cxx:361). Picking
+// one up reveals it to everyone.
+
+// The radius the flag drop test uses for its clearance cylinder, and the step it
+// walks that cylinder in. DropGeometry uses the tank radius; bzo's is 2.
+const FLAG_DROP_TEST_RADIUS = 2;
+// launchPosition sits on top of the tank, not at its feet. Upstream reads
+// tankHeight from BZDB; bzo's tanks are 2 units tall.
+const FLAG_LAUNCH_TANK_HEIGHT = 2;
+
+// Team bases, as bzfs keeps them in its `bases` map. A BZW `base` object carries
+// a BZFlag colour index, which parseBZWMap already clamps to 1-4.
+let BASES_BY_TEAM = new Map();
+
+function rebuildTeamBases(obstacles = OBSTACLES) {
+  BASES_BY_TEAM = new Map();
+  obstacles.forEach((obs) => {
+    if (obs.kind !== 'base') return;
+    const bases = BASES_BY_TEAM.get(obs.team) || [];
+    bases.push(obs);
+    BASES_BY_TEAM.set(obs.team, bases);
+  });
+}
+
+function getTeamBases(colorIndex) {
+  return BASES_BY_TEAM.get(colorIndex) || [];
+}
+
+function getRandomTeamBase(colorIndex) {
+  const bases = getTeamBases(colorIndex);
+  return bases.length === 0 ? null : bases[Math.floor(Math.random() * bases.length)];
+}
+
+// TeamBase::getRandomPosition. A point on the base's top surface, kept a tank
+// radius clear of its edges.
+function getRandomBasePosition(base) {
+  const spanX = Math.max(0, base.w - (2 * FLAG_DROP_TEST_RADIUS));
+  const spanZ = Math.max(0, base.d - (2 * FLAG_DROP_TEST_RADIUS));
+  const localX = spanX * (Math.random() - 0.5);
+  const localZ = spanZ * (Math.random() - 0.5);
+  const rotated = rotateXZ(localX, localZ, -(base.rotation || 0));
+  return {
+    x: base.x + rotated.x,
+    y: getBaseTopY(base),
+    z: base.z + rotated.z,
+  };
+}
+
+rebuildTeamBases(OBSTACLES);
+// ClassicCTF upstream. Team flags need both a team game and bases to stand on,
+// so a team-mode map with no bases plays without them.
+const CTF_ENABLED = TEAM_MODE.enabled && BASES_BY_TEAM.size > 0;
+// -fb upstream. Whether a superflag may spawn on, and come to rest on, a
+// building. A map's `options` block may turn it on; nothing turns it back off,
+// which is how a bzfs switch behaves.
+const FLAGS_ON_BUILDINGS = mapServerOptions.flagsOnBuildings === true
+  || serverConfig.flagsOnBuildings === true;
+
+// -tft upstream. How long a team flag survives once its team has emptied and
+// nobody is carrying it.
+const configuredTeamFlagTimeout = Number(serverConfig.teamFlagTimeout);
+const TEAM_FLAG_TIMEOUT_SECONDS = Number.isFinite(configuredTeamFlagTimeout) && configuredTeamFlagTimeout >= 0
+  ? configuredTeamFlagTimeout
+  : 30;
+
+const flags = [];
+// Colour index -> when that team's abandoned flag stops existing.
+const teamFlagTimeouts = new Map();
+let nextSuperFlagInsertionAt = 0;
+
+function isTeamEmpty(colorIndex) {
+  const team = getTeamFromColorIndex(colorIndex);
+  for (const candidate of players.values()) {
+    if (candidate.joined && candidate.team === team) return false;
+  }
+  return true;
+}
+
+// +s/-s upstream: how many superflag slots the world carries, and which types
+// may fill them. Upstream needs the switch to have any superflags at all; bzo
+// defaults them on because Useless is the only type implemented and it has no
+// effect on play.
+function normalizeSuperFlagConfig(value) {
+  const requestedCount = Number(value?.count);
+  const count = Number.isInteger(requestedCount) && requestedCount >= 0 ? requestedCount : 16;
+  const requestedTypes = Array.isArray(value?.allowed) ? value.allowed : FLAG_ABBREVIATIONS;
+  const allowed = requestedTypes
+    .map((abbreviation) => (typeof abbreviation === 'string' ? abbreviation.trim().toUpperCase() : ''))
+    .filter((abbreviation) => getFlagType(abbreviation) && !isTeamFlag(abbreviation));
+  return {
+    count: allowed.length > 0 ? count : 0,
+    allowed: allowed.length > 0 ? allowed : [],
+  };
+}
+
+const SUPER_FLAGS = normalizeSuperFlagConfig(serverConfig.superFlags);
+
+// DropGeometry::dropFlag tests a tank-radius cylinder _flagHeight tall, so a
+// spawning flag never appears somewhere a tank could not drive to reach it.
+// checkCollision tests a box as tall as the radius it is handed, so the cylinder
+// is walked in those steps.
+//
+// Only spawning uses this. A drop goes through dropTeamFlag, whose radius is 0
+// and which upstream's own comment calls "not a real clearance check".
+function hasFlagClearance(x, y, z) {
+  for (let offset = 0; offset < FLAG_CLEARANCE; offset += FLAG_DROP_TEST_RADIUS) {
+    if (checkCollision(x, y + offset, z, FLAG_DROP_TEST_RADIUS, { suppressLog: true })) return false;
+  }
+  return true;
+}
+
+// resetFlag() for a flag with no team: a random spot with room for the flag and
+// for a tank to reach it. Upstream picks a random altitude as well as a random
+// x and y, and lets the downward ray decide which surface under it the flag
+// actually settles on. With flags on buildings off it passes maxZ = 0 instead,
+// which skips the ray and forces the ground.
+function findFlagSpawnPosition() {
+  const span = Math.max(1, GAME_CONFIG.MAP_SIZE - BASE_SIZE);
+  const maxHeight = getMaxObstacleTopY(OBSTACLES);
+  for (let attempt = 0; attempt < 10000; attempt++) {
+    const x = span * (Math.random() - 0.5);
+    const z = span * (Math.random() - 0.5);
+    const y = FLAGS_ON_BUILDINGS
+      ? findFlagLandingY(x, z, maxHeight * Math.random())
+      : 0;
+    if (hasFlagClearance(x, y, z)) return { x, y, z };
+  }
+  log('Unable to position flags on this world.');
+  return { x: 0, y: 0, z: 0 };
+}
+
+function getFlagOwner(flag) {
+  return flag.owner === null ? null : players.get(flag.owner) || null;
+}
+
+// FlagInfo::pack. A superflag nobody is holding goes out without its type.
+function getFlagState(flag, now = Date.now()) {
+  const hidden = flag.owner === null && flag.team === null;
+  const flightTime = flag.flightStartedAt === 0
+    ? 0
+    : Math.min(flag.flightEnd, (now - flag.flightStartedAt) / 1000);
+  return {
+    index: flag.index,
+    type: hidden ? null : flag.type,
+    status: flag.status,
+    owner: flag.owner,
+    position: { ...flag.position },
+    launchPosition: { ...flag.launchPosition },
+    landingPosition: { ...flag.landingPosition },
+    flightTime,
+    flightEnd: flag.flightEnd,
+    initialVelocity: flag.initialVelocity,
+  };
+}
+
+function getFlagStates() {
+  const now = Date.now();
+  return flags.filter((flag) => flag.status !== FLAG_STATUS.NO_EXIST).map((flag) => getFlagState(flag, now));
+}
+
+function broadcastFlagUpdate(flag) {
+  broadcastAll({ type: 'flagUpdate', flags: [getFlagState(flag)] });
+}
+
+// FlagInfo::addFlag, which only ever runs for a superflag slot: a team flag has
+// a fixed identity and simply appears at its base. The flag enters the world
+// hovering at _flagAltitude, fades in, then falls to the ground.
+function addFlag(flag) {
+  const flight = computeFlagFlight(FLAG_ALTITUDE, GAME_CONFIG.GRAVITY);
+  flag.type = SUPER_FLAGS.allowed[Math.floor(Math.random() * SUPER_FLAGS.allowed.length)];
+  flag.status = FLAG_STATUS.COMING;
+  flag.owner = null;
+  flag.launchPosition = { ...flag.position };
+  flag.landingPosition = { ...flag.position };
+  flag.flightEnd = flight.flightEnd;
+  flag.initialVelocity = flight.initialVelocity;
+  flag.flightStartedAt = Date.now();
+  // A bad flag is sticky and can only be shaken off; a good one may be dropped
+  // freely and survives _maxFlagGrabs pickups.
+  const type = getFlagType(flag.type);
+  flag.endurance = type.quality === FLAG_QUALITY.BAD ? FLAG_ENDURANCE.STICKY : FLAG_ENDURANCE.UNSTABLE;
+  flag.grabs = flag.endurance === FLAG_ENDURANCE.STICKY ? 1 : MAX_FLAG_GRABS;
+}
+
+// resetFlag(). Takes the flag off whoever holds it and sends it home: a team
+// flag to the centre of the top of one of its team's bases, a superflag slot to
+// a fresh random spot with its identity cleared for the insertion schedule.
+function resetFlag(flag) {
+  if (flag.status === FLAG_STATUS.ON_TANK) sendFlagDrop(flag);
+  flag.owner = null;
+  flag.flightStartedAt = 0;
+
+  if (flag.team === null) {
+    flag.position = findFlagSpawnPosition();
+    flag.type = null;
+    flag.status = FLAG_STATUS.NO_EXIST;
+  } else {
+    // getFlagSpawnPoint upstream. With no flag spawn zones the flag returns to
+    // the centre of the top of one of its team's bases.
+    const base = getRandomTeamBase(flag.team);
+    flag.position = base
+      ? { x: base.x, y: getBaseTopY(base), z: base.z }
+      : { x: 0, y: 0, z: 0 };
+    // A team flag is `required`, so it does not fly in -- it simply appears.
+    // While its team has nobody on it, it stays out of the world entirely.
+    flag.status = isTeamEmpty(flag.team) ? FLAG_STATUS.NO_EXIST : FLAG_STATUS.ON_GROUND;
+  }
+
+  flag.launchPosition = { ...flag.position };
+  flag.landingPosition = { ...flag.position };
+  broadcastFlagUpdate(flag);
+}
+
+// zapFlag(). The flag does not fly anywhere -- it stops existing where it is,
+// and resetFlag decides where it belongs next.
+function zapFlag(flag) {
+  sendFlagDrop(flag);
+  flag.status = FLAG_STATUS.NO_EXIST;
+  flag.flightStartedAt = 0;
+  resetFlag(flag);
+}
+
+// DropGeometry::dropIt with maxZ unbounded, which is what every drop passes: a
+// downward ray from the drop point to the highest flat top at or below it, or
+// the ground. `flagsOnBuildings` does not gate this -- it gates the maxZ that
+// resetFlag passes when choosing where a flag *spawns*, and for a drop it only
+// decides whether a superflag is allowed to stay where the ray put it.
+function findFlagLandingY(x, z, fromY) {
+  let landingY = 0;
+  for (const obs of getCollisionColliders()) {
+    // isValidLanding() skips anything a tank can drive through, and the world
+    // boundary is not somewhere a flag belongs.
+    if (obs.collisionKind === 'boundary' || obs.kind === 'teleporter') continue;
+    const top = (obs.baseY || 0) + (obs.h || 0);
+    if (top > fromY || top <= landingY) continue;
+    if (!isOverFlatTop(obs, x, z)) continue;
+    landingY = top;
+  }
+  return landingY;
+}
+
+// isOpposingTeam(). A team flag may not come to rest on another team's base:
+// anyone picking it up there would instantly have carried their own team flag
+// into enemy territory and blown up their whole team.
+function isOpposingBaseAt(position, colorIndex) {
+  const baseTeam = getBaseTeamAtPoint(OBSTACLES, position.x, position.y, position.z);
+  return baseTeam !== null && baseTeam !== colorIndex;
+}
+
+// bzfs.cxx:3820. The timeout starts when the last held flag of an already empty
+// team is dropped. It is the only thing that clears a team flag an enemy carried
+// off before that team emptied.
+function startTeamFlagTimeoutIfAbandoned(flag) {
+  if (!isTeamEmpty(flag.team)) return;
+  const stillCarried = flags.some((other) => (
+    other !== flag && other.team === flag.team && other.owner !== null
+  ));
+  if (stillCarried) return;
+  teamFlagTimeouts.set(flag.team, Date.now() + (TEAM_FLAG_TIMEOUT_SECONDS * 1000));
+}
+
+// bzfs.cxx:2478. The first player on a team brings its flag back into the world.
+function resetTeamFlags(colorIndex) {
+  if (!CTF_ENABLED) return;
+  teamFlagTimeouts.delete(colorIndex);
+  flags.forEach((flag) => {
+    if (flag.team !== colorIndex) return;
+    if (flag.status !== FLAG_STATUS.NO_EXIST) return;
+    resetFlag(flag);
+  });
+}
+
+// bzfs.cxx:2966. The last player leaving a team takes its flag out of the world,
+// unless an enemy is carrying it -- then the timeout above deals with it.
+function retireTeamFlags(colorIndex) {
+  if (!CTF_ENABLED) return;
+  if (colorIndex === null) return;
+  if (!isTeamEmpty(colorIndex)) return;
+  flags.forEach((flag) => {
+    if (flag.team !== colorIndex) return;
+    if (flag.status === FLAG_STATUS.NO_EXIST) return;
+    const owner = getFlagOwner(flag);
+    if (owner && getTeamColorIndex(owner.team) !== colorIndex) return;
+    zapFlag(flag);
+  });
+}
+
+// sendDrop(). Detaches the flag from its holder without moving it; the callers
+// decide where it goes next. The state is packed before the owner is cleared
+// because MsgDropFlag names the flag -- upstream's pack() defaults to not
+// hiding -- and only the flagUpdate that follows makes it anonymous again.
+function sendFlagDrop(flag) {
+  const owner = getFlagOwner(flag);
+  const state = getFlagState(flag);
+  flag.owner = null;
+  if (!owner) return;
+  broadcastAll({ type: 'flagDropped', playerId: owner.id, flag: state });
+}
+
+function getPlayerFlag(playerId) {
+  return flags.find((flag) => flag.owner === playerId) || null;
+}
+
+// grabFlag(). The client sweeps for flags it is driving over and asks; this
+// check exists to catch a modified client, so it uses upstream's deliberately
+// loose radius -- a tank's whole second of travel plus both radii -- and only
+// rejects a distant grab when the two are on the same level, as bzfs does.
+function grabFlag(player, flag) {
+  if (player.team === 'observer') return;
+  if (player.health <= 0 || player.paused) return;
+  if (getPlayerFlag(player.id)) return;
+  if (flag.status !== FLAG_STATUS.ON_GROUND) return;
+
+  const reach = GAME_CONFIG.TANK_SPEED + BZFLAG_TANK_RADIUS + FLAG_RADIUS;
+  const extrapolated = player.getExtrapolatedPosition(Date.now());
+  const gap = distance(extrapolated.x, extrapolated.z, flag.position.x, flag.position.z);
+  if (Math.abs(extrapolated.y - flag.position.y) < FLAG_GRAB_LEVEL_TOLERANCE && gap > reach) {
+    log(
+      `[ANTICHEAT:${player.name}] FLAG GRAB REJECTED flag ${flag.index} ` +
+      `${flag.position.x.toFixed(2)},${flag.position.z.toFixed(2)} is ${gap.toFixed(2)} away`
+    );
+    return;
+  }
+
+  flag.owner = player.id;
+  flag.status = FLAG_STATUS.ON_TANK;
+  flag.flightStartedAt = 0;
+  log(`Player "${player.name}" grabbed ${getFlagType(flag.type).name} flag ${flag.index}`);
+  broadcastAll({ type: 'flagGrabbed', playerId: player.id, flag: getFlagState(flag) });
+}
+
+// dropFlag(). Upstream takes the drop position from the client because the
+// server's copy lags; bzo uses its own, which is already movement-validated.
+function dropFlag(flag) {
+  if (flag.status !== FLAG_STATUS.ON_TANK) return;
+  const owner = getFlagOwner(flag);
+  if (!owner) return;
+
+  const half = GAME_CONFIG.MAP_SIZE / 2;
+  const launch = {
+    x: (owner.x < -half || owner.x > half) ? 0 : owner.x,
+    y: owner.y + FLAG_LAUNCH_TANK_HEIGHT,
+    z: (owner.z < -half || owner.z > half) ? 0 : owner.z,
+  };
+  const teamFlag = flag.team !== null;
+  // Both kinds ride the same downward ray, cast from the tank's feet rather than
+  // from the flag's launch altitude: dropIt gets `dropPos` while
+  // FlagInfo::dropFlag adds the tank height to the launch point separately.
+  let landing = {
+    x: launch.x,
+    y: findFlagLandingY(launch.x, launch.z, owner.y),
+    z: launch.z,
+  };
+  let vanish = false;
+
+  if (teamFlag) {
+    // A team flag never vanishes, so when it has nowhere safe to land upstream
+    // works down a chain: a drop zone, which bzo has none of, then the world
+    // centre, then its own base.
+    if (isOpposingBaseAt(landing, flag.team)) {
+      const centre = { x: 0, y: 0, z: 0 };
+      if (isOpposingBaseAt(centre, flag.team)) {
+        const base = getRandomTeamBase(flag.team);
+        landing = base ? { x: base.x, y: getBaseTopY(base), z: base.z } : centre;
+      } else {
+        landing = centre;
+      }
+    }
+    startTeamFlagTimeoutIfAbandoned(flag);
+  } else {
+    // A good superflag has a limited number of grabs in it. With flags on
+    // buildings off -- upstream's default -- one dropped anywhere but the ground
+    // also has nowhere it is allowed to stay, so it rises out of the world from
+    // wherever the ray put it rather than falling to the floor.
+    flag.grabs -= 1;
+    if (flag.grabs <= 0) {
+      vanish = true;
+      flag.grabs = 0;
+    } else if (!FLAGS_ON_BUILDINGS && landing.y > 0) {
+      vanish = true;
+    }
+  }
+
+  const flight = computeFlagFlight(FLAG_ALTITUDE, GAME_CONFIG.GRAVITY);
+  flag.status = vanish ? FLAG_STATUS.GOING : FLAG_STATUS.IN_AIR;
+  flag.launchPosition = launch;
+  flag.landingPosition = landing;
+  flag.position = { ...landing };
+  flag.flightEnd = flight.flightEnd;
+  flag.initialVelocity = flight.initialVelocity;
+  flag.flightStartedAt = Date.now();
+  log(
+    `Player "${owner.name}" dropped ${getFlagType(flag.type).name} flag ${flag.index} ` +
+    `at ${landing.x.toFixed(2)},${landing.z.toFixed(2)}${vanish ? ' (vanishing)' : ''}`
+  );
+
+  sendFlagDrop(flag);
+  broadcastFlagUpdate(flag);
+}
+
+// captureFlag(). Either an enemy flag brought onto the player's own base, or the
+// player's own flag carried onto an enemy base. `baseColorIndex` is the base the
+// client says it reached; the team that loses the flag is always the flag's own,
+// so capturing your own flag costs your team and wins nobody anything.
+function captureFlag(player, baseColorIndex) {
+  const flag = getPlayerFlag(player.id);
+  if (!flag || flag.team === null) return;
+  if (player.health <= 0 || player.paused) return;
+  const cappingIndex = getTeamColorIndex(player.team);
+  if (!isColorTeam(player.team)) return;
+
+  // Upstream's cheat check only logs, and so does this one: a legitimate capture
+  // and a quantized position are hard to tell apart, and refusing an honest one
+  // is worse than trusting a modified client about a base it has to drive to.
+  const standingOn = getBaseTeamAtPoint(OBSTACLES, player.x, player.y, player.z);
+  if (standingOn !== baseColorIndex) {
+    log(
+      `[ANTICHEAT:${player.name}] CAPTURE CLAIMED base ${baseColorIndex} ` +
+      `while standing on ${standingOn === null ? 'no base' : standingOn}`
+    );
+  }
+
+  const cappedIndex = flag.team;
+  const cappedTeam = getTeamFromColorIndex(cappedIndex);
+  const ownGoal = cappedIndex === cappingIndex;
+  log(
+    `Player "${player.name}" captured the ${cappedTeam} flag ` +
+    `on the ${getTeamFromColorIndex(baseColorIndex)} base${ownGoal ? ' (their own)' : ''}`
+  );
+
+  // The flag goes home first, as upstream does it, so the drop that detaches it
+  // reaches the client before the capture that explains it and before any client
+  // respawns on the base it now sits on.
+  resetFlag(flag);
+  broadcastAll({
+    type: 'flagCaptured',
+    playerId: player.id,
+    index: flag.index,
+    flagTeam: cappedIndex,
+    baseTeam: baseColorIndex,
+  });
+  recordTeamScoreForCapture(ownGoal ? null : player.team, cappedTeam);
+
+  // Everyone on the losing team dies and comes back on their own base. Upstream
+  // scores no deaths for them -- the team loss is the whole penalty.
+  players.forEach((victim) => {
+    if (victim.team !== cappedTeam) return;
+    victim.restartOnBase = true;
+    if (victim.health <= 0) return;
+    victim.health = 0;
+    dropPlayerFlag(victim.id);
+    broadcastAll({
+      type: 'playerHit',
+      victimId: victim.id,
+      shooterId: player.id,
+      projectileId: null,
+      captured: true,
+    });
+    setTimeout(() => {
+      if (!players.has(victim.id)) return;
+      victim.respawn();
+      broadcastAll({ type: 'playerRespawned', player: victim.getState() });
+    }, GAME_CONFIG.RESPAWN_DELAY);
+  });
+}
+
+// zapFlagByPlayer(). Death, disconnect, a pause, or a self-destruct all give up
+// the flag: a droppable one is thrown where the tank stood, a sticky one just
+// goes away.
+function dropPlayerFlag(playerId) {
+  const flag = getPlayerFlag(playerId);
+  if (!flag) return;
+  if (flag.endurance === FLAG_ENDURANCE.STICKY) zapFlag(flag);
+  else dropFlag(flag);
+}
+
+// A team flag's identity is fixed and never hidden; a superflag slot starts
+// empty and the insertion schedule gives it one.
+function createFlagSlot(index, teamColorIndex) {
+  return {
+    index,
+    team: teamColorIndex,
+    type: teamColorIndex === null ? null : getTeamFlagAbbreviation(teamColorIndex),
+    status: FLAG_STATUS.NO_EXIST,
+    endurance: teamColorIndex === null ? FLAG_ENDURANCE.UNSTABLE : FLAG_ENDURANCE.NORMAL,
+    owner: null,
+    grabs: 0,
+    position: { x: 0, y: 0, z: 0 },
+    launchPosition: { x: 0, y: 0, z: 0 },
+    landingPosition: { x: 0, y: 0, z: 0 },
+    flightEnd: 0,
+    initialVelocity: 0,
+    flightStartedAt: 0,
+  };
+}
+
+function createFlags() {
+  flags.length = 0;
+  // Team flags come first, as they do upstream, so a team's flag index does not
+  // move when the superflag count changes.
+  const teamFlagTeams = CTF_ENABLED
+    ? TEAM_MODE.teams.filter((team) => isColorTeam(team) && getTeamBases(getTeamColorIndex(team)).length > 0)
+    : [];
+  teamFlagTeams.forEach((team) => {
+    flags.push(createFlagSlot(flags.length, getTeamColorIndex(team)));
+  });
+  for (let slot = 0; slot < SUPER_FLAGS.count; slot++) {
+    flags.push(createFlagSlot(flags.length, null));
+  }
+
+  flags.forEach((flag) => {
+    // A team flag waits at its base for its team's first player; upstream starts
+    // the superflag slots empty too and lets the insertion schedule fill them,
+    // which would leave a fresh server flagless for a minute, so bzo spawns
+    // those at once instead and a map always opens with its flags.
+    if (flag.team !== null) {
+      resetFlag(flag);
+      return;
+    }
+    flag.position = findFlagSpawnPosition();
+    addFlag(flag);
+  });
+
+  if (teamFlagTeams.length > 0) log(`Flags: team flags for ${teamFlagTeams.join(', ')}`);
+  if (SUPER_FLAGS.count > 0) {
+    log(
+      `Flags: ${SUPER_FLAGS.count} superflag slots (${SUPER_FLAGS.allowed.join(', ')});` +
+      ` flagsOnBuildings=${FLAGS_ON_BUILDINGS}`
+    );
+  }
+}
+
+// FlagInfo::landing plus the superflag insertion from the bzfs main loop. A
+// flight that has run its course either settles the flag or empties its slot;
+// an empty slot refills on a halflife distribution.
+function updateFlags(now) {
+  flags.forEach((flag) => {
+    if (flag.flightStartedAt === 0) return;
+    if (flag.status !== FLAG_STATUS.IN_AIR
+      && flag.status !== FLAG_STATUS.COMING
+      && flag.status !== FLAG_STATUS.GOING) return;
+    if ((now - flag.flightStartedAt) / 1000 < flag.flightEnd) return;
+
+    if (flag.status === FLAG_STATUS.GOING) {
+      resetFlag(flag);
+      return;
+    }
+    flag.status = FLAG_STATUS.ON_GROUND;
+    flag.position = { ...flag.landingPosition };
+    flag.flightStartedAt = 0;
+    broadcastFlagUpdate(flag);
+  });
+
+  teamFlagTimeouts.forEach((deadline, colorIndex) => {
+    if (now < deadline) return;
+    teamFlagTimeouts.delete(colorIndex);
+    if (!isTeamEmpty(colorIndex)) return;
+    flags.forEach((flag) => {
+      if (flag.team !== colorIndex) return;
+      if (flag.status === FLAG_STATUS.NO_EXIST || flag.owner !== null) return;
+      log(`Flag timeout for ${getTeamFromColorIndex(colorIndex)} team`);
+      zapFlag(flag);
+    });
+  });
+
+  if (SUPER_FLAGS.count === 0) return;
+  if (now < nextSuperFlagInsertionAt) return;
+  // -logf(bzfrand()) / (-logf(0.5) / FlagHalfLife) seconds until the next one.
+  const roll = Math.random() + 0.01;
+  const flagExp = -Math.log(0.5) / SUPER_FLAG_HALF_LIFE_SECONDS;
+  nextSuperFlagInsertionAt = now + ((-Math.log(roll) / flagExp) * 1000);
+  // resetFlag already chose where the empty slot's next flag belongs, as
+  // upstream does; the insertion only decides when it arrives.
+  const empty = flags.find((flag) => flag.team === null && flag.status === FLAG_STATUS.NO_EXIST);
+  if (!empty) return;
+  addFlag(empty);
+  broadcastFlagUpdate(empty);
 }
 
 // Nearby voice protocol. Clients send voiceState with { enabled }, and send
@@ -2758,6 +3435,7 @@ function simulateProjectilesStep(stepSeconds, now) {
           recordTeamScoreForKill(shooter, player);
 
           logShotEnd(proj, 'player_hit', { x: proj.x, y: proj.y, z: proj.z }, `victim=${player.id}`);
+          dropPlayerFlag(player.id);
 
           broadcastAll({
             type: 'playerHit',
@@ -2775,7 +3453,7 @@ function simulateProjectilesStep(stepSeconds, now) {
                 player: player.getState(),
               });
             }
-          }, 5000);
+          }, GAME_CONFIG.RESPAWN_DELAY);
         }
       }
     });
@@ -2810,7 +3488,11 @@ function gameLoop() {
     simulateProjectilesStep(SHOT_SIM_STEP_SECONDS, now);
     projectileSimAccumulator -= SHOT_SIM_STEP_SECONDS;
   }
+
+  updateFlags(now);
 }
+
+createFlags();
 
 setInterval(gameLoop, 16); // ~60fps
 
@@ -2978,6 +3660,7 @@ wss.on('connection', (ws, req) => {
     voiceRtcConfig: { iceServers: VOICE_ICE_SERVERS },
     obstacles: OBSTACLES,
     teleporterGraph: TELEPORTER_GRAPH,
+    flags: getFlagStates(),
     worldTime,
     clouds: clouds,
     serverName: serverConfig.serverName || '',
@@ -3381,12 +4064,42 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
+        case 'grabFlag': {
+          if (!player.joined) break;
+          const requestedIndex = Number(message.index);
+          if (!Number.isInteger(requestedIndex)) break;
+          const flag = flags[requestedIndex];
+          if (!flag) break;
+          grabFlag(player, flag);
+          break;
+        }
+
+        case 'captureFlag': {
+          if (!player.joined) break;
+          const baseTeam = Number(message.team);
+          if (!isColorTeamIndex(baseTeam)) break;
+          captureFlag(player, baseTeam);
+          break;
+        }
+
+        case 'dropFlag': {
+          if (!player.joined) break;
+          if (player.health <= 0) break;
+          const flag = getPlayerFlag(player.id);
+          // A sticky flag cannot be dropped on request; only its shake timeout
+          // or a kill gets rid of it.
+          if (!flag || flag.endurance === FLAG_ENDURANCE.STICKY) break;
+          dropFlag(flag);
+          break;
+        }
+
         case 'selfDestruct': {
           if (player.team === 'observer') break;
           if (player.health <= 0) break;
           player.health = 0;
           player.deaths++;
           recordTeamScoreForKill(player, player);
+          dropPlayerFlag(player.id);
           log(`Player "${player.name}" self-destructed.`);
 
           broadcastAll({
@@ -3405,7 +4118,7 @@ wss.on('connection', (ws, req) => {
                 player: player.getState(),
               });
             }
-          }, 5000);
+          }, GAME_CONFIG.RESPAWN_DELAY);
           break;
         }
 
@@ -3414,6 +4127,7 @@ wss.on('connection', (ws, req) => {
           const requestedTankModel = typeof message.tankModel === 'string'
             ? normalizeTankModelId(message.tankModel)
             : 'bzflag';
+          const previousTeam = player.joined ? player.team : null;
           const requestedTeam = normalizePlayerTeamSelection(message.team);
           if (requestedTeam !== 'automatic' && !TEAM_MODE.teams.includes(requestedTeam)) {
             ws.send(JSON.stringify({ error: `Team is not available: ${requestedTeam}` }));
@@ -3451,7 +4165,9 @@ wss.on('connection', (ws, req) => {
           player.joined = true;
           player.voiceRosterSignature = '';
           player.health = 100;
-          const spawnPos = getTestSpawn(player.name) || findValidSpawnPosition();
+          // PlayerInfo::resetPlayer(ctf) puts every CTF spawn on the team base.
+          player.restartOnBase = CTF_ENABLED;
+          const spawnPos = getSpawnPosition(player);
           player.x = spawnPos.x;
           player.y = spawnPos.y
           player.z = spawnPos.z;
@@ -3479,6 +4195,16 @@ wss.on('connection', (ws, req) => {
           }
 
           // broadcast join to all (full player info)
+          // bzfs.cxx:2478 and :2966: a team's flag follows its population. The
+          // first player to arrive brings it back, and a team left empty by
+          // someone switching away loses theirs.
+          if (isColorTeam(assignedTeam) && !teamCounts[assignedTeam]) {
+            resetTeamFlags(getTeamColorIndex(assignedTeam));
+          }
+          if (previousTeam && previousTeam !== assignedTeam) {
+            retireTeamFlags(getTeamColorIndex(previousTeam));
+          }
+
           broadcastAll({
             type: 'playerJoined',
             player: player.getState(),
@@ -3523,6 +4249,8 @@ wss.on('connection', (ws, req) => {
               if (players.has(player.id) && player.pauseCountdownStart > 0) {
                 player.paused = true;
                 player.pauseCountdownStart = 0;
+                // bzfs.cxx:6913 gives up the flag before the pause takes hold.
+                dropPlayerFlag(player.id);
 
                 broadcastAll({
                   type: 'playerPaused',
@@ -3684,7 +4412,10 @@ wss.on('connection', (ws, req) => {
     const cheatWarnings = player.cheatWarnings.totalWarnings;
     player.voiceMicEnabled = false;
     player.joined = false;
+    const leavingTeam = player.team;
+    dropPlayerFlag(player.id);
     players.delete(player.id);
+    retireTeamFlags(getTeamColorIndex(leavingTeam));
 
     let logMsg = `Player "${playerName}" (#${playerNum}) disconnected. ${playerKills} kills, ${playerDeaths} deaths.`;
     if (cheatWarnings > 0 && ANTICHEAT_CONFIG.mode !== 'disabled') {

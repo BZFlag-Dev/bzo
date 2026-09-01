@@ -87,6 +87,36 @@ These are deliberate. Do not "fix" them without being asked.
   scroll wheel, or on-screen control to zoom the radar with -- a level left
   behind by a desktop session would strand a headset player at a range they
   cannot change.
+- **A hidden superflag goes over the wire as `type: null`, not upstream's
+  `"PZ"`.** bzfs hides the identity of any superflag nobody is carrying
+  (`bzfs.cxx:361`) and packs a fake `PZ` abbreviation in its place, so an old
+  client still renders something. bzo has no wire compatibility to keep, and a
+  packet that names the wrong flag is something a reader has to disprove. The
+  drawn result is identical either way: every superflag is white.
+
+- **The flag grab radius is BZFlag's, not bzo's.** `FLAG_GRAB_RADIUS` in the
+  `flags` pair is `4.32 + 2.5`, built from BZFlag's tank radius rather than
+  bzo's 2, for the same reason the sound reference distance keeps `86.4`: the
+  figure scales with the world, not the vehicle. A bzo tank would otherwise have
+  to be almost centred on a flag to take it.
+
+- **Flags carry no wind.** Upstream's `FlagSceneNode::setWind` only turns the
+  cloth when `realFlag` is on, which needs quality 3; at the default quality the
+  cloth is billboarded and the wind angle is never read. Implementing the
+  default variant therefore means no wind, and it saves per-flag work per frame.
+
+- **The capture cheat check only logs.** Every `removePlayer` call in bzfs's
+  `captureFlag` is commented out upstream, and bzo keeps that: a quantized
+  position and a legitimate capture are hard to tell apart, and refusing an
+  honest capture is worse than trusting a modified client about a base it still
+  had to drive to. The mismatch is logged as `[ANTICHEAT:...] CAPTURE CLAIMED`.
+
+- **Superflags are on by default.** bzfs needs `-s` before a world has any
+  superflags at all. bzo defaults `superFlags` to 16 slots of `US`, because
+  Useless is the only type implemented and it has no effect on play, so the
+  feature would otherwise be invisible without editing `server.json`. Revisit
+  when flags that do something land.
+
 - **The one-tap VR button on the HUD is hidden on phones.** Chrome on Android
   reports `immersive-vr` support on any phone, through Cardboard, so support
   alone does not mean a headset is present. The Settings menu still offers VR
@@ -175,7 +205,7 @@ version appears.
 Because the client is unbundled ESM and the server is CommonJS, logic needed on
 both sides is kept as a **hand-maintained pair**: `public/<name>.mjs` and
 `server/<name>.cjs`. Current pairs are `shots`, `teams`, `collision`,
-`motion` and `headset`. `npm run check:shared-pairs` enforces them: the two mirrored
+`motion`, `headset` and `flags`. `npm run check:shared-pairs` enforces them: the two mirrored
 pairs must match line for line, and any name a hand-written pair exports on
 both sides must agree in type and arity. A pair that drifts does not throw --
 the client and server just quietly disagree about geometry, which surfaces as
@@ -240,11 +270,102 @@ that rides along with the shot for four seconds, not a flash at the portal.
 | jump jets | `TankSceneNode::renderJumpJets` | `TankSceneNode.cxx:1438` |
 | spawn grow-in | `Player::spawnEffect` | `Player.cxx:1056` |
 | landing squish | `Player::setLandingSpeed` | `Player.cxx:1015` |
+| flag cloth and pole | `FlagSceneNode` | `FlagSceneNode.cxx:113` |
+| flag arrival/departure warp | `FlagWarpSceneNode` | `FlagWarpSceneNode.cxx:28` |
 
 Textures come from `$HOME/bzflag/data/` into `public/textures/`, and belong in
 the map-entry preload list in `public/client.js`. Effect timings are hardcoded
 constants upstream, so keep them as constants here, each annotated with the
 upstream line it came from.
+
+## Radar colours
+
+BZFlag keeps a second colour table for the radar (`Team::radarColor`,
+`Team.cxx:30`), lifted from the tank colours so a team reads against a dark
+panel. bzo uses it for **flags** -- `getFlagRadarColor` -- and not for tank
+blips, which keep the colour the server assigned the player: bzo gives every
+player a distinct colour outside team mode, which upstream has no equivalent of
+and no radar entry for. Do not "fix" that.
+
+Depth dimming mirrors upstream's two functions, which differ only in their floor:
+`colorScale` fades objects to 0.35 and `transScale` fades the obstacles they
+stand on to 0.5, both over 40 units. `getRadarDepthScale` is the shared form. Both
+measure the gap to the object's *nearest* surface, so an obstacle whose top is a
+few units below the player is barely dimmed at all -- that is upstream's rule,
+not an oversight.
+
+**`updateRadar` draws in layers, and the order is load-bearing.** The dark panel
+goes down first, then the world border and compass, then obstacles, then shots,
+tanks and flags -- gameplay last, as `RadarRenderer` orders it. Anything drawn
+before the panel is washed out by it, and anything drawn before the obstacles is
+buried under them.
+
+Obstacles are painted lowest surface first, which upstream does not do: it draws
+boxes then pyramids in map order and lets a pyramid cover the base beside it. A
+top-down panel reads better as a height map, so `getRadarObstacles` sorts by top
+altitude once per map.
+
+## Flags
+
+`docs/flags-plan.md` is the design and staging plan: what upstream does, the
+data model, the protocol, and which phase each piece belongs to. Read it before
+extending flags. Phases 1 and 2 -- the Useless superflag with its flight
+animation and drop key, then team flags and capture -- are implemented. Bad flags
+and the superflag effects are not.
+
+The shape of it: the server owns every flag and sends the whole flight with the
+event that starts it, and the client integrates that arc locally, exactly as
+`FlagInfo::dropFlag` and `World::updateFlag` split the work upstream. There is no
+per-frame flag packet, and no clock sync -- the client advances `flightTime` by
+its own frame delta from the value the server sent. Grab, drop, and (later)
+capture are all client-initiated and server-validated, which is the same
+arrangement bzfs uses.
+
+Flag ownership lives only in the server's `flags` array. Do not add a second
+copy on the player.
+
+CTF is on when team mode is on **and** the map has bases, which is upstream's
+`ClassicCTF`. Team flags occupy the first slots of the flag array so a team's
+flag index does not move when the superflag count changes, and the two kinds
+behave differently in ways worth knowing before touching either: a team flag
+never vanishes, appears at its base instead of flying in, comes to rest on
+buildings, and leaves the world with its team, while a superflag flies in,
+expires after `_maxFlagGrabs` pickups, and may only come to rest on the ground.
+
+Note how `flagsOnBuildings` reaches each path. It gates the `maxZ` that
+`resetFlag` passes, so it decides whether a flag may *spawn* off the ground;
+`dropFlag` always casts the full downward ray, so a *dropped* flag finds the
+surface under the tank either way and the setting only decides whether a
+superflag may stay there. With it off, a superflag dropped on a roof rises out of
+the world from the roof rather than falling to the floor. bzo takes it from a
+map's `options` block as upstream's `-fb`, or from `flagsOnBuildings` in
+`server.json`; `maps/hix.bzw` turns it on. Team flags ignore it.
+
+A BZW `options` block is read twice: `parseBZWTeamMode` in the `teams` pair takes
+the switches both sides need, and `parseBZWServerOptions` in `server.js` takes
+the ones only the server acts on. Add a new switch to whichever of those matches
+who needs to know.
+
+Which team's base a point stands on is `getBaseTeamAtPoint` in the `collision`
+pair, because it is obstacle geometry both sides need: the client detects a
+capture with it, and the server validates one. Team identity itself -- the
+mapping between bzo's team names and BZFlag's colour indices, and the capture
+score rule -- lives in the `teams` pair. A team flag's `team` field is a BZFlag
+colour index, never a bzo team name.
+
+The heading tape carries a marker per flag of the player's own team, unless the
+player is the one carrying it -- `HUDRenderer::addMarker` and
+`prepareTheHUD()`. It takes the team's *tank* colour, because the tape is not the
+radar. `updateDegreeBar` takes the markers as an argument, so the flag list stays
+in `client.js`.
+
+Both scoreboards name a carried flag after the callsign, as
+`ScoreboardRenderer::drawPlayerScore` does: a team flag in full, a superflag by
+its abbreviation, in the flag's colour. The DOM one repaints on events, so a
+change of ownership has to call `callUpdateScoreboard`; the XR panel repaints
+every frame and does not.
+
+Work tracked as GitHub issue #6; reference it from flag commits.
 
 ## Shot timing
 
@@ -310,13 +431,12 @@ features that are still to come (`ActionBinding.cxx:91-98`):
 | upstream | key | in bzo |
 |---|---|---|
 | `fire` | Enter, Left Mouse | matches |
-| `drop` (drop flag) | Space | claimed and unbound, waiting for flags |
+| `drop` (drop flag) | Space | matches |
 | `identify` (guided missile lock) | I | taken by the debug HUD |
 
-The space bar is deliberately bound to nothing: it is upstream's drop-flag key,
-and holding the browser off it in the meantime keeps it from pressing whichever
-HUD button has focus. Guided missiles still have to displace the debug HUD from
-`I`, or diverge from every other BZFlag client. Pick when the feature lands.
+Guided missiles still have to displace the debug HUD from `I`, or diverge from
+every other BZFlag client. `B` is the intended home for `identify` when that
+lands; pick then, not before.
 
 ## Mouse steering is the targeting box
 
@@ -448,6 +568,13 @@ surface as an error, not a silent degradation.
 | `land` | `land.wav` | `SFX_LAND` | a tank lands |
 | `teleport` | `teleport.wav` | `SFX_TELEPORT` | a tank passes through a teleporter |
 | `pop` | `pop.wav` | `SFX_POP` | a tank appears (spawn) |
+| `flagGrab` | `flag_grab.wav` | `SFX_GRAB_FLAG`, `SFX_GRAB_BAD` | a flag is picked up |
+| `flagDrop` | `flag_drop.wav` | `SFX_DROP_FLAG` | a flag is dropped |
+| `flagWon` | `flag_won.wav` | `SFX_CAPTURE` | my team captured an enemy team's flag |
+| `flagLost` | `flag_lost.wav` | `SFX_LOSE` | my team's flag was captured |
+| `flagAlert` | `flag_alert.wav` | `SFX_ALERT` | an enemy picked up my team's flag |
+| `teamGrab` | `teamgrab.wav` | `SFX_TEAMGRAB` | a team mate picked up an enemy team's flag |
+| `killTeam` | `killteam.wav` | `SFX_KILL_TEAM` | I captured my own team's flag |
 
 **Levels mirror BZFlag exactly, and there is no per-sound volume.** BZFlag scales
 every sample only by distance and one global setting; the samples are pre-mixed
@@ -461,9 +588,10 @@ though a bzo tank has radius 2. Tune `MASTER_VOLUME` in `public/audio.js`, not
 individual sounds.
 
 Every remaining BZFlag sound is gated on a feature bzo does not have yet:
-`ricochet` and `bounce` need bouncing shots, `flag_*`/`teamgrab`/`thief` need
-flags, and `laser`/`shock`/`missile`/`burrow`/`phantom`/`steamroller`/`lock`
-need superflags. When adding one of those features, take its sound from upstream
+`ricochet` and `bounce` need bouncing shots, `thief` needs the Thief flag,
+`hunt`/`hunt_select` need hunting, `message_*` need per-kind chat sounds, and
+`laser`/`shock`/`missile`/`burrow`/`phantom`/`steamroller`/`lock` need superflag
+effects. When adding one of those features, take its sound from upstream
 at the same time. The BZFlag sound codes are in `src/bzflag/sound.h`, resolved
 through the `soundFiles[]` table in `src/bzflag/sound.cxx`.
 
@@ -541,6 +669,7 @@ That runs, in order:
 | `npm run test:server-name` | Host-derived server name and document title |
 | `npm run test:motion` | Tank motion resolution, plus client/server parity |
 | `npm run test:shots` | Shot slot limits, plus client/server parity |
+| `npm run test:flags` | Flag types and flight math, plus client/server parity |
 | `npm run test:collision` | Obstacle geometry, fuzzed for client/server parity |
 | `npm run test:capabilities` | WebGL capability detection and feature gating |
 
@@ -874,7 +1003,8 @@ Integration points:
 |---|---|
 | Either thumbstick up/down | Forward/backward movement (right stick preferred) |
 | Either thumbstick left/right | Tank rotation (right stick preferred) |
-| Either trigger or primary face button | Fire / activate menu row |
+| Either trigger | Fire, or activate a menu row |
+| Either primary face button (A/X) | Drop the carried flag, or activate a menu row |
 | Either grip or secondary face button | Jump / menu back |
 | Press either thumbstick | Open or close XR Settings |
 

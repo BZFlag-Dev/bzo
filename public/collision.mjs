@@ -293,3 +293,43 @@ export function pyramidIntersectsTank(obs, x, y, z, rotation, height, slack = 0)
     slack
   );
 }
+
+// BaseBuilding, as World::whoseBase reads it (World.cxx:181). A base's top
+// surface is what counts: a tank captures by standing on it, not by driving
+// past its side.
+export function getBaseTopY(obs) {
+  return (obs.baseY || 0) + (obs.h || 0);
+}
+
+// True when (x, y, z) is on this base's top face. Upstream tests the rotated
+// rectangle and then the altitude against a 0.1 epsilon kludge -- its comment,
+// and it is what lets a tank sitting on the surface count as on it.
+export const BASE_TOP_TOLERANCE = 0.1;
+
+export function isOnBaseTop(obs, x, y, z) {
+  const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
+  if (Math.abs(localX) >= obs.w / 2) return false;
+  if (Math.abs(localZ) >= obs.d / 2) return false;
+  return Math.abs(y - getBaseTopY(obs)) < BASE_TOP_TOLERANCE;
+}
+
+// Which team's base a point is standing on, as its BZFlag colour index, or null
+// for none. Bases are the obstacles carrying kind 'base'.
+export function getBaseTeamAtPoint(obstacles, x, y, z) {
+  for (const obs of obstacles) {
+    if (obs.kind !== 'base') continue;
+    if (isOnBaseTop(obs, x, y, z)) return obs.team;
+  }
+  return null;
+}
+
+// The footprint test a flag drop uses, with no radius: DropGeometry gives a team
+// flag a radius of 0, so only the point itself has to be over the surface.
+export function isOverFlatTop(obs, x, z) {
+  if (obs.type === 'pyramid') {
+    if (!isPyramidFlatTop(obs)) return false;
+    return isWithinPyramidFootprint(obs, x, z);
+  }
+  const { x: localX, z: localZ } = getColliderLocalPoint(x, z, obs);
+  return Math.abs(localX) < obs.w / 2 && Math.abs(localZ) < obs.d / 2;
+}

@@ -371,7 +371,11 @@ export function updateScoreboard({
   myPlayerName,
   myTank,
   tanks,
-  teamScores
+  teamScores,
+  // ScoreboardRenderer::drawPlayerScore puts the carried flag after the
+  // callsign, in the flag's own colour. Supplied as a lookup rather than read
+  // here, because the flag list belongs to client.js.
+  getPlayerFlagLabel = () => null,
 }) {
   updateTeamScoreboard(teamScores);
   const scoreboardList = document.getElementById('scoreboardList');
@@ -388,6 +392,7 @@ export function updateScoreboard({
       deaths: myTank.userData.playerState.deaths || 0,
       connectDate: myTank.userData.playerState.connectDate ? new Date(myTank.userData.playerState.connectDate) : new Date(0),
       color: myTank.userData.playerState.color,
+      flag: getPlayerFlagLabel(myPlayerId),
       isCurrent: true
     });
   }
@@ -402,6 +407,7 @@ export function updateScoreboard({
         deaths: tank.userData.playerState.deaths || 0,
         connectDate: tank.userData.playerState.connectDate ? new Date(tank.userData.playerState.connectDate) : new Date(0),
         color: tank.userData.playerState.color,
+        flag: getPlayerFlagLabel(id),
         isCurrent: false
       });
     }
@@ -433,13 +439,66 @@ export function updateScoreboard({
     statsSpan.textContent = `${player.kills} / ${player.deaths}`;
 
     entry.appendChild(nameSpan);
+    if (player.flag) {
+      const flagSpan = document.createElement('span');
+      flagSpan.className = 'scoreboardFlag';
+      flagSpan.textContent = `/${player.flag.label}`;
+      flagSpan.style.color = colorToCSS(player.flag.color);
+      entry.appendChild(flagSpan);
+    }
     entry.appendChild(statsSpan);
     scoreboardList.appendChild(entry);
   });
 }
 
+// HUDRenderer::addMarker and the block that draws the markers
+// (HUDRenderer.cxx:1531). A marker rides the heading tape: a diamond standing on
+// the tape where its bearing falls inside the visible span, or an arrow pinned
+// to whichever edge it is past. Upstream puts those edge arrows just outside the
+// tape, inside a scissor that gives it the room; bzo's canvas is exactly as wide
+// as the tape, so they point outward from inside the edge instead.
+const HUD_MARKER_SIZE = 8;
+
+function drawHeadingMarkers(ctx, markers, { barWidth, barBottom, pxPerDeg, halfSpanDeg }) {
+  const half = HUD_MARKER_SIZE / 2;
+  markers.forEach((marker) => {
+    ctx.fillStyle = marker.color;
+    ctx.beginPath();
+    if (Math.abs(marker.relDeg) <= halfSpanDeg) {
+      // The tape runs with greater headings to the left, so a marker does too.
+      const px = (barWidth / 2) - (marker.relDeg * pxPerDeg);
+      ctx.moveTo(px, barBottom);
+      ctx.lineTo(px + half, barBottom - half);
+      ctx.lineTo(px, barBottom - HUD_MARKER_SIZE);
+      ctx.lineTo(px - half, barBottom - half);
+    } else if (marker.relDeg > 0) {
+      ctx.moveTo(half, barBottom);
+      ctx.lineTo(half, barBottom - HUD_MARKER_SIZE);
+      ctx.lineTo(0, barBottom - half);
+    } else {
+      ctx.moveTo(barWidth - half, barBottom);
+      ctx.lineTo(barWidth - half, barBottom - HUD_MARKER_SIZE);
+      ctx.lineTo(barWidth, barBottom - half);
+    }
+    ctx.closePath();
+    ctx.fill();
+  });
+}
+
+// Where each marker's bearing falls relative to the middle of the tape, wrapped
+// to the nearer way round. Computed before the redraw check so a marker that has
+// moved forces one.
+function resolveHeadingMarkers(markers, centerDeg) {
+  return markers.map((marker) => {
+    let relDeg = ((marker.heading * 180 / Math.PI) % 360) - centerDeg;
+    while (relDeg > 180) relDeg -= 360;
+    while (relDeg <= -180) relDeg += 360;
+    return { relDeg, color: marker.color };
+  });
+}
+
 // Draws a degree bar above the control box
-export function updateDegreeBar({ myTank, playerRotation }) {
+export function updateDegreeBar({ myTank, playerRotation, markers = [] }) {
   const hud = getHudCanvasContext(degreeBarRenderState, 'degreeBar');
   if (!hud || !hud.controlBox || !myTank) return;
   const { canvas: degreeBar, controlBox, ctx } = hud;
@@ -474,11 +533,21 @@ export function updateDegreeBar({ myTank, playerRotation }) {
   const pxPerDeg = barWidth / degSpan;
   const centerDegKey = Math.round(centerDeg * pxPerDeg * 2) / 2;
   const colorKey = `${barColor}|${labelColor}|${controlBox.classList.contains('keyboard-mode')}`;
-  if (!resized && degreeBarRenderState.centerDegKey === centerDegKey && degreeBarRenderState.colorKey === colorKey) {
+  // A marker moves as the player drives, not only as they turn, so the tape has
+  // to redraw for that too -- at the same half-pixel resolution as the ticks.
+  const resolvedMarkers = resolveHeadingMarkers(markers, centerDeg);
+  const markerKey = resolvedMarkers
+    .map((marker) => `${Math.round(marker.relDeg * pxPerDeg * 2) / 2}|${marker.color}`)
+    .join(',');
+  if (!resized
+    && degreeBarRenderState.centerDegKey === centerDegKey
+    && degreeBarRenderState.colorKey === colorKey
+    && degreeBarRenderState.markerKey === markerKey) {
     return;
   }
   degreeBarRenderState.centerDegKey = centerDegKey;
   degreeBarRenderState.colorKey = colorKey;
+  degreeBarRenderState.markerKey = markerKey;
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale for HiDPI
   ctx.clearRect(0, 0, barWidth, barHeight);
@@ -516,6 +585,12 @@ export function updateDegreeBar({ myTank, playerRotation }) {
       ctx.textBaseline = 'top'; // restore for safety
     }
   }
+  drawHeadingMarkers(ctx, resolvedMarkers, {
+    barWidth,
+    barBottom,
+    pxPerDeg,
+    halfSpanDeg: degSpan / 2,
+  });
   ctx.restore();
 }
 

@@ -391,6 +391,7 @@ body.chat-active #chatInput {
   transition: filter 0.1s, transform 0.1s, opacity 0.1s;
 }
 
+#dropBtn { bottom: calc(max(2vw, env(safe-area-inset-bottom)) + 2 * (80px + 10px)); }
 #jumpBtn { bottom: calc(max(2vw, env(safe-area-inset-bottom)) + 80px + 10px); }
 #fireBtn { bottom: max(2vw, env(safe-area-inset-bottom)); background: rgba(244,67,54,0.85); }
 
@@ -581,6 +582,12 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.scoreboardFlag {
+  margin-left: 6px;
+  white-space: nowrap;
+  font-weight: bold;
 }
 
 .scoreboardStats {

@@ -128,17 +128,33 @@ import {
   PLAYER_TEAMS,
   PLAYER_TEAM_LABELS,
   getPlayerTeamColor,
+  getPlayerTeamRadarColor,
   getPlayerTeamSelections,
+  getTeamColorIndex,
+  getTeamFromColorIndex,
   isObserverTeam,
   normalizePlayerTeam,
   normalizePlayerTeamSelection,
 } from './teams.mjs';
 import { createVoiceManager } from './voice.js';
+import {
+  BZFLAG_TANK_RADIUS,
+  FLAG_GRAB_INTERVAL_MS,
+  FLAG_GRAB_LEVEL_TOLERANCE,
+  FLAG_GRAB_RADIUS,
+  FLAG_RADIUS,
+  FLAG_STATUS,
+  SUPER_FLAG_COLOR,
+  getFlagFlightState,
+  getFlagTeamIndex,
+  getFlagType,
+} from './flags.mjs';
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
 import { getSoundPaths } from './audio.js';
 import { setupInstallPrompt } from './install.js';
 import {
+  getBaseTeamAtPoint,
   getColliderLocalPoint,
   getOrigRectNormal,
   getPyramidHeight,
@@ -731,6 +747,7 @@ async function prepareInitialRender(message, sequenceId) {
     '/textures/blend_flash.png',
     '/textures/dusty_flare.png',
     '/textures/jumpjets.png',
+    '/textures/flag.png',
   ];
   const audioPaths = getSoundPaths();
 
@@ -2340,6 +2357,12 @@ function handleGameplayKeydown(event) {
     sendToServer({ type: 'selfDestruct' });
     return true;
   }
+  // Upstream's drop-flag key. It stays claimed even with no flag in hand, so a
+  // press never reaches whichever HUD button holds focus.
+  if (event.code === 'Space' && ws && ws.readyState === WebSocket.OPEN) {
+    requestFlagDrop();
+    return true;
+  }
   if (event.code === 'Escape') {
     mouseControlEnabled = false;
     showMessage('Controls: Keyboard');
@@ -3105,6 +3128,9 @@ function handleServerMessage(message) {
       // Clear any existing clouds
       renderManager.clearClouds();
 
+      clearFlags();
+      message.flags.forEach((state) => setFlagState(state));
+
       myPlayerId = message.player.id;
       gameConfig = message.config;
       setAvailablePlayerTeams(message.teamMode.teams);
@@ -3150,6 +3176,7 @@ function handleServerMessage(message) {
         gameplayJoinConfirmed = true;
         updatePlayerTeamSelectorAvailability();
         playerTeam = normalizePlayerTeam(message.player.team);
+        teamFlagMarkerStyle = colorToCSS(getPlayerTeamColor(playerTeam));
         syncPlayerTeamSelector();
         updateVoiceIdentity();
         const wasAliveBefore = !!(myTank && myTank.userData?.playerState?.health > 0);
@@ -3410,6 +3437,37 @@ function handleServerMessage(message) {
         updateDeathCameraHudVisibility();
       }
       break;
+
+    case 'flagUpdate':
+      message.flags.forEach((state) => setFlagState(state));
+      break;
+
+    case 'flagGrabbed': {
+      const flag = setFlagState(message.flag);
+      const label = describeFlag(flag);
+      handleFlagGrabbedAlerts(message.playerId, flag);
+      addChatEntry(['misc', 'all'], `${getPlayerName(message.playerId)} grabbed ${label} flag`, CHAT_KIND_MISC);
+      // The scoreboard names the carried flag, and it only repaints on events.
+      callUpdateScoreboard();
+      break;
+    }
+
+    case 'flagCaptured':
+      handleFlagCaptured(message);
+      callUpdateScoreboard();
+      break;
+
+    case 'flagDropped': {
+      const flag = setFlagState(message.flag);
+      const label = describeFlag(flag);
+      if (message.playerId === myPlayerId) {
+        renderManager.playLocalSound('flagDrop');
+        showMessage(`Dropped ${label} flag`);
+      }
+      addChatEntry(['misc', 'all'], `${getPlayerName(message.playerId)} dropped ${label} flag`, CHAT_KIND_MISC);
+      callUpdateScoreboard();
+      break;
+    }
 
     case 'shotBegin':
       createProjectile(message);
@@ -3726,10 +3784,14 @@ function handlePlayerHit(message) {
   const shooterName = shooterTank && shooterTank.userData && shooterTank.userData.playerState && shooterTank.userData.playerState.name ? shooterTank.userData.playerState.name : 'Someone';
   const victimName = victimTank && victimTank.userData && victimTank.userData.playerState && victimTank.userData.playerState.name ? victimTank.userData.playerState.name : 'Someone';
   const isSelfDestruct = Boolean(message.suicide) || (message.victimId === message.shooterId);
+  // A capture kills a whole team at once. Upstream scores nobody for it -- the
+  // team loss is the entire penalty -- and the flagCaptured message has already
+  // said what happened, so only the local victim needs telling.
+  const isCapture = Boolean(message.captured);
   const shooterId = normalizeMessageEndpoint(message.shooterId, CHAT_TARGET_SERVER);
   const victimId = normalizeMessageEndpoint(message.victimId, CHAT_TARGET_SERVER);
 
-  if (!isSelfDestruct) {
+  if (!isSelfDestruct && !isCapture) {
     if (victimId === myPlayerId && typeof shooterId === 'string' && shooterId !== myPlayerId) {
       nemesisPlayerId = shooterId;
     } else if (shooterId === myPlayerId && typeof victimId === 'string' && victimId !== myPlayerId) {
@@ -3739,7 +3801,11 @@ function handlePlayerHit(message) {
 
   if (message.victimId === myPlayerId) {
     // Local player was killed
-    showMessage(isSelfDestruct ? 'You self-destructed!' : `${shooterName} killed you!`, 'death');
+    if (isCapture) {
+      showMessage('Your team flag was captured!', 'death');
+    } else {
+      showMessage(isSelfDestruct ? 'You self-destructed!' : `${shooterName} killed you!`, 'death');
+    }
     // Switch to overview mode and hide crosshair
     lastCameraMode = cameraMode;
     cameraMode = 'overview';
@@ -3756,6 +3822,8 @@ function handlePlayerHit(message) {
     }
     const crosshair = document.getElementById('crosshair');
     if (crosshair) crosshair.style.display = 'none';
+  } else if (isCapture) {
+    // Nothing to say: the capture itself was already announced.
   } else if (message.shooterId === myPlayerId) {
     // Local player got a kill
     if (!isSelfDestruct) {
@@ -3767,13 +3835,15 @@ function handlePlayerHit(message) {
   }
   // Update other players' stats
 
-  if (shooterTank && shooterTank.userData.playerState) {
-    shooterTank.userData.playerState.kills = (shooterTank.userData.playerState.kills || 0) + 1;
+  if (!isCapture) {
+    if (shooterTank && shooterTank.userData.playerState) {
+      shooterTank.userData.playerState.kills = (shooterTank.userData.playerState.kills || 0) + 1;
+    }
+    if (victimTank && victimTank.userData.playerState) {
+      victimTank.userData.playerState.deaths = (victimTank.userData.playerState.deaths || 0) + 1;
+    }
+    callUpdateScoreboard();
   }
-  if (victimTank && victimTank.userData.playerState) {
-    victimTank.userData.playerState.deaths = (victimTank.userData.playerState.deaths || 0) + 1;
-  }
-  callUpdateScoreboard();
 
   // Remove the projectile
   removeProjectile(message.projectileId, 0);
@@ -3857,7 +3927,7 @@ function handlePlayerRespawn(message) {
 }
 // Helper to call updateScoreboard with all required parameters
 function callUpdateScoreboard() {
-  updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks, teamScores });
+  updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks, teamScores, getPlayerFlagLabel });
 }
 
 function handleMapsList(message) {
@@ -5613,6 +5683,13 @@ function handleMotion(deltaTime) {
     lastSentTime = now;
 
   }
+  // Drop: the Space key is handled with the other discrete keys, so this is the
+  // touch button, the XR A button, and the gamepad's spare face button. Held
+  // down it must drop once, not once a frame.
+  const dropHeld = (isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.drop;
+  if (dropHeld && !dropWasHeld) requestFlagDrop();
+  dropWasHeld = dropHeld;
+
   // Fire: the keyboard fire key or the left mouse button, and on mobile, XR or
   // a gamepad, virtualInput.fire.
   const firePressed = (!isMobile && keys[FIRE_KEY]) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
@@ -5898,6 +5975,334 @@ function isShotTeleportDebugEnabled() {
   } catch {
     return false;
   }
+}
+
+// --- Flags -------------------------------------------------------------
+//
+// The server owns every flag; a flag event carries the whole flight, and the
+// client integrates it locally from there. See docs/flags-plan.md.
+
+const flags = new Map();
+// checkEnvironment() sweeps for flags to grab no more than five times a second,
+// and a capture is rate-limited the same way: the flag only leaves the tank when
+// the server says so, and until then the condition stays true every frame.
+let lastGrabRequestAt = 0;
+let lastCaptureRequestAt = 0;
+// Drop is an event, but every non-keyboard source reports a held button.
+let dropWasHeld = false;
+// Shared so a frame with no team flag to point at allocates nothing.
+const EMPTY_HEADING_MARKERS = Object.freeze([]);
+let teamFlagMarkerStyle = '#ffffff';
+// bzo tanks are 2 units tall. Upstream reads getDimensions()[2], which varies
+// with Obesity and Tiny; bzo has neither yet.
+const FLAG_CARRY_HEIGHT = 2;
+
+function clearFlags() {
+  flags.clear();
+  renderManager.clearFlags();
+}
+
+function setFlagState(state) {
+  const existing = flags.get(state.index);
+  // Upstream advances flightTime locally and lets the server's copy seed it, so
+  // a client that joins mid-flight picks the arc up where it already is.
+  const flag = {
+    index: state.index,
+    // A superflag on the ground arrives without its type: bzfs hides the
+    // identity of any superflag nobody is holding.
+    type: state.type,
+    status: state.status,
+    owner: state.owner,
+    position: { ...state.position },
+    launchPosition: { ...state.launchPosition },
+    landingPosition: { ...state.landingPosition },
+    flightTime: state.flightTime,
+    flightEnd: state.flightEnd,
+    initialVelocity: state.initialVelocity,
+    // How the flag currently looks is carried over, so an update that arrives
+    // part way through a fade does not pop it back to solid for one frame.
+    warp: existing ? existing.warp : 0,
+    alpha: existing ? existing.alpha : 1,
+  };
+  flags.set(state.index, flag);
+  if (flag.status === FLAG_STATUS.NO_EXIST) renderManager.hideFlag(flag.index);
+  return flag;
+}
+
+function getPlayerFlag(playerId) {
+  for (const flag of flags.values()) {
+    if (flag.owner === playerId) return flag;
+  }
+  return null;
+}
+
+function getMyFlag() {
+  return getPlayerFlag(myPlayerId);
+}
+
+// ScoreboardRenderer::drawPlayerScore spells a team flag out in full and a
+// superflag by its abbreviation, in the flag's own colour. A flag whose identity
+// is still hidden cannot be on a tank, so there is nothing to fall back to.
+function getPlayerFlagLabel(playerId) {
+  const flag = getPlayerFlag(playerId);
+  const type = getFlagType(flag?.type);
+  if (!type) return null;
+  return {
+    label: type.team ? type.name : type.abbreviation,
+    color: getFlagColor(flag.type),
+  };
+}
+
+function describeFlag(flag) {
+  const type = getFlagType(flag?.type);
+  return type ? type.name : 'unidentified';
+}
+
+// FlagType::getColor. Team flags take their team's colour and every superflag is
+// white, which is what makes hiding a superflag's identity cost nothing.
+function getFlagColor(abbreviation) {
+  const teamIndex = getFlagTeamIndex(abbreviation);
+  if (teamIndex === null) return SUPER_FLAG_COLOR;
+  return getPlayerTeamColor(getTeamFromColorIndex(teamIndex));
+}
+
+// FlagType::getRadarColor, which is the same distinction against the radar's own
+// team colours: those are lifted so a team reads on a dark panel.
+function getFlagRadarColor(abbreviation) {
+  const teamIndex = getFlagTeamIndex(abbreviation);
+  if (teamIndex === null) return SUPER_FLAG_COLOR;
+  return getPlayerTeamRadarColor(getTeamFromColorIndex(teamIndex));
+}
+
+function getMyTeamColorIndex() {
+  return getTeamColorIndex(playerTeam);
+}
+
+// colorToCSS builds a string, and the radar asks for the same handful of flag
+// colours on every frame, so each one is resolved once and reused.
+const flagRadarStyles = new Map();
+
+function getFlagRadarStyle(abbreviation) {
+  const color = getFlagRadarColor(abbreviation);
+  let style = flagRadarStyles.get(color);
+  if (!style) {
+    style = colorToCSS(color);
+    flagRadarStyles.set(color, style);
+  }
+  return style;
+}
+
+function requestFlagDrop() {
+  const flag = getMyFlag();
+  if (!flag) return false;
+  sendToServer({ type: 'dropFlag' });
+  return true;
+}
+
+// MsgGrabFlag on the client. Taking a flag is a local sound for whoever took it,
+// and for everyone else it matters only when a team flag changed hands.
+function handleFlagGrabbedAlerts(grabberId, flag) {
+  if (grabberId === myPlayerId) {
+    renderManager.playLocalSound('flagGrab');
+    showMessage(`Grabbed ${describeFlag(flag)} flag`);
+    return;
+  }
+
+  const flagTeamIndex = getFlagTeamIndex(flag.type);
+  if (flagTeamIndex === null) return;
+  const myTeamIndex = getMyTeamColorIndex();
+  if (myTeamIndex === null) return;
+
+  const grabber = tanks.get(grabberId);
+  const grabberTeamIndex = getTeamColorIndex(grabber?.userData?.playerState?.team);
+
+  if (grabberTeamIndex !== myTeamIndex && flagTeamIndex === myTeamIndex) {
+    showMessage('Flag Alert!!!', 'death');
+    renderManager.playLocalSound('flagAlert');
+    return;
+  }
+
+  // A team mate carrying off somebody else's flag. The one flag sound BZFlag
+  // plays out in the world rather than in the ear.
+  if (grabberTeamIndex === myTeamIndex && flagTeamIndex !== grabberTeamIndex) {
+    showMessage('Team Grab!!!');
+    if (grabber) renderManager.playSound('teamGrab', grabber.position);
+  }
+}
+
+// MsgCaptureFlag on the client. The server sends a playerHit for each tank on
+// the losing team, so the explosions come through the usual death path.
+function handleFlagCaptured(message) {
+  const capturedTeam = getTeamFromColorIndex(message.flagTeam);
+  const baseTeam = getTeamFromColorIndex(message.baseTeam);
+  const capturerName = getPlayerName(message.playerId);
+  const capturer = tanks.get(message.playerId);
+  const capturerTeamIndex = message.playerId === myPlayerId
+    ? getMyTeamColorIndex()
+    : getTeamColorIndex(capturer?.userData?.playerState?.team);
+  const myTeamIndex = getMyTeamColorIndex();
+  const ownGoal = capturerTeamIndex === message.flagTeam;
+
+  if (ownGoal) {
+    addChatEntry(
+      ['misc', 'all'],
+      `${capturerName} took their own flag into ${baseTeam} territory`,
+      CHAT_KIND_MISC
+    );
+    if (message.playerId === myPlayerId) {
+      showMessage("Don't capture your own flag!!!", 'death');
+      renderManager.playLocalSound('killTeam');
+    }
+  } else {
+    addChatEntry(['misc', 'all'], `${capturerName} captured the ${capturedTeam} flag`, CHAT_KIND_MISC);
+  }
+
+  // My team lost its flag, or my team is the one that took somebody else's.
+  if (message.flagTeam === myTeamIndex) {
+    renderManager.playLocalSound('flagLost');
+  } else if (capturerTeamIndex === myTeamIndex) {
+    renderManager.playLocalSound('flagWon');
+  }
+}
+
+// prepareTheHUD() (playing.cxx:6820). One marker per flag of my own team, unless
+// I am the one carrying it -- an enemy carrying it off is exactly when knowing
+// which way it went matters most. The marker takes the team's tank colour, not
+// its radar colour, because the heading tape is not the radar.
+function getTeamFlagHeadingMarkers() {
+  if (!myTank || flags.size === 0) return EMPTY_HEADING_MARKERS;
+  const myTeamIndex = getMyTeamColorIndex();
+  if (myTeamIndex === null) return EMPTY_HEADING_MARKERS;
+
+  const markers = [];
+  flags.forEach((flag) => {
+    if (getFlagTeamIndex(flag.type) !== myTeamIndex) return;
+    if (flag.status === FLAG_STATUS.NO_EXIST) return;
+    if (flag.owner === myPlayerId) return;
+    // bzo's rotation faces -Z at 0 and turns toward -X, so a direction (dx, dz)
+    // is the rotation atan2(-dx, -dz). The tape reads the same units.
+    markers.push({
+      heading: Math.atan2(-(flag.position.x - playerX), -(flag.position.z - playerZ)),
+      color: teamFlagMarkerStyle,
+    });
+  });
+  return markers;
+}
+
+// checkEnvironment(). Carrying a team flag onto a base is a capture: either an
+// enemy's flag brought home, or your own carried onto an enemy base. The server
+// decides what it costs; the client only reports arriving.
+function checkFlagCapture() {
+  const flag = getMyFlag();
+  if (!flag) return;
+  const flagTeamIndex = getFlagTeamIndex(flag.type);
+  if (flagTeamIndex === null) return;
+
+  const baseTeamIndex = getBaseTeamAtPoint(OBSTACLES, playerX, myTank.position.y, playerZ);
+  if (baseTeamIndex === null) return;
+
+  const myTeamIndex = getMyTeamColorIndex();
+  const ownFlagOnEnemyBase = flagTeamIndex === myTeamIndex && baseTeamIndex !== myTeamIndex;
+  const enemyFlagOnMyBase = flagTeamIndex !== myTeamIndex && baseTeamIndex === myTeamIndex;
+  if (!ownFlagOnEnemyBase && !enemyFlagOnMyBase) return;
+
+  const now = performance.now();
+  if (now - lastCaptureRequestAt < FLAG_GRAB_INTERVAL_MS) return;
+  lastCaptureRequestAt = now;
+  sendToServer({ type: 'captureFlag', team: baseTeamIndex });
+}
+
+// checkEnvironment(). Grab anything the tank is driving over, on the same level
+// and within a tank plus a flag radius, and let the server confirm it.
+function checkFlagGrab() {
+  if (!myTank || isObserver()) return;
+  if (!gameplayJoinConfirmed) return;
+  if (myTank.userData?.playerState?.health <= 0) return;
+  checkFlagCapture();
+  if (getMyFlag()) return;
+  // Upstream only grabs from the ground or a building, never mid-jump.
+  if (jumpDirection !== null) return;
+
+  const now = performance.now();
+  if (now - lastGrabRequestAt < FLAG_GRAB_INTERVAL_MS) return;
+
+  const tankY = myTank.position.y;
+  const reachSquared = FLAG_GRAB_RADIUS * FLAG_GRAB_RADIUS;
+  flags.forEach((flag) => {
+    if (flag.status !== FLAG_STATUS.ON_GROUND) return;
+    if (Math.abs(tankY - flag.position.y) >= FLAG_GRAB_LEVEL_TOLERANCE) return;
+    const dx = playerX - flag.position.x;
+    const dz = playerZ - flag.position.z;
+    if ((dx * dx) + (dz * dz) >= reachSquared) return;
+    sendToServer({ type: 'grabFlag', index: flag.index });
+    lastGrabRequestAt = now;
+  });
+}
+
+// World::updateFlag plus updateFlags(): advance each flight, park carried flags
+// on top of their tanks, and hand the result to the renderer.
+function updateFlags(deltaTime) {
+  if (flags.size === 0) return;
+  const gravity = Number.isFinite(gameConfig?.GRAVITY) ? gameConfig.GRAVITY : 9.8;
+
+  flags.forEach((flag) => {
+    if (flag.status === FLAG_STATUS.NO_EXIST) return;
+
+    if (flag.status === FLAG_STATUS.ON_TANK) {
+      const carrier = tanks.get(flag.owner);
+      // A carrier whose tank is gone or dead carries nothing visible; the
+      // server's drop is already on its way.
+      if (!carrier || !carrier.visible) {
+        renderManager.hideFlag(flag.index);
+        return;
+      }
+      flag.position = {
+        x: carrier.position.x,
+        y: carrier.position.y + FLAG_CARRY_HEIGHT,
+        z: carrier.position.z,
+      };
+      flag.alpha = 1;
+      flag.warp = 0;
+    } else if (
+      flag.status === FLAG_STATUS.IN_AIR
+      || flag.status === FLAG_STATUS.COMING
+      || flag.status === FLAG_STATUS.GOING
+    ) {
+      flag.flightTime += deltaTime;
+      const state = getFlagFlightState(flag, flag.flightTime, gravity);
+      flag.position = { x: state.x, y: state.y, z: state.z };
+      flag.alpha = state.alpha;
+      flag.warp = state.warp;
+      if (state.landed) {
+        // Touchdown is local, exactly as upstream's is: the server reached the
+        // same conclusion from the same numbers and does not need to say so.
+        flag.status = flag.status === FLAG_STATUS.GOING
+          ? FLAG_STATUS.NO_EXIST
+          : FLAG_STATUS.ON_GROUND;
+        flag.flightTime = 0;
+        if (flag.status === FLAG_STATUS.NO_EXIST) {
+          renderManager.hideFlag(flag.index);
+          return;
+        }
+      }
+    } else {
+      // Sitting on the ground: nothing to advance, as upstream's default case
+      // does nothing either.
+      flag.alpha = 1;
+      flag.warp = 0;
+    }
+
+    renderManager.showFlag(flag.index, {
+      x: flag.position.x,
+      y: flag.position.y,
+      z: flag.position.z,
+      color: getFlagColor(flag.type),
+      alpha: flag.alpha,
+      warp: flag.warp,
+    });
+  });
+
+  renderManager.updateFlagVisuals(deltaTime);
 }
 
 function updateProjectiles(deltaTime) {
@@ -6235,6 +6640,7 @@ function ensureXRScoreboardOverlay() {
       name: myPlayerName,
       kills: myTank.userData.playerState.kills || 0,
       deaths: myTank.userData.playerState.deaths || 0,
+      flag: getPlayerFlagLabel(myPlayerId),
       isCurrent: true,
     });
   }
@@ -6246,6 +6652,7 @@ function ensureXRScoreboardOverlay() {
         name: tank.userData.playerState.name || 'Player',
         kills: tank.userData.playerState.kills || 0,
         deaths: tank.userData.playerState.deaths || 0,
+        flag: getPlayerFlagLabel(id),
         isCurrent: false,
       });
     }
@@ -6302,9 +6709,17 @@ function ensureXRScoreboardOverlay() {
   ctx.font = '13px monospace';
   visiblePlayers.forEach((player, index) => {
     const y = playerHeaderY + 22 + index * rowHeight;
+    // A carried flag shares the row with the name, so the name gives up room for
+    // it rather than the panel growing a column nothing usually fills.
+    const nameLimit = player.flag ? 8 : 14;
     const name = String(player.name || 'Player');
     ctx.fillStyle = player.isCurrent ? '#8BE28C' : '#E6F1FF';
-    ctx.fillText(name.length > 14 ? `${name.slice(0, 11)}...` : name, margin, y);
+    const shown = name.length > nameLimit ? `${name.slice(0, nameLimit - 3)}...` : name;
+    ctx.fillText(shown, margin, y);
+    if (player.flag) {
+      ctx.fillStyle = colorToCSS(player.flag.color);
+      ctx.fillText(`/${player.flag.label}`, margin + ctx.measureText(shown).width, y);
+    }
     ctx.fillStyle = '#F2F5F8';
     ctx.fillText(`${player.kills} / ${player.deaths}`, panelW - 46, y);
   });
@@ -6325,6 +6740,11 @@ function ensureXRScoreboardOverlay() {
 const RADAR_WORLD_INSET_PX = 10;
 const RADAR_EDGE_DOT_INSET_PX = 4;
 const RADAR_TANK_ARROW_EXTENT_PX = 10;
+// RadarRenderer::drawFlag and drawFlagOnTank size their crosses in world units
+// with a pixel floor, so a distant flag stays visible at any radar range.
+const RADAR_FLAG_MIN_HALF_PX = 3;
+const RADAR_FLAG_ON_TANK_RADII = 2.5 * BZFLAG_TANK_RADIUS;
+const RADAR_FLAG_ON_TANK_MIN_HALF_PX = 4;
 
 function getRadarWorldHalfExtent(radius) {
   return Math.max(1, radius - RADAR_WORLD_INSET_PX);
@@ -6433,29 +6853,47 @@ function world2Radar(worldX, worldZ, px, pz, playerHeading, center, radius, shot
   return { x, y, distance: rel.distance, rotation };
 }
 
-/**
- * Calculate opacity for radar objects based on player's Y position relative to object
- * @param {number} playerY - Player's Y position
- * @param {number} baseY - Object's base Y position
- * @param {number} height - Object's height
- * @returns {number} Opacity value between 0.2 and 0.8
- */
-function getRadarOpacity(playerY, baseY = 0, height = 0) {
+// RadarRenderer::colorScale and transScale. Anything at the player's own level
+// is drawn at full strength and everything else fades with the altitude gap,
+// over `RADAR_DEPTH_FACTOR` units and no further than its own floor. The two
+// upstream functions differ only in that floor: objects stop at 0.35, the
+// obstacles they stand on at 0.5.
+const RADAR_DEPTH_FACTOR = 40;
+const RADAR_OBJECT_DEPTH_FLOOR = 0.35;
+const RADAR_OBSTACLE_DEPTH_FLOOR = 0.5;
+
+function getRadarDepthScale(playerY, baseY, height, floor) {
   const topY = baseY + height;
+  if (playerY >= baseY && playerY <= topY) return 1;
+  const gap = playerY > topY ? (playerY - topY) : (baseY - playerY);
+  return Math.max(floor, 1 - (gap / RADAR_DEPTH_FACTOR));
+}
 
-  // Player is within the object's vertical bounds - most opaque
-  if (playerY >= baseY && playerY <= topY) {
-    return 0.8;
+function getRadarOpacity(playerY, baseY = 0, height = 0) {
+  return getRadarDepthScale(playerY, baseY, height, RADAR_OBSTACLE_DEPTH_FLOOR);
+}
+
+// A top-down panel should read like a height map: where two obstacles overlap,
+// the higher surface is the one you are looking at, so the lowest are painted
+// first. Upstream draws its boxes and then its pyramids in map order and lets a
+// pyramid cover the base standing beside it, which is what made the ring of
+// supports around a hix base look like it was on top of the base.
+//
+// Sorted once per map rather than per frame, keyed on the obstacle list itself.
+let radarObstacleOrder = { source: null, list: [] };
+
+function getRadarObstacleTopY(obs) {
+  return (obs.baseY || 0) + (obs.h || 4);
+}
+
+function getRadarObstacles() {
+  if (radarObstacleOrder.source !== OBSTACLES) {
+    radarObstacleOrder = {
+      source: OBSTACLES,
+      list: [...OBSTACLES].sort((left, right) => getRadarObstacleTopY(left) - getRadarObstacleTopY(right)),
+    };
   }
-
-  // Player is above or below - more translucent
-  const distanceAbove = playerY > topY ? (playerY - topY) : 0;
-  const distanceBelow = playerY < baseY ? (baseY - playerY) : 0;
-  const verticalDistance = Math.max(distanceAbove, distanceBelow);
-
-  // Fade from 0.8 to 0.2 based on vertical distance (fade over 20 units)
-  const opacity = Math.max(0.2, 0.8 - (verticalDistance / 20) * 0.6);
-  return opacity;
+  return radarObstacleOrder.list;
 }
 
 function getObstacleRadarFillStyle(obs) {
@@ -6518,6 +6956,17 @@ function updateRadar() {
   // No radarRotation; use playerHeading directly
   // Clear radar
   radarCtx.clearRect(0, 0, size, size);
+
+  // Draw radar background as a square, similar to BZFlag's panel-style radar.
+  radarCtx.save();
+  radarCtx.globalAlpha = 0.95;
+  radarCtx.fillStyle = 'rgba(0,0,0,0.5)';
+  radarCtx.fillRect(0, 0, size, size);
+  radarCtx.strokeStyle = 'rgba(76, 175, 80, 0.65)';
+  radarCtx.lineWidth = Math.max(2, Math.round(size * 0.01));
+  radarCtx.strokeRect(0, 0, size, size);
+  radarCtx.restore();
+
 
   // Draw world border (clip to radar distance area, rotated to player forward)
   if (gameConfig && gameConfig.MAP_SIZE) {
@@ -6593,36 +7042,6 @@ function updateRadar() {
     radarCtx.restore();
   }
 
-  // Draw projectiles (shots) within radar distance
-  if (typeof projectiles !== 'undefined' && projectiles.forEach) {
-    projectiles.forEach((proj) => {
-      const rel = toRadarRelative(proj.position.x, proj.position.z);
-      if (isOutsideRadarSquare(rel.x, rel.y)) return;
-      const pos = radarToCanvas(rel.x, rel.y);
-      const shotRadarColor = proj.userData?.radarColor || '#FFD700';
-
-      radarCtx.save();
-      radarCtx.beginPath();
-      radarCtx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
-      radarCtx.fillStyle = shotRadarColor;
-      radarCtx.globalAlpha = 0.85;
-      radarCtx.shadowColor = shotRadarColor;
-      radarCtx.shadowBlur = 6;
-      radarCtx.fill();
-      radarCtx.restore();
-    });
-  }
-
-  // Draw radar background as a square, similar to BZFlag's panel-style radar.
-  radarCtx.save();
-  radarCtx.globalAlpha = 0.95;
-  radarCtx.fillStyle = 'rgba(0,0,0,0.5)';
-  radarCtx.fillRect(0, 0, size, size);
-  radarCtx.strokeStyle = 'rgba(76, 175, 80, 0.65)';
-  radarCtx.lineWidth = Math.max(2, Math.round(size * 0.01));
-  radarCtx.strokeRect(0, 0, size, size);
-  radarCtx.restore();
-
   // Draw cardinal direction letters (N/E/S/W) at border, facing outward, rotating with the map
   const cardinalLabels = [
     { angle: Math.PI / 2, label: 'N', color: '#B20000' },
@@ -6655,7 +7074,7 @@ function updateRadar() {
 
   // Draw obstacles within radar distance, rotated to match map orientation
   if (typeof OBSTACLES !== 'undefined' && Array.isArray(OBSTACLES)) {
-    OBSTACLES.forEach(obs => {
+    getRadarObstacles().forEach(obs => {
       const obsWidth = obs.w || 8;
       const obsDepth = obs.d || 8;
 
@@ -6704,6 +7123,26 @@ function updateRadar() {
         }
       });
       radarCtx.closePath();
+      radarCtx.fill();
+      radarCtx.restore();
+    });
+  }
+
+  // Draw projectiles (shots) within radar distance
+  if (typeof projectiles !== 'undefined' && projectiles.forEach) {
+    projectiles.forEach((proj) => {
+      const rel = toRadarRelative(proj.position.x, proj.position.z);
+      if (isOutsideRadarSquare(rel.x, rel.y)) return;
+      const pos = radarToCanvas(rel.x, rel.y);
+      const shotRadarColor = proj.userData?.radarColor || '#FFD700';
+
+      radarCtx.save();
+      radarCtx.beginPath();
+      radarCtx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
+      radarCtx.fillStyle = shotRadarColor;
+      radarCtx.globalAlpha = 0.85;
+      radarCtx.shadowColor = shotRadarColor;
+      radarCtx.shadowBlur = 6;
       radarCtx.fill();
       radarCtx.restore();
     });
@@ -6777,6 +7216,78 @@ function updateRadar() {
     }
     radarCtx.restore();
   });
+
+  // Flags on the ground, drawn as RadarRenderer::drawFlag does: a cross a flag
+  // radius across, never smaller than three pixels.
+  if (flags.size > 0) {
+    const pixelsPerWorldUnit = radarWorldHalfExtent / Math.max(radarDistance, 1e-6);
+    const crossHalf = Math.max(FLAG_RADIUS * pixelsPerWorldUnit, RADAR_FLAG_MIN_HALF_PX);
+    // Crosses that share a colour and an altitude go into one path and one
+    // stroke. Sixteen white superflags standing on the ground -- the common case
+    // -- cost a single stroke rather than sixteen, which matters because the
+    // radar is redrawn every frame on a client with one core to spend.
+    let batchStyle = null;
+    let batchAlpha = null;
+    const flushRadarFlags = () => {
+      if (batchStyle === null) return;
+      radarCtx.stroke();
+      batchStyle = null;
+    };
+    const drawRadarFlag = (flag) => {
+      if (flag.status === FLAG_STATUS.NO_EXIST || flag.status === FLAG_STATUS.ON_TANK) return;
+      const rel = toRadarRelative(flag.position.x, flag.position.z);
+      if (isOutsideRadarSquare(rel.x, rel.y)) return;
+
+      const style = getFlagRadarStyle(flag.type);
+      const alpha = getRadarDepthScale(py, flag.position.y, 0, RADAR_OBJECT_DEPTH_FLOOR);
+      if (style !== batchStyle || alpha !== batchAlpha) {
+        flushRadarFlags();
+        radarCtx.globalAlpha = alpha;
+        radarCtx.strokeStyle = style;
+        radarCtx.beginPath();
+        batchStyle = style;
+        batchAlpha = alpha;
+      }
+
+      const pos = radarToCanvas(rel.x, rel.y);
+      radarCtx.moveTo(pos.x - crossHalf, pos.y);
+      radarCtx.lineTo(pos.x + crossHalf, pos.y);
+      radarCtx.moveTo(pos.x, pos.y - crossHalf);
+      radarCtx.lineTo(pos.x, pos.y + crossHalf);
+    };
+
+    radarCtx.save();
+    radarCtx.lineWidth = 1.5;
+    // Upstream walks the flags backwards purely so the team flags, which come
+    // first, end up drawn over the superflags. Two passes say that outright.
+    flags.forEach((flag) => {
+      if (getFlagTeamIndex(flag.type) === null) drawRadarFlag(flag);
+    });
+    flags.forEach((flag) => {
+      if (getFlagTeamIndex(flag.type) !== null) drawRadarFlag(flag);
+    });
+    flushRadarFlags();
+    radarCtx.restore();
+
+    // drawFlagOnTank(): carrying a flag puts a larger cross on your own blip.
+    const carried = getMyFlag();
+    if (carried) {
+      const tankCrossHalf = Math.max(
+        RADAR_FLAG_ON_TANK_RADII * pixelsPerWorldUnit,
+        RADAR_FLAG_ON_TANK_MIN_HALF_PX
+      );
+      radarCtx.save();
+      radarCtx.strokeStyle = getFlagRadarStyle(carried.type);
+      radarCtx.lineWidth = 1.5;
+      radarCtx.beginPath();
+      radarCtx.moveTo(center - tankCrossHalf, center);
+      radarCtx.lineTo(center + tankCrossHalf, center);
+      radarCtx.moveTo(center, center - tankCrossHalf);
+      radarCtx.lineTo(center, center + tankCrossHalf);
+      radarCtx.stroke();
+      radarCtx.restore();
+    }
+  }
 }
 
 let lastTime = performance.now();
@@ -6826,8 +7337,9 @@ function toggleXRSettingsMenu() {
 const XR_HELP_ITEMS = Object.freeze([
   { id: 'helpMove', label: 'Move', value: 'Either stick Up / Down', disabled: true },
   { id: 'helpTurn', label: 'Turn', value: 'Either stick Left / Right', disabled: true },
-  { id: 'helpFire', label: 'Fire', value: 'Either trigger / primary', disabled: true },
+  { id: 'helpFire', label: 'Fire', value: 'Either trigger', disabled: true },
   { id: 'helpJump', label: 'Jump', value: 'Either grip / secondary', disabled: true },
+  { id: 'helpDrop', label: 'Drop Flag', value: 'Either primary (A)', disabled: true },
   { id: 'helpMenu', label: 'Open Menu', value: 'Press either stick', disabled: true },
   { id: 'helpNavigate', label: 'Navigate', value: 'Either stick', disabled: true },
   { id: 'helpActivate', label: 'Activate', value: 'Trigger / primary', disabled: true },
@@ -7294,7 +7806,7 @@ function animate(frameTime) {
   updateFps();
   updateChatWindow();
   updateAltimeter({ myTank });
-  updateDegreeBar({ myTank, playerRotation });
+  updateDegreeBar({ myTank, playerRotation, markers: getTeamFlagHeadingMarkers() });
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
   markFramePhase('hud');
 
@@ -7373,6 +7885,8 @@ function animate(frameTime) {
   }
 
   updateProjectiles(deltaTime);
+  checkFlagGrab();
+  updateFlags(deltaTime);
   updateTankDimensions(deltaTime);
   renderManager.updateExplosions(deltaTime);
   updateShields();

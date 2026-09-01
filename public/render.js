@@ -26,6 +26,11 @@ import {
   loadAudioBuffer,
 } from './audio.js';
 import {
+  FLAG_POLE_SIZE,
+  FLAG_POLE_WIDTH,
+  SUPER_FLAG_COLOR,
+} from './flags.mjs';
+import {
   createBoundaryTexture,
   createBoxWallTexture,
   createBaseTopTexture,
@@ -124,6 +129,40 @@ const BZFLAG_SHOT_TELEPORT_FLARE = 0.125;       // draw(): topsideOffset
 const BZFLAG_SHOT_TELEPORT_SPIN = 90;           // draw(): glRotatef(age*90, 1,0,0)
 const BZFLAG_SHOT_TELEPORT_SEGMENTS = 6;        // draw(): segments argument
 const BZFLAG_SHOT_TELEPORT_UV_TOP = 0.8;        // draw(): topUV
+// Flags, mirroring FlagSceneNode (FlagSceneNode.cxx) at upstream's default
+// quality, where `geoPole` is on and `realFlag` is off: pole and cloth are one
+// billboarded pair facing the camera, and the cloth is a strip of eight quads
+// rippling on two out-of-phase waves. Because the cloth is billboarded at that
+// quality upstream's wind only turns a flag nobody can see turning, so bzo has
+// no wind at all -- see AGENTS.md on implementing the default variant.
+const BZFLAG_FLAG_TEXTURE = '/textures/flag.png';
+const BZFLAG_FLAG_UNIT = 0.8;                              // Unit
+const BZFLAG_FLAG_WIDTH = 1.5 * BZFLAG_FLAG_UNIT;          // Width
+const BZFLAG_FLAG_HEIGHT = BZFLAG_FLAG_UNIT;               // Height
+const BZFLAG_FLAG_CHUNKS = 8;                              // flagChunks
+const BZFLAG_FLAG_WAVE_SETS = 8;                           // waveLists
+const BZFLAG_FLAG_RIPPLE_SPEED_1 = 2.4 * Math.PI;          // RippleSpeed1
+const BZFLAG_FLAG_RIPPLE_SPEED_2 = 1.724 * Math.PI;        // RippleSpeed2
+const BZFLAG_FLAG_RIPPLE_PHASE = 1.16 * Math.PI;           // sinRipple2S offset
+const BZFLAG_FLAG_RIPPLE_LAG = 0.28 * Math.PI;             // angle2 offset
+const BZFLAG_FLAG_RIPPLE_TURNS = 4 * Math.PI;              // angle1 slope
+const BZFLAG_FLAG_RIPPLE_DAMP = 0.1;                       // damp
+// Flags are drawn after the world so their cloth blends against it, and they
+// never write depth to each other.
+const FLAG_RENDER_ORDER = 5;
+// The warp a flag arrives and leaves through, from FlagWarpSceneNode.cxx:28.
+// Seven horizontal twelve-sided discs in a fixed rainbow at half alpha, each
+// one step smaller than the last and a hair further along the stack.
+const BZFLAG_FLAG_WARP_SIZE = 7.5;
+const BZFLAG_FLAG_WARP_ALPHA = 0.5;
+const BZFLAG_FLAG_WARP_SEGMENTS = 12;
+const BZFLAG_FLAG_WARP_STEP = 0.05;
+const BZFLAG_FLAG_WARP_SPACING = 0.01;
+const BZFLAG_FLAG_WARP_WOBBLE_MIN = 0.9;
+const BZFLAG_FLAG_WARP_WOBBLE_RANGE = 0.2;
+const BZFLAG_FLAG_WARP_COLORS = [
+  0x40ff40, 0x4040ff, 0xff00ff, 0xff4040, 0xff8000, 0xffff00, 0xffffff,
+];
 const BZFLAG_SHOT_EXPLOSION_SIZE = 1.2 * BZFLAG_TANK_LENGTH;
 const BZFLAG_SHOT_EXPLOSION_DURATION = 0.8;
 const BZFLAG_SHOT_EXPLOSION_LIGHT_FADE_START_RATIO = 0.7;
@@ -4222,6 +4261,242 @@ class RenderManager {
       // glRotatef(age*90, 1, 0, 0): spin about the shot axis.
       effect.mesh.rotation.z = THREE.MathUtils.degToRad(effect.age * BZFLAG_SHOT_TELEPORT_SPIN);
     }
+  }
+
+  _getFlagTexture() {
+    if (!this._flagTexture) {
+      this._flagTexture = this._createSharedImageTexture(BZFLAG_FLAG_TEXTURE);
+    }
+    return this._flagTexture;
+  }
+
+  // FlagSceneNode::waveFlag steps eight wave sets once a frame and lets every
+  // flag in the world share them, however many flags there are. bzo shares the
+  // same eight BufferGeometry instances for the same reason: on a CPU-bound
+  // client the cloth must not cost per flag.
+  _getFlagWaveSets() {
+    if (this._flagWaveSets) return this._flagWaveSets;
+
+    const vertexCount = (BZFLAG_FLAG_CHUNKS + 1) * 2;
+    // Upstream draws a GL_TRIANGLE_STRIP; the same vertices indexed as
+    // triangles are the strip, and the cloth is double sided so the alternating
+    // winding a strip implies does not matter.
+    const indices = [];
+    for (let vertex = 0; vertex < vertexCount - 2; vertex += 1) {
+      indices.push(vertex, vertex + 1, vertex + 2);
+    }
+    const uvs = new Float32Array(vertexCount * 2);
+    for (let chunk = 0; chunk <= BZFLAG_FLAG_CHUNKS; chunk += 1) {
+      const u = chunk / BZFLAG_FLAG_CHUNKS;
+      uvs[(chunk * 4) + 0] = u;
+      uvs[(chunk * 4) + 1] = 1;
+      uvs[(chunk * 4) + 2] = u;
+      uvs[(chunk * 4) + 3] = 0;
+    }
+
+    this._flagWaveSets = [];
+    for (let set = 0; set < BZFLAG_FLAG_WAVE_SETS; set += 1) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs.slice(), 2));
+      geometry.setIndex(indices);
+      // The vertices move every frame, so the bounding sphere is set once to
+      // cover the whole ripple rather than recomputed for each step.
+      geometry.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3(BZFLAG_FLAG_WIDTH / 2, FLAG_POLE_SIZE + (BZFLAG_FLAG_HEIGHT / 2), 0),
+        BZFLAG_FLAG_WIDTH
+      );
+      this._flagWaveSets.push({
+        geometry,
+        // Each set starts at its own phase so neighbouring flags do not ripple
+        // in lockstep.
+        ripple1: Math.random() * 2 * Math.PI,
+        ripple2: Math.random() * 2 * Math.PI,
+      });
+    }
+    this._stepFlagWaveSets(0);
+    return this._flagWaveSets;
+  }
+
+  // waveFlag(). Two ripples run along the cloth at different speeds; the top and
+  // bottom edges of each chunk ride different combinations of them, damped
+  // towards the pole so the cloth stays attached to it.
+  _stepFlagWaveSets(deltaTime) {
+    const twoPi = 2 * Math.PI;
+    this._flagWaveSets.forEach((set) => {
+      set.ripple1 = (set.ripple1 + (deltaTime * BZFLAG_FLAG_RIPPLE_SPEED_1)) % twoPi;
+      set.ripple2 = (set.ripple2 + (deltaTime * BZFLAG_FLAG_RIPPLE_SPEED_2)) % twoPi;
+      const sinRipple2 = Math.sin(set.ripple2);
+      const sinRipple2Shifted = Math.sin(set.ripple2 + BZFLAG_FLAG_RIPPLE_PHASE);
+      const positions = set.geometry.attributes.position;
+
+      for (let chunk = 0; chunk <= BZFLAG_FLAG_CHUNKS; chunk += 1) {
+        const along = chunk / BZFLAG_FLAG_CHUNKS;
+        const damp = BZFLAG_FLAG_RIPPLE_DAMP * along;
+        const angle1 = set.ripple1 - (BZFLAG_FLAG_RIPPLE_TURNS * along);
+        const angle2 = angle1 - BZFLAG_FLAG_RIPPLE_LAG;
+        const wave0 = damp * Math.sin(angle1);
+        const wave1 = damp * (Math.sin(angle2) + sinRipple2Shifted);
+        const wave2 = wave0 + (damp * sinRipple2);
+        const x = BZFLAG_FLAG_WIDTH * along;
+        positions.setXYZ(chunk * 2, x, FLAG_POLE_SIZE + BZFLAG_FLAG_HEIGHT - wave0, wave1);
+        positions.setXYZ((chunk * 2) + 1, x, FLAG_POLE_SIZE - wave0, wave2);
+      }
+      positions.needsUpdate = true;
+    });
+  }
+
+  _createFlagWarp() {
+    const group = new THREE.Group();
+    group.visible = false;
+    // One perturbed ring shared by the whole stack, as upstream builds one
+    // `geom` per render call and scales it seven times.
+    const geometry = new THREE.BufferGeometry();
+    const vertexCount = BZFLAG_FLAG_WARP_SEGMENTS + 1;
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3));
+    const indices = [];
+    for (let segment = 0; segment < BZFLAG_FLAG_WARP_SEGMENTS; segment += 1) {
+      indices.push(0, segment + 1, ((segment + 1) % BZFLAG_FLAG_WARP_SEGMENTS) + 1);
+    }
+    geometry.setIndex(indices);
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), BZFLAG_FLAG_WARP_SIZE * 1.25);
+
+    const rings = BZFLAG_FLAG_WARP_COLORS.map((color, ring) => {
+      const material = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: BZFLAG_FLAG_WARP_ALPHA,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      // Upstream stacks the discs towards or away from the eye depending on
+      // which side of the flag it is on, purely so the nearest draws last. With
+      // depth writing off and both sides visible that ordering is free, so the
+      // stack always climbs.
+      mesh.position.y = ring * BZFLAG_FLAG_WARP_SPACING;
+      mesh.renderOrder = FLAG_RENDER_ORDER;
+      group.add(mesh);
+      return { mesh, material };
+    });
+
+    return { group, geometry, rings };
+  }
+
+  _perturbFlagWarp(warp) {
+    const positions = warp.geometry.attributes.position;
+    positions.setXYZ(0, 0, 0, 0);
+    for (let segment = 0; segment < BZFLAG_FLAG_WARP_SEGMENTS; segment += 1) {
+      const angle = (2 * Math.PI * segment) / BZFLAG_FLAG_WARP_SEGMENTS;
+      const radius = BZFLAG_FLAG_WARP_SIZE
+        * (BZFLAG_FLAG_WARP_WOBBLE_MIN + (BZFLAG_FLAG_WARP_WOBBLE_RANGE * Math.random()));
+      positions.setXYZ(segment + 1, radius * Math.cos(angle), 0, radius * Math.sin(angle));
+    }
+    positions.needsUpdate = true;
+  }
+
+  _ensureFlagNode(index) {
+    if (!this.flagNodes) this.flagNodes = new Map();
+    const existing = this.flagNodes.get(index);
+    if (existing) return existing;
+
+    const waveSets = this._getFlagWaveSets();
+    const waveSet = waveSets[Math.floor(Math.random() * waveSets.length)];
+
+    const group = new THREE.Group();
+    const clothMaterial = new THREE.MeshBasicMaterial({
+      map: this._getFlagTexture(),
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const cloth = new THREE.Mesh(waveSet.geometry, clothMaterial);
+    cloth.renderOrder = FLAG_RENDER_ORDER;
+    group.add(cloth);
+
+    // The pole is drawn black and untextured, a thin quad standing the full
+    // height of the cloth.
+    const poleMaterial = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const poleHeight = FLAG_POLE_SIZE + BZFLAG_FLAG_HEIGHT;
+    const pole = new THREE.Mesh(new THREE.PlaneGeometry(2 * FLAG_POLE_WIDTH, poleHeight), poleMaterial);
+    pole.position.y = poleHeight / 2;
+    pole.renderOrder = FLAG_RENDER_ORDER;
+    group.add(pole);
+
+    const warp = this._createFlagWarp();
+
+    const worldGroup = this.getWorldGroup();
+    worldGroup.add(group);
+    worldGroup.add(warp.group);
+
+    const node = { group, cloth, clothMaterial, pole, poleMaterial, warp };
+    this.flagNodes.set(index, node);
+    return node;
+  }
+
+  // Places a flag and sets how solid it looks. `warp` is the size fraction of
+  // the arrival/departure disc stack, zero for no warp at all.
+  showFlag(index, { x, y, z, color = SUPER_FLAG_COLOR, alpha = 1, warp = 0 }) {
+    const node = this._ensureFlagNode(index);
+    node.group.visible = alpha > 0;
+    node.group.position.set(x, y, z);
+    node.clothMaterial.color.setHex(color);
+    node.clothMaterial.opacity = alpha;
+    node.poleMaterial.opacity = alpha;
+
+    node.warp.group.visible = warp > 0;
+    node.warp.group.position.set(x, y, z);
+    if (warp > 0) {
+      node.warp.rings.forEach((ring, index2) => {
+        const size = warp - (BZFLAG_FLAG_WARP_STEP * index2);
+        ring.mesh.visible = size > 0;
+        if (size > 0) ring.mesh.scale.set(size, 1, size);
+      });
+    }
+  }
+
+  hideFlag(index) {
+    const node = this.flagNodes?.get(index);
+    if (!node) return;
+    node.group.visible = false;
+    node.warp.group.visible = false;
+  }
+
+  clearFlags() {
+    if (!this.flagNodes) return;
+    this.flagNodes.forEach((node) => {
+      // The cloth geometry is shared by every flag, so only the per-flag
+      // geometry and materials are disposed here.
+      node.group.parent?.remove(node.group);
+      node.warp.group.parent?.remove(node.warp.group);
+      node.clothMaterial.dispose();
+      node.poleMaterial.dispose();
+      node.pole.geometry.dispose();
+      node.warp.geometry.dispose();
+      node.warp.rings.forEach((ring) => ring.material.dispose());
+    });
+    this.flagNodes.clear();
+  }
+
+  // One step for every flag in the world: the shared cloth ripples, each
+  // visible flag turns to face the camera, and each visible warp re-wobbles.
+  updateFlagVisuals(deltaTime) {
+    if (!this.flagNodes?.size) return;
+    this._stepFlagWaveSets(deltaTime);
+
+    // The billboard matrix upstream multiplies in is the inverse of the view
+    // rotation, so the flag's own axes become the screen's. worldGroup is only
+    // ever translated, so the camera's world orientation is that rotation here.
+    const cameraQuaternion = this.camera.quaternion;
+    this.flagNodes.forEach((node) => {
+      if (node.group.visible) node.group.quaternion.copy(cameraQuaternion);
+      if (node.warp.group.visible) this._perturbFlagWarp(node.warp);
+    });
   }
 
   updateTreads(tanks, deltaTime, gameConfig) {

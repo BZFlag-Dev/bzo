@@ -36,6 +36,14 @@
   "shotRadius": 0.5,
   "shotTailLength": 4.0,
   "shotsKeepVerticalVelocity": false,
+  "superFlags": {
+    "count": 16,
+    "allowed": [
+      "US"
+    ]
+  },
+  "teamFlagTimeout": 30,
+  "flagsOnBuildings": false,
   "voiceNearbyRadius": 60,
   "voiceIceServers": [],
   "fogMode": "none",

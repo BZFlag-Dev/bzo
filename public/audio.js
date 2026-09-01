@@ -55,6 +55,22 @@ export const GAME_SOUNDS = Object.freeze({
   teleport: { file: 'teleport.wav', sfx: 'SFX_TELEPORT' },
   // A tank appears. BZFlag's SFX_POP is the tank-appeared sound.
   pop: { file: 'pop.wav', sfx: 'SFX_POP' },
+  // A flag is picked up. BZFlag plays the same sample for a bad flag through
+  // SFX_GRAB_BAD, so there is one entry rather than two.
+  flagGrab: { file: 'flag_grab.wav', sfx: 'SFX_GRAB_FLAG' },
+  // A flag is dropped.
+  flagDrop: { file: 'flag_drop.wav', sfx: 'SFX_DROP_FLAG' },
+  // My team captured an enemy team's flag.
+  flagWon: { file: 'flag_won.wav', sfx: 'SFX_CAPTURE' },
+  // My team's flag was captured.
+  flagLost: { file: 'flag_lost.wav', sfx: 'SFX_LOSE' },
+  // An enemy picked up my team's flag.
+  flagAlert: { file: 'flag_alert.wav', sfx: 'SFX_ALERT' },
+  // A team mate picked up an enemy team's flag. The one flag sound BZFlag plays
+  // positionally rather than in the ear.
+  teamGrab: { file: 'teamgrab.wav', sfx: 'SFX_TEAMGRAB' },
+  // I captured my own team's flag.
+  killTeam: { file: 'killteam.wav', sfx: 'SFX_KILL_TEAM' },
 });
 
 export const GAME_SOUND_NAMES = Object.freeze(Object.keys(GAME_SOUNDS));

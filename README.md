@@ -220,6 +220,7 @@ If you want automatic container updates, use your preferred container update man
 - `A` / `D` or `Left` / `Right` — turn left/right
 - `Enter` — shoot
 - `Tab` — jump
+- `Space` — drop flag
 - `Q` — self-destruct
 - `P` — pause/resume
 - `N` — open chat (or click the `Send` button)

@@ -13,3 +13,10 @@ sounds like the game it mirrors. See `AGENTS.md` for the mapping between BZFlag'
 | `land.wav` | `SFX_LAND` | a tank lands |
 | `teleport.wav` | `SFX_TELEPORT` | a tank passes through a teleporter |
 | `pop.wav` | `SFX_POP` | a tank appears (spawn) |
+| `flag_grab.wav` | `SFX_GRAB_FLAG`, `SFX_GRAB_BAD` | a flag is picked up |
+| `flag_drop.wav` | `SFX_DROP_FLAG` | a flag is dropped |
+| `flag_won.wav` | `SFX_CAPTURE` | my team captured an enemy team's flag |
+| `flag_lost.wav` | `SFX_LOSE` | my team's flag was captured |
+| `flag_alert.wav` | `SFX_ALERT` | an enemy picked up my team's flag |
+| `teamgrab.wav` | `SFX_TEAMGRAB` | a team mate picked up an enemy team's flag |
+| `killteam.wav` | `SFX_KILL_TEAM` | I captured my own team's flag |

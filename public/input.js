@@ -14,13 +14,13 @@ import { initSettingsMenu } from './settings.js';
 import { INPUT_CONTEXT, InputContextManager } from './input-context.mjs';
 
 // Shared virtual input state exposed to the game loop.
-export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false };
+export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
 
 // Keep each input source separate so one source cannot leave stale values in
 // the shared state when another source starts or stops reporting input.
-const touchInput = { forward: 0, turn: 0, fire: false, jump: false };
-const gamepadInput = { forward: 0, turn: 0, fire: false, jump: false };
-const xrInputState = { forward: 0, turn: 0, fire: false, jump: false };
+const touchInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
+const gamepadInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
+const xrInputState = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
 
 // Keyboard input state
 export const keys = {};
@@ -29,7 +29,7 @@ export const keys = {};
 let gamepadConnected = false;
 let gamepadIndex = -1;
 let gamepadInfo = null;
-let lastGamepadButtonState = { fire: false, jump: false };
+let lastGamepadButtonState = { fire: false, jump: false, drop: false };
 let gamepadFrameCounter = 0;
 let gamepadListenersAttached = false;
 let inputHandlersAttached = false;
@@ -44,6 +44,7 @@ function resetInputValues(inputState) {
   inputState.turn = 0;
   inputState.fire = false;
   inputState.jump = false;
+  inputState.drop = false;
 }
 
 function syncVirtualInput() {
@@ -56,11 +57,12 @@ function syncVirtualInput() {
   virtualInput.turn = source.turn;
   virtualInput.fire = source.fire;
   virtualInput.jump = source.jump;
+  virtualInput.drop = source.drop;
 }
 
 function resetGamepadInput() {
   resetInputValues(gamepadInput);
-  lastGamepadButtonState = { fire: false, jump: false };
+  lastGamepadButtonState = { fire: false, jump: false, drop: false };
   gamepadFrameCounter = 0;
   syncVirtualInput();
 }
@@ -246,6 +248,7 @@ export function updateVirtualInputFromGamepad() {
   // Axes 3: Right stick Y (unused)
   // Button 0: A/X (fire)
   // Button 1: B/Circle (jump)
+  // Button 2: X/Square (drop flag)
   // Button 6: Left trigger (alternative jump)
   // Button 7: Right trigger (alternative fire)
 
@@ -276,9 +279,15 @@ export function updateVirtualInputFromGamepad() {
   );
   gamepadInput.jump = jumpPressed;
 
+  // Drop button: X/Square (2). A already fires here, so drop takes the spare
+  // face button rather than the primary one it uses in XR.
+  const dropPressed = Boolean(buttons[2] && buttons[2].pressed);
+  gamepadInput.drop = dropPressed;
+
   // Track button state changes
   lastGamepadButtonState.fire = firePressed;
   lastGamepadButtonState.jump = jumpPressed;
+  lastGamepadButtonState.drop = dropPressed;
   syncVirtualInput();
 
   // Debug logging every 120 frames (every 2 seconds at 60fps)
@@ -328,6 +337,7 @@ export function setupInputHandlers() {
   const knob = document.getElementById('joystickKnob');
   const fireBtn = document.getElementById('fireBtn');
   const jumpBtn = document.getElementById('jumpBtn');
+  const dropBtn = document.getElementById('dropBtn');
   let joystickActive = false;
   let joystickTouchId = null;
   let joystickCenter = { x: 0, y: 0 };
@@ -454,6 +464,18 @@ export function setupInputHandlers() {
     jumpBtn.addEventListener('mouseleave', () => { touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
     jumpBtn.addEventListener('touchcancel', () => { touchInput.jump = false; syncVirtualInput(); setJumpPressed(false); });
   }
+  if (dropBtn) {
+    const setDropPressed = (pressed) => {
+      if (pressed) dropBtn.classList.add('pressed');
+      else dropBtn.classList.remove('pressed');
+    };
+    dropBtn.addEventListener('touchstart', e => { e.preventDefault(); if (!isGameplayInputActive()) return; touchInput.drop = true; syncVirtualInput(); setDropPressed(true); });
+    dropBtn.addEventListener('touchend', e => { e.preventDefault(); touchInput.drop = false; syncVirtualInput(); setDropPressed(false); });
+    dropBtn.addEventListener('mousedown', e => { e.preventDefault(); if (!isGameplayInputActive()) return; touchInput.drop = true; syncVirtualInput(); setDropPressed(true); });
+    dropBtn.addEventListener('mouseup', e => { e.preventDefault(); touchInput.drop = false; syncVirtualInput(); setDropPressed(false); });
+    dropBtn.addEventListener('mouseleave', () => { touchInput.drop = false; syncVirtualInput(); setDropPressed(false); });
+    dropBtn.addEventListener('touchcancel', () => { touchInput.drop = false; syncVirtualInput(); setDropPressed(false); });
+  }
 
 }
 
@@ -521,11 +543,15 @@ export function updateVirtualInputFromXR() {
   // Prefer right-stick X for turning, with left-stick X fallback.
   xrInputState.turn = -(Math.abs(rightX) > 0 ? rightX : leftX);
 
-  // Either trigger or primary face button: fire
-  xrInputState.fire = controllerInput.leftTrigger > 0.5 || controllerInput.rightTrigger > 0.5 || controllerInput.buttonA;
+  // Either trigger: fire. The primary face button is the drop-flag key here,
+  // matching the keyboard, so firing is the trigger alone.
+  xrInputState.fire = controllerInput.leftTrigger > 0.5 || controllerInput.rightTrigger > 0.5;
 
   // B button OR side grip button: jump
   xrInputState.jump = controllerInput.buttonB || controllerInput.buttonGrip;
+
+  // A button: drop the carried flag
+  xrInputState.drop = controllerInput.buttonA;
   syncVirtualInput();
 }
 
