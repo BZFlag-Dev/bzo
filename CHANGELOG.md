@@ -6,6 +6,15 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.48] - 2026-09-01
+
+### Added
+- The debug HUD and the `renderer.stats` log line break the frame down by phase -- XR, HUD, input, shadows, world simulation, radar, render -- in milliseconds per frame averaged over a second. One saturated core is the budget on the machines that matter, and the split between simulation, HUD painting and draw submission is what decides which cost is worth attacking.
+
+### Changed
+- Projected shadows are placed by a matrix rather than by moving vertices, as `BackgroundRenderer::drawGroundShadows` does upstream. A shadow now shares its caster's geometry and costs one matrix multiply per frame, where it used to re-transform every vertex on the CPU, re-upload a buffer, and walk the whole world's matrices once per shadow. Measured on a Jetson Orin Nano, where one CPU core is the budget: the shadow phase fell from 13.7ms to 0.74ms per frame, and the client went from 36 frames a second to its refresh rate.
+- Nothing gates the shadow update on the light having moved any more. That check made the cost rise as the frame rate fell -- below about 5fps the sun moved far enough every frame to rebuild every obstacle shadow, which held the frame rate down, which kept it rebuilding. A client could sit at 1-4fps until something else happened to lift it out.
+
 ## [1.0.47] - 2026-09-01
 
 Closes #30.
