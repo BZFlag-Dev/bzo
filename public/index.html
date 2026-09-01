@@ -43,21 +43,31 @@
         </div>
       </div>
     </div>
-  <div id="mainhud">
-    <div id="stats">
-      <span id="playerName" title="Open Settings">Player</span>
-      <div class="hudButtons">
-        <button id="settingsBtn" title="Settings"><span class="settingsIcon">&#9881;</span></button>
-        <button id="xrQuickBtn" title="Enter WebXR VR Mode"><span class="settingsIcon">&#129405;</span></button>
+  <div id="playerHudShell">
+    <div id="mainhud">
+      <div id="stats">
+        <span id="playerName" title="Open Settings">Player</span>
+        <div class="hudButtons">
+          <button id="settingsBtn" type="button" title="Settings"><span class="settingsIcon">&#9881;</span></button>
+          <button id="audioBtn" type="button" title="Mute game audio (V)" aria-label="Mute game audio" aria-pressed="false" aria-expanded="false" aria-controls="audioVolumePanel" aria-keyshortcuts="V">
+            <span class="audioIcon" aria-hidden="true"></span>
+          </button>
+          <button id="xrQuickBtn" type="button" title="Enter WebXR VR Mode"><span class="settingsIcon">&#129405;</span></button>
+        </div>
+      </div>
+      <div id="scoreboard">
+        <div id="teamScoreboard" class="teamScoreboardEmpty"></div>
+        <div id="scoreboardHeader">
+          <span class="scoreboardName">Player</span>
+          <span class="scoreboardStats">Kills / Deaths</span>
+        </div>
+        <div id="scoreboardList"></div>
       </div>
     </div>
-    <div id="scoreboard">
-      <div id="teamScoreboard" class="teamScoreboardEmpty"></div>
-      <div id="scoreboardHeader">
-        <span class="scoreboardName">Player</span>
-        <span class="scoreboardStats">Kills / Deaths</span>
-      </div>
-      <div id="scoreboardList"></div>
+    <div id="audioVolumePanel" class="audioVolumePanel" role="group" aria-labelledby="audioVolumeLabel" aria-hidden="true">
+      <span id="audioVolumeLabel" class="audioVolumeLabel">Game audio</span>
+      <output id="audioVolumeValue" class="audioVolumeValue" for="audioVolumeSlider">100%</output>
+      <input id="audioVolumeSlider" class="audioVolumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Game audio volume" aria-orientation="vertical" aria-valuetext="100%">
     </div>
   </div>
 
@@ -213,6 +223,7 @@
         <li><strong>Radar: ...</strong> button in Settings — <b>Cycle Short/Medium/Long presets</b></li>
         <li><strong>C</strong> — <b>Camera View</b> (or click the Camera button)</li>
         <li><strong>O</strong> — <b>Operator Panel</b> (or click the Operator button)</li>
+        <li><strong>V</strong> — <b>Mute/unmute game audio</b> (or click the speaker button; use its slider for 0–100%)</li>
         <li><strong>/</strong> or <strong>?</strong> — <b>Show/Hide Help</b> (or click the Help button)</li>
       </ul>
 
