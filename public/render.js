@@ -128,8 +128,9 @@ const BZFLAG_SHOT_EXPLOSION_SIZE = 1.2 * BZFLAG_TANK_LENGTH;
 const BZFLAG_SHOT_EXPLOSION_DURATION = 0.8;
 const BZFLAG_SHOT_EXPLOSION_LIGHT_FADE_START_RATIO = 0.7;
 const PROJECTED_SHADOW_MIN_LIGHT_Y = 0.05;
-const PROJECTED_SHADOW_DIRECTION_EPSILON_SQ = 1e-6;
 const PROJECTED_SHADOW_STENCIL_REF = 1;
+// Write the stencil before the darkening overlay pass reads it.
+const PROJECTED_SHADOW_RENDER_ORDER = 10;
 const PROJECTED_SHADOW_DARKEN_OPACITY = 0.35;
 const PROJECTED_SHADOW_CASTER_Y = 0.01;
 // Height above the tallest obstacle that a shadow caster can still reach, for
@@ -704,18 +705,6 @@ class RenderManager {
     return this.dynamicLightingEnabled && this.canUseDynamicLighting();
   }
 
-  _getWorldGroupLocalMatrix(object) {
-    if (!this.worldGroup || !object) return null;
-
-    this.worldGroup.updateMatrixWorld(true);
-    object.updateMatrixWorld(true);
-
-    return new THREE.Matrix4()
-      .copy(this.worldGroup.matrixWorld)
-      .invert()
-      .multiply(object.matrixWorld);
-  }
-
   // --- Projected Planar Shadows (Stencil-style) ---
   // Build each shadow in worldGroup-local space so XR can move the whole world
   // without applying the camera transform to the shadow twice.
@@ -733,85 +722,88 @@ class RenderManager {
     return dir;
   }
 
-  _updateProjectedShadowMesh(shadowMesh, sourceMesh, lightDirection) {
-    if (!shadowMesh?.geometry || !sourceMesh?.geometry) return false;
-
-    const localMatrix = this._getWorldGroupLocalMatrix(sourceMesh);
-    const sourcePosAttr = sourceMesh.geometry.getAttribute('position');
-    const shadowPosAttr = shadowMesh.geometry.getAttribute('position');
-    const dir = this._getProjectedShadowDirection(lightDirection);
-    if (!localMatrix || !sourcePosAttr || !shadowPosAttr || sourcePosAttr.count !== shadowPosAttr.count || !dir) {
-      return false;
-    }
-
-    const temp = new THREE.Vector3();
-    for (let i = 0; i < sourcePosAttr.count; ++i) {
-      temp.set(sourcePosAttr.getX(i), sourcePosAttr.getY(i), sourcePosAttr.getZ(i));
-      temp.applyMatrix4(localMatrix);
-      const t = temp.y / dir.y;
-      temp.x -= t * dir.x;
-      temp.y = PROJECTED_SHADOW_CASTER_Y;
-      temp.z -= t * dir.z;
-      shadowPosAttr.setXYZ(i, temp.x, temp.y, temp.z);
-    }
-
-    shadowPosAttr.needsUpdate = true;
-    return true;
+  // Upstream does not move any vertices to project a shadow: drawGroundShadows
+  // (BackgroundRenderer.cxx:1227) builds a degenerate matrix, multiplies it in,
+  // and redraws the same geometry. This is that matrix for a Y-up world, taking
+  // (x, y, z) to (x - y*dx/dy, casterY, z - y*dz/dy) -- the same projection the
+  // vertices used to be walked through one at a time, now free.
+  _setProjectedShadowFlattenMatrix(matrix, dir) {
+    const slopeX = dir.x / dir.y;
+    const slopeZ = dir.z / dir.y;
+    return matrix.set(
+      1, -slopeX, 0, 0,
+      0, 0, 0, PROJECTED_SHADOW_CASTER_Y,
+      0, -slopeZ, 1, 0,
+      0, 0, 0, 1,
+    );
   }
 
-  _createProjectedShadowMesh(sourceMesh, lightDirection) {
-    if (!sourceMesh.geometry) return null;
-
-    const localMatrix = this._getWorldGroupLocalMatrix(sourceMesh);
-    if (!localMatrix) return null;
-
-    const shadowGeo = sourceMesh.geometry.clone();
-    const posAttr = shadowGeo.getAttribute('position');
-    const dir = this._getProjectedShadowDirection(lightDirection);
-    if (!posAttr || !dir) {
-      shadowGeo.dispose();
-      return null;
+  // One material for every shadow: they differ only in where they land, and a
+  // shared material is a shared program and one piece of GL state to set.
+  _getProjectedShadowMaterial() {
+    if (!this._projectedShadowMaterial) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        depthWrite: false,
+        depthTest: false,
+        colorWrite: false,
+        transparent: false,
+      });
+      material.stencilWrite = true;
+      material.stencilRef = PROJECTED_SHADOW_STENCIL_REF;
+      material.stencilFunc = THREE.AlwaysStencilFunc;
+      material.stencilFail = THREE.KeepStencilOp;
+      material.stencilZFail = THREE.KeepStencilOp;
+      material.stencilZPass = THREE.ReplaceStencilOp;
+      this._projectedShadowMaterial = material;
     }
-    const temp = new THREE.Vector3();
+    return this._projectedShadowMaterial;
+  }
 
-    for (let i = 0; i < posAttr.count; ++i) {
-      temp.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-      temp.applyMatrix4(localMatrix);
-      // Project to ground (y=0) along -dir
-      const t = temp.y / dir.y;
-      temp.x = temp.x - t * dir.x;
-      temp.y = PROJECTED_SHADOW_CASTER_Y; // Slightly above ground to avoid z-fighting
-      temp.z = temp.z - t * dir.z;
-      // Set back to geometry in worldGroup-local space
-      posAttr.setXYZ(i, temp.x, temp.y, temp.z);
+  // The shadow shares its caster's geometry -- it is the same shape, drawn flat
+  // -- so it owns no vertices, no buffer, and nothing that can fall out of step
+  // with the caster. Neither the geometry nor the material is this mesh's to
+  // dispose; _removeProjectedShadowMesh is the only way it goes away.
+  _ensureProjectedShadowMesh(mesh) {
+    const existing = mesh.userData.shadowMesh;
+    if (existing) {
+      if (existing.geometry === mesh.geometry) return existing;
+      this._removeProjectedShadowMesh(mesh);
     }
 
-    posAttr.needsUpdate = true;
-    shadowGeo.computeVertexNormals();
-
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      depthWrite: false,
-      depthTest: false,
-      colorWrite: false,
-      transparent: false,
-    });
-    shadowMat.stencilWrite = true;
-    shadowMat.stencilRef = PROJECTED_SHADOW_STENCIL_REF;
-    shadowMat.stencilFunc = THREE.AlwaysStencilFunc;
-    shadowMat.stencilFail = THREE.KeepStencilOp;
-    shadowMat.stencilZFail = THREE.KeepStencilOp;
-    shadowMat.stencilZPass = THREE.ReplaceStencilOp;
-    const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-
-    // Place shadow mesh at origin because vertices are already in worldGroup-local space.
-    shadowMesh.position.set(0, 0, 0);
-    shadowMesh.rotation.set(0, 0, 0);
-    shadowMesh.scale.set(1, 1, 1);
+    const shadowMesh = new THREE.Mesh(mesh.geometry, this._getProjectedShadowMaterial());
+    // Its placement is written straight into matrixWorld below, so Three has
+    // nothing to recompute for it.
     shadowMesh.matrixAutoUpdate = false;
-    shadowMesh.renderOrder = 10; // Write stencil before the darkening overlay pass.
-    shadowMesh.frustumCulled = false; // Always render shadow
+    shadowMesh.matrixWorldAutoUpdate = false;
+    shadowMesh.renderOrder = PROJECTED_SHADOW_RENDER_ORDER;
+    // The bound Three would derive from a flattening matrix can under-estimate,
+    // and a shadow that pops out is worse than one that is always submitted.
+    shadowMesh.frustumCulled = false;
+    this.worldGroup.add(shadowMesh);
+    mesh.userData.shadowMesh = shadowMesh;
     return shadowMesh;
+  }
+
+  _removeProjectedShadowMesh(mesh) {
+    const shadowMesh = mesh?.userData?.shadowMesh;
+    if (!shadowMesh) return;
+    this.worldGroup.remove(shadowMesh);
+    mesh.userData.shadowMesh = null;
+  }
+
+  // The whole cost of a shadow, per frame: one matrix multiply.
+  _projectShadowForMesh(mesh, projection) {
+    if (!mesh || !mesh.geometry) return;
+    if (mesh.visible === false) {
+      const shadowMesh = mesh.userData.shadowMesh;
+      if (shadowMesh) shadowMesh.visible = false;
+      return;
+    }
+
+    const shadowMesh = this._ensureProjectedShadowMesh(mesh);
+    shadowMesh.visible = true;
+    shadowMesh.matrixWorld.multiplyMatrices(projection, mesh.matrixWorld);
   }
 
   // Shadows only land where a caster can throw one: inside the world border,
@@ -934,82 +926,47 @@ class RenderManager {
     this.worldGroup.add(grid);
   }
 
-  // Call this after creating each obstacle/tank mesh
-  _addProjectedShadowForMesh(mesh, lightDirection) {
-    if (!mesh || mesh.visible === false) {
-      // Remove shadow if mesh is hidden or gone
-      if (mesh && mesh.userData.shadowMesh) {
-        this.worldGroup.remove(mesh.userData.shadowMesh);
-        mesh.userData.shadowMesh.geometry.dispose();
-        mesh.userData.shadowMesh.material.dispose();
-        mesh.userData.shadowMesh = null;
-      }
-      return;
-    }
-    // Update previous shadow in place when possible.
-    // If update/rebuild fails, keep the last valid mesh to avoid one-frame
-    // dropouts that show up as ground flashing while tanks move.
-    if (mesh.userData.shadowMesh) {
-      if (this._updateProjectedShadowMesh(mesh.userData.shadowMesh, mesh, lightDirection)) {
-        return;
-      }
-
-      const replacementShadowMesh = this._createProjectedShadowMesh(mesh, lightDirection);
-      if (!replacementShadowMesh) {
-        return;
-      }
-
-      this.worldGroup.remove(mesh.userData.shadowMesh);
-      mesh.userData.shadowMesh.geometry.dispose();
-      mesh.userData.shadowMesh.material.dispose();
-      this.worldGroup.add(replacementShadowMesh);
-      mesh.userData.shadowMesh = replacementShadowMesh;
-      return;
-    }
-    // Always set transform to match mesh, even if at origin
-    if (mesh.position && mesh.rotation && mesh.scale) {
-      const shadowMesh = this._createProjectedShadowMesh(mesh, lightDirection);
-      if (shadowMesh) {
-        // shadowMesh geometry is already in worldGroup-local coordinates.
-        this.worldGroup.add(shadowMesh);
-        mesh.userData.shadowMesh = shadowMesh;
-      }
-    }
-  }
-
-  // Update all projected shadows (call each frame or when light/objects move)
+  // Every shadow in the frame shares one projection, so the traversal and the
+  // inverse are done once for the pass rather than once per shadow. Nothing is
+  // gated on the light having moved: a matrix costs the same whether it changed
+  // or not, where re-walking every obstacle's vertices did not -- and gating on
+  // that made the cost rise as the frame rate fell, which is a hole a slow
+  // machine could not climb out of.
   updateProjectedShadows(tankMeshes = []) {
     // Each shadow mesh writes the stencil the ground overlay reads. Without a
     // stencil buffer there is no overlay to read it, so the meshes would draw
     // for nothing.
-    if (!this.canUseProjectedShadows()) return;
+    if (!this.canUseProjectedShadows() || !this.worldGroup) return;
     // Use sun or moon depending on which is visible
     const light = (this.sunLight && this.sunLight.intensity > 0.5) ? this.sunLight : this.moonLight;
     const dir = this._getProjectedShadowDirection(light?.position);
     if (!dir) return;
 
-    // --- Obstacles: only update if light direction changed ---
-    if (!this._lastObstacleShadowDir || dir.distanceToSquared(this._lastObstacleShadowDir) > PROJECTED_SHADOW_DIRECTION_EPSILON_SQ) {
-      for (const mesh of this.obstacleMeshes) {
-        this._addProjectedShadowForMesh(mesh, dir);
-      }
-      // Store a copy of the direction
-      this._lastObstacleShadowDir = dir.clone();
+    if (!this._projectedShadowProjection) {
+      this._projectedShadowProjection = new THREE.Matrix4();
+      this._projectedShadowFlatten = new THREE.Matrix4();
+      this._projectedShadowWorldToLocal = new THREE.Matrix4();
     }
 
-    // --- Tanks: update every frame ---
+    this.worldGroup.updateMatrixWorld(true);
+    this._setProjectedShadowFlattenMatrix(this._projectedShadowFlatten, dir);
+    this._projectedShadowWorldToLocal.copy(this.worldGroup.matrixWorld).invert();
+    // Flatten in worldGroup space, whatever the world is doing in XR.
+    const projection = this._projectedShadowProjection
+      .multiplyMatrices(this.worldGroup.matrixWorld, this._projectedShadowFlatten)
+      .multiply(this._projectedShadowWorldToLocal);
+
+    for (const mesh of this.obstacleMeshes) {
+      this._projectShadowForMesh(mesh, projection);
+    }
+
     for (const tank of tankMeshes) {
-      if (!tank || tank.visible === false) continue;
-      // If tank is a group, project for all visible mesh children
-      if (tank.isGroup && tank.children && tank.children.length > 0) {
-        tank.traverse((child) => {
-          if (child.isMesh && child.visible !== false && child.geometry) {
-            this._addProjectedShadowForMesh(child, dir);
-          }
-        });
-      } else if (tank.isMesh && tank.geometry) {
-        this._addProjectedShadowForMesh(tank, dir);
-      }
+      if (!tank) continue;
+      tank.traverse((child) => {
+        if (child.isMesh && child.geometry) {
+          this._projectShadowForMesh(child, projection);
+        }
+      });
     }
   }
 
@@ -1318,12 +1275,7 @@ class RenderManager {
     if (!object3D) return;
 
     object3D.traverse((child) => {
-      if (child.userData && child.userData.shadowMesh) {
-        this.worldGroup.remove(child.userData.shadowMesh);
-        child.userData.shadowMesh.geometry?.dispose();
-        child.userData.shadowMesh.material?.dispose();
-        child.userData.shadowMesh = null;
-      }
+      this._removeProjectedShadowMesh(child);
 
       if (child.geometry) {
         child.geometry.dispose();
@@ -1520,12 +1472,7 @@ class RenderManager {
 
   _clearObjectForRemoval(object3D) {
     if (!object3D) return;
-    if (object3D.userData && object3D.userData.shadowMesh) {
-      this.worldGroup.remove(object3D.userData.shadowMesh);
-      object3D.userData.shadowMesh.geometry?.dispose();
-      object3D.userData.shadowMesh.material?.dispose();
-      object3D.userData.shadowMesh = null;
-    }
+    this._removeProjectedShadowMesh(object3D);
     this._disposeObject3D(object3D);
     this.worldGroup.remove(object3D);
   }

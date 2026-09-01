@@ -228,7 +228,8 @@ export function updateDebugDisplay({
   worldTime,
   gamepadConnected,
   gamepadInfo,
-  renderStats
+  renderStats,
+  framePhases
 }) {
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
@@ -251,6 +252,17 @@ export function updateDebugDisplay({
   if (renderStats) {
     html += `<div><span class="label">Draws/Tris:</span><span class="value">${formatCount(renderStats.calls)}/${formatCount(renderStats.triangles)}</span></div>`;
     html += `<div><span class="label">Prog/Tex/Geo:</span><span class="value">${formatCount(renderStats.programs)}/${formatCount(renderStats.textures)}/${formatCount(renderStats.geometries)}</span></div>`;
+  }
+  if (framePhases) {
+    // Dearest phase first: the row is read to find what to attack.
+    const ranked = Object.entries(framePhases)
+      .filter(([, ms]) => ms > 0)
+      .sort((left, right) => right[1] - left[1]);
+    const total = ranked.reduce((sum, [, ms]) => sum + ms, 0);
+    html += `<div><span class="label">Frame ms:</span><span class="value">${total.toFixed(1)}</span></div>`;
+    ranked.forEach(([name, ms]) => {
+      html += `<div><span class="label">&nbsp;&nbsp;${name}:</span><span class="value">${ms.toFixed(2)} ms</span></div>`;
+    });
   }
   if (typeof worldTime !== 'undefined') {
     html += `<div><span class="label">World Time:</span><span class="value">${worldTime.toFixed(1)} (${formatWorldTime(worldTime)})</span></div>`;

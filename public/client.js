@@ -168,6 +168,40 @@ let lastFpsUpdate = performance.now();
 // How long after a map is built the one automatic renderer.stats line waits.
 const RENDER_STATS_SAMPLE_DELAY_MS = 10000;
 
+// Where the frame's time goes, in milliseconds per frame averaged over a second.
+// One saturated core is the budget on the machines that matter, so the split
+// between world simulation, HUD painting and draw submission is what decides
+// which cost is worth attacking -- a figure no frame rate can give on its own.
+// Sampled with performance.now() on purpose: this measures work done, not the
+// display cadence the frame timestamp carries.
+const FRAME_PHASE_WINDOW_MS = 1000;
+const FRAME_PHASES = Object.freeze(['xr', 'hud', 'input', 'shadows', 'sim', 'radar', 'render']);
+const framePhaseTotals = new Map();
+let framePhaseMark = 0;
+let framePhaseWindowStart = performance.now();
+let framePhaseFrames = 0;
+let framePhaseReport = null;
+
+function markFramePhase(name) {
+  const mark = performance.now();
+  framePhaseTotals.set(name, (framePhaseTotals.get(name) || 0) + (mark - framePhaseMark));
+  framePhaseMark = mark;
+}
+
+function rollFramePhases() {
+  framePhaseFrames += 1;
+  if ((performance.now() - framePhaseWindowStart) < FRAME_PHASE_WINDOW_MS) return;
+
+  const report = {};
+  for (const name of FRAME_PHASES) {
+    report[name] = Number(((framePhaseTotals.get(name) || 0) / framePhaseFrames).toFixed(2));
+  }
+  framePhaseReport = report;
+  framePhaseTotals.clear();
+  framePhaseFrames = 0;
+  framePhaseWindowStart = performance.now();
+}
+
 function updateFps() {
   frameCount++;
   const now = performance.now();
@@ -2196,7 +2230,8 @@ function updateDebugGeometryVisibility() {
 function logRenderStats(reason) {
   const stats = renderManager.getRenderStats();
   if (!stats) return;
-  debugLog(`renderer.stats reason=${reason} fps=${fps} ${describeMeasurements(stats)}`);
+  const phases = framePhaseReport ? ` ${describeMeasurements(framePhaseReport)}` : '';
+  debugLog(`renderer.stats reason=${reason} fps=${fps} ${describeMeasurements(stats)}${phases}`);
 }
 
 function setDebugEnabledState(value) {
@@ -2226,7 +2261,8 @@ function getDebugState() {
     worldTime,
     gamepadConnected: isGamepadConnected(),
     gamepadInfo: getGamepadInfo(),
-    renderStats: renderManager.getRenderStats()
+    renderStats: renderManager.getRenderStats(),
+    framePhases: framePhaseReport
   };
 }
 
@@ -7226,6 +7262,7 @@ function runFallbackAnimationLoop(frameTime) {
 // slightly too long or too short, which reads as the ground jittering -- worst
 // at low speed, where the eye tracks the motion and expects it to be even.
 function animate(frameTime) {
+  framePhaseMark = performance.now();
   selectedFaceDebugTouchedThisFrame = false;
   supportSurfaceDebugTouchedThisFrame = false;
   supportFootprintDebugTouchedThisFrame = false;
@@ -7252,15 +7289,18 @@ function animate(frameTime) {
   if (!isXREnabled()) {
     window.xrDebugLogged = false;
   }
+  markFramePhase('xr');
 
   updateFps();
   updateChatWindow();
   updateAltimeter({ myTank });
   updateDegreeBar({ myTank, playerRotation });
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
+  markFramePhase('hud');
 
   handleInputEvents();
   handleMotion(deltaTime);
+  markFramePhase('input');
 
   const visibleTanks = [];
   tanks.forEach((tank) => {
@@ -7269,6 +7309,7 @@ function animate(frameTime) {
     }
   });
   renderManager.updateProjectedShadows(visibleTanks);
+  markFramePhase('shadows');
 
   if (!selectedFaceDebugTouchedThisFrame) {
     hideSelectedFaceDebug();
@@ -7348,9 +7389,13 @@ function animate(frameTime) {
   }
   updateDeathCameraHudVisibility();
   renderManager.updateCamera({ cameraMode, myTank, playerRotation, deathFollowTarget });
+  markFramePhase('sim');
   updateRadar();
+  markFramePhase('radar');
 
   renderManager.renderFrame();
+  markFramePhase('render');
+  rollFramePhases();
 }
 
 // Start the game
