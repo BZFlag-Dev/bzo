@@ -526,16 +526,6 @@ body {
   padding: 6px;
 }
 
-#audioBtn[data-muted="true"] {
-  color: var(--color-state-off);
-  border-color: var(--color-state-off);
-  background: rgba(229, 115, 115, 0.16);
-}
-
-#audioBtn[data-muted="true"]:hover {
-  background: rgba(229, 115, 115, 0.3);
-}
-
 .audioIcon {
   position: relative;
   display: block;
@@ -569,22 +559,13 @@ body {
   content: '';
 }
 
-#audioBtn[data-muted="true"] .audioIcon::after {
-  right: -0.18em;
-  top: 50%;
-  width: 1.45em;
-  height: max(1px, 0.12em);
-  border: 0;
-  border-radius: 0;
-  background: currentColor;
-  transform: rotate(-45deg);
-}
-
 .audioVolumePanel {
   display: none;
-  flex: 0 0 var(--audio-control-width, 2.5rem);
-  flex-direction: column;
-  align-items: center;
+  --audio-panel-gap: 4px;
+  flex: 0 0 calc(var(--audio-control-width, 2.5rem) + var(--audio-control-width, 2.5rem) + var(--audio-panel-gap) + 8px);
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--audio-panel-gap);
   align-self: stretch;
   min-width: 0;
   min-height: 0;
@@ -599,6 +580,15 @@ body {
 
 .audioVolumePanel.is-open {
   display: flex;
+}
+
+.audioVolumeControl {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
 .audioVolumeLabel {
@@ -632,6 +622,80 @@ body {
   touch-action: auto;
   writing-mode: vertical-lr;
   direction: rtl;
+}
+
+.audioVolumeIcon {
+  position: relative;
+  display: grid;
+  flex: 0 0 clamp(1rem, 1.2vw, 1.25rem);
+  place-items: center;
+  width: 100%;
+  color: var(--color-accent-light);
+  line-height: 1;
+}
+
+.audioVolumeIcon--music {
+  font-size: clamp(0.9rem, 1.5vw, 1.15rem);
+}
+
+.audioVolumeIcon--microphone {
+  width: 1em;
+  max-width: 1em;
+  margin-inline: auto;
+}
+
+.audioVolumeIcon--microphone::before {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0.42em;
+  height: 0.72em;
+  border: max(1px, 0.08em) solid currentColor;
+  border-radius: 50%;
+  content: '';
+  transform: translateX(-50%);
+}
+
+.audioVolumeIcon--microphone::after {
+  position: absolute;
+  top: 0.35em;
+  left: 50%;
+  width: 0.8em;
+  height: 0.62em;
+  border: max(1px, 0.08em) solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 50% 50%;
+  background:
+    linear-gradient(currentColor, currentColor) center bottom / 0.1em 0.24em no-repeat,
+    linear-gradient(currentColor, currentColor) center bottom / 0.76em 0.08em no-repeat;
+  content: '';
+  transform: translateX(-50%);
+}
+
+/* Narrow screens and portrait displays keep the player card at the upper-left
+   and place the audio controls directly underneath it. The panel keeps the
+   same height as the card, so both vertical sliders remain easy to grab. */
+@media (max-width: 900px), (orientation: portrait) {
+  #playerHudShell {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Keep the compact speaker affordance reachable without moving the player
+     card: it is anchored just above the fixed chat/notification window. */
+  #audioBtn {
+    position: fixed;
+    left: max(10px, env(safe-area-inset-left));
+    bottom: var(--audio-mobile-bottom, 180px);
+    z-index: 132;
+  }
+
+  .audioVolumePanel {
+    align-self: flex-start;
+    width: calc(var(--audio-control-width, 2.5rem) + var(--audio-control-width, 2.5rem) + var(--audio-panel-gap) + 8px);
+    height: var(--player-hud-height, 150px);
+    flex: 0 0 var(--player-hud-height, 150px);
+  }
 }
 
 #audioBtn:focus-visible,

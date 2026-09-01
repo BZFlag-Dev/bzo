@@ -5,12 +5,14 @@
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
-// The gameplay audio control is one gain applied to Three.js's AudioListener.
-// Keeping the state pure makes the mute/restore rules deterministic in the HUD,
-// the renderer, and the persistence tests.
+// Audio controls share one small, pure state model. The game master channel is
+// applied to Three.js's AudioListener, while the voice channel is applied to
+// each WebRTC remote media element. Keeping the state pure makes persistence
+// and clamping deterministic in the HUD, renderer, and tests.
 
 export const DEFAULT_AUDIO_VOLUME = 100;
 export const AUDIO_VOLUME_STORAGE_KEY = 'bzo.gameAudio';
+export const VOICE_VOLUME_STORAGE_KEY = 'bzo.voiceAudio';
 
 function normalizePercent(value, fallback) {
   const numeric = Number(value);
@@ -63,13 +65,13 @@ export function toggleAudioMute(state) {
   };
 }
 
-export function readAudioVolumeState(storage) {
+export function readAudioVolumeState(storage, storageKey = AUDIO_VOLUME_STORAGE_KEY) {
   if (!storage || typeof storage.getItem !== 'function') {
     return createAudioVolumeState();
   }
 
   try {
-    const raw = storage.getItem(AUDIO_VOLUME_STORAGE_KEY);
+    const raw = storage.getItem(storageKey);
     if (!raw) return createAudioVolumeState();
     return createAudioVolumeState(JSON.parse(raw));
   } catch {
@@ -77,11 +79,11 @@ export function readAudioVolumeState(storage) {
   }
 }
 
-export function writeAudioVolumeState(storage, state) {
+export function writeAudioVolumeState(storage, state, storageKey = AUDIO_VOLUME_STORAGE_KEY) {
   const normalized = createAudioVolumeState(state);
   if (storage && typeof storage.setItem === 'function') {
     try {
-      storage.setItem(AUDIO_VOLUME_STORAGE_KEY, JSON.stringify(normalized));
+      storage.setItem(storageKey, JSON.stringify(normalized));
     } catch {
       // A blocked or full storage area must not stop the game audio control.
     }

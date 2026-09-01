@@ -152,7 +152,13 @@ import {
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
 import { getSoundPaths } from './audio.js';
-import { readAudioVolumeState, writeAudioVolumeState } from './audio-volume.mjs';
+import {
+  createAudioVolumeState,
+  readAudioVolumeState,
+  setAudioVolume,
+  VOICE_VOLUME_STORAGE_KEY,
+  writeAudioVolumeState,
+} from './audio-volume.mjs';
 import { setupInstallPrompt } from './install.js';
 import {
   getBaseTeamAtPoint,
@@ -182,6 +188,22 @@ function persistGameAudioState(state) {
     writeAudioVolumeState(window.localStorage, state);
   } catch {
     // A blocked storage area must not stop the audio controls from working.
+  }
+}
+
+function readPersistedVoiceAudioState() {
+  try {
+    return readAudioVolumeState(window.localStorage, VOICE_VOLUME_STORAGE_KEY);
+  } catch {
+    return readAudioVolumeState(null);
+  }
+}
+
+function persistVoiceAudioState(state) {
+  try {
+    writeAudioVolumeState(window.localStorage, state, VOICE_VOLUME_STORAGE_KEY);
+  } catch {
+    // A blocked storage area must not stop the voice controls from working.
   }
 }
 
@@ -346,6 +368,7 @@ let availablePlayerTeams = [PLAYER_TEAM.ROGUE, PLAYER_TEAM.OBSERVER];
 let selectedVoiceInputDeviceId = '';
 let voiceRtcConfig = { iceServers: [] };
 let voiceManager = null;
+let voiceAudioState = readPersistedVoiceAudioState();
 let voiceManagerState = {
   channel: 'nearby',
   team: PLAYER_TEAM.ROGUE,
@@ -354,6 +377,7 @@ let voiceManagerState = {
   transmitting: false,
   hasLocalStream: false,
   canTransmit: true,
+  voiceVolume: voiceAudioState.volume,
   lastError: null,
 };
 
@@ -497,6 +521,34 @@ function getVoiceState() {
   return { ...voiceManagerState };
 }
 
+function getVoiceVolumeState() {
+  const state = getVoiceState();
+  const managerVolume = Number(state.voiceVolume);
+  return createAudioVolumeState({
+    volume: Number.isFinite(managerVolume) ? managerVolume : voiceAudioState.volume,
+    restoreVolume: voiceAudioState.restoreVolume,
+  });
+}
+
+function setVoiceAudioVolume(value) {
+  const nextState = setAudioVolume(voiceAudioState, value);
+  voiceAudioState = nextState;
+  persistVoiceAudioState(nextState);
+
+  const result = callVoiceManager('setVoiceVolume', nextState.volume);
+  const managerState = result.value && typeof result.value === 'object' ? result.value : null;
+  const managerVolume = Number(managerState?.voiceVolume);
+  if (Number.isFinite(managerVolume)) {
+    voiceAudioState = createAudioVolumeState({
+      volume: managerVolume,
+      restoreVolume: nextState.restoreVolume,
+    });
+    persistVoiceAudioState(voiceAudioState);
+  }
+  updateVoiceHud({ voiceVolume: voiceAudioState.volume });
+  return voiceAudioState;
+}
+
 function updateVoiceInputDevices(devices = []) {
   const input = document.getElementById('voiceInputDevice');
   if (!input) return;
@@ -532,6 +584,13 @@ function updateVoiceHud(nextState = null) {
     ? { ...voiceManagerState, ...nextState }
     : getVoiceState();
   voiceManagerState = state;
+  const managerVolume = Number(state.voiceVolume);
+  if (Number.isFinite(managerVolume)) {
+    voiceAudioState = createAudioVolumeState({
+      volume: managerVolume,
+      restoreVolume: voiceAudioState.restoreVolume,
+    });
+  }
 
   const hud = document.getElementById('voiceChannelHud');
   const label = hud?.querySelector('.voiceChannelHudLabel');
@@ -612,6 +671,7 @@ function initializeVoiceManager() {
     inputDeviceId: selectedVoiceInputDeviceId,
     rtcConfig: voiceRtcConfig,
     audioConstraints: getVoiceAudioSettings(),
+    voiceVolume: voiceAudioState.volume,
     startMuted: true,
     callbacks: {
       onStateChange: updateVoiceHud,
@@ -2436,6 +2496,8 @@ initHudControls({
   getGameAudioState: () => renderManager.getGameAudioState(),
   setGameAudioVolume,
   toggleGameAudioMute,
+  getVoiceVolumeState,
+  setVoiceVolume: setVoiceAudioVolume,
   getScene: () => scene,
   getChatInput: () => chatInput,
   toggleEntryDialog,

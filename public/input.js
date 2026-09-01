@@ -590,6 +590,8 @@ const defaultHudContext = {
   getGameAudioState: () => createAudioVolumeState(),
   setGameAudioVolume: () => createAudioVolumeState(),
   toggleGameAudioMute: () => createAudioVolumeState(),
+  getVoiceVolumeState: () => createAudioVolumeState(),
+  setVoiceVolume: () => createAudioVolumeState(),
 };
 
 let hudContext = { ...defaultHudContext };
@@ -607,8 +609,10 @@ const domRefs = {
   settingsBtn: null,
   audioBtn: null,
   audioVolumePanel: null,
-  audioVolumeSlider: null,
-  audioVolumeValue: null,
+  audioMasterSlider: null,
+  audioMasterValue: null,
+  audioVoiceSlider: null,
+  audioVoiceValue: null,
   settingsHud: null,
   voiceBtn: null,
   voiceOverlay: null,
@@ -678,7 +682,7 @@ const GAMEPLAY_OWNED_KEYS = new Set([
   'KeyN', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
   'BracketLeft', 'BracketRight', 'Period', 'Comma',
   'PageUp', 'PageDown', 'End',
-  // View, HUD, radar, help, and game audio
+  // View, HUD, radar, help, and the audio panel
   'KeyM', 'KeyC', 'KeyO', 'KeyF', 'KeyI', 'KeyB', 'KeyV',
   'Slash', 'Backslash', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract',
   // Not a binding: Firefox opens its link quick-find on an apostrophe and eats
@@ -883,24 +887,45 @@ function getGameAudioState() {
   }
 }
 
-function updateAudioVolumeUi(state = null) {
-  const current = createAudioVolumeState(state || getGameAudioState());
-  const value = current.muted ? 0 : current.volume;
-  if (domRefs.audioVolumeSlider) {
-    domRefs.audioVolumeSlider.value = String(value);
-    domRefs.audioVolumeSlider.setAttribute('aria-valuenow', String(value));
-    domRefs.audioVolumeSlider.setAttribute('aria-valuetext', `${value}%${current.muted ? ' (muted)' : ''}`);
+function getVoiceVolumeState() {
+  try {
+    return createAudioVolumeState(hudContext.getVoiceVolumeState());
+  } catch {
+    return createAudioVolumeState();
   }
-  if (domRefs.audioVolumeValue) {
-    domRefs.audioVolumeValue.textContent = `${value}%`;
+}
+
+function updateAudioVolumeUi(gameState = null, voiceState = null) {
+  const game = createAudioVolumeState(gameState || getGameAudioState());
+  const voice = createAudioVolumeState(voiceState || getVoiceVolumeState());
+  const gameValue = game.muted ? 0 : game.volume;
+  const voiceValue = voice.muted ? 0 : voice.volume;
+  if (domRefs.audioMasterSlider) {
+    domRefs.audioMasterSlider.value = String(gameValue);
+    domRefs.audioMasterSlider.setAttribute('aria-valuenow', String(gameValue));
+    domRefs.audioMasterSlider.setAttribute('aria-valuetext', `${gameValue}%`);
+  }
+  if (domRefs.audioMasterValue) {
+    domRefs.audioMasterValue.textContent = `${gameValue}%`;
+  }
+  if (domRefs.audioVoiceSlider) {
+    domRefs.audioVoiceSlider.value = String(voiceValue);
+    domRefs.audioVoiceSlider.setAttribute('aria-valuenow', String(voiceValue));
+    domRefs.audioVoiceSlider.setAttribute('aria-valuetext', `${voiceValue}%`);
+  }
+  if (domRefs.audioVoiceValue) {
+    domRefs.audioVoiceValue.textContent = `${voiceValue}%`;
   }
   if (domRefs.audioBtn) {
-    domRefs.audioBtn.dataset.muted = String(current.muted);
-    domRefs.audioBtn.setAttribute('aria-pressed', String(current.muted));
-    domRefs.audioBtn.title = current.muted ? 'Unmute game audio (V)' : 'Mute game audio (V)';
-    domRefs.audioBtn.setAttribute('aria-label', current.muted ? 'Unmute game audio' : 'Mute game audio');
+    const panelOpen = domRefs.audioVolumePanel?.classList.contains('is-open') === true;
+    domRefs.audioBtn.dataset.open = String(panelOpen);
+    domRefs.audioBtn.removeAttribute('data-muted');
+    domRefs.audioBtn.removeAttribute('aria-pressed');
+    domRefs.audioBtn.setAttribute('aria-expanded', String(panelOpen));
+    domRefs.audioBtn.title = `${panelOpen ? 'Hide' : 'Show'} audio sliders (V)`;
+    domRefs.audioBtn.setAttribute('aria-label', `${panelOpen ? 'Hide' : 'Show'} audio sliders`);
   }
-  return current;
+  return { game, voice };
 }
 
 function updateAudioPanelMetrics() {
@@ -912,6 +937,23 @@ function updateAudioPanelMetrics() {
   const mainHud = document.getElementById('mainhud');
   const height = Math.round(mainHud?.getBoundingClientRect().height || 0);
   if (height > 0) document.documentElement.style.setProperty('--player-hud-height', `${height}px`);
+
+  // In compact/portrait layouts the speaker button is detached from the
+  // player card and sits immediately above the chat/notification window.
+  // Derive the offset from the live chat geometry so it follows safe areas,
+  // orientation changes, and chat content that changes its height.
+  const compactLayout = typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 900px), (orientation: portrait)').matches;
+  const chatWindow = document.getElementById('chatWindow');
+  if (compactLayout && chatWindow) {
+    const chatTop = chatWindow.getBoundingClientRect().top;
+    if (Number.isFinite(chatTop)) {
+      const bottomOffset = Math.max(0, Math.round(window.innerHeight - chatTop + 6));
+      button.style.setProperty('--audio-mobile-bottom', `${bottomOffset}px`);
+    }
+  } else {
+    button.style.removeProperty('--audio-mobile-bottom');
+  }
 }
 
 function setAudioVolumePanelOpen(open, { focusSlider = false } = {}) {
@@ -922,9 +964,15 @@ function setAudioVolumePanelOpen(open, { focusSlider = false } = {}) {
   domRefs.audioBtn?.setAttribute('aria-expanded', String(visible));
   if (visible) {
     updateAudioPanelMetrics();
-    if (focusSlider) domRefs.audioVolumeSlider?.focus();
+    if (focusSlider) domRefs.audioMasterSlider?.focus();
   }
+  updateAudioVolumeUi();
   return visible;
+}
+
+function toggleAudioVolumePanel() {
+  const visible = domRefs.audioVolumePanel?.classList.contains('is-open') === true;
+  return setAudioVolumePanelOpen(!visible);
 }
 
 function closeAudioVolumePanel({ restoreFocus = false } = {}) {
@@ -939,12 +987,9 @@ function setAudioVolumeFromUi(value) {
   return updateAudioVolumeUi(state);
 }
 
-function toggleGameAudioMuteFromUi({ announce = true } = {}) {
-  const state = updateAudioVolumeUi(hudContext.toggleGameAudioMute());
-  if (announce) {
-    hudContext.showMessage(`Game audio: ${state.muted ? 'Muted' : `${state.volume}%`}`);
-  }
-  return state;
+function setVoiceVolumeFromUi(value) {
+  const state = hudContext.setVoiceVolume(Number(value));
+  return updateAudioVolumeUi(null, state);
 }
 
 function toggleSettingsHud() {
@@ -1296,8 +1341,10 @@ function bindHudElements() {
   domRefs.settingsBtn = document.getElementById('settingsBtn');
   domRefs.audioBtn = document.getElementById('audioBtn');
   domRefs.audioVolumePanel = document.getElementById('audioVolumePanel');
-  domRefs.audioVolumeSlider = document.getElementById('audioVolumeSlider');
-  domRefs.audioVolumeValue = document.getElementById('audioVolumeValue');
+  domRefs.audioMasterSlider = document.getElementById('audioMasterSlider');
+  domRefs.audioMasterValue = document.getElementById('audioMasterValue');
+  domRefs.audioVoiceSlider = document.getElementById('audioVoiceSlider');
+  domRefs.audioVoiceValue = document.getElementById('audioVoiceValue');
   domRefs.settingsHud = document.getElementById('settingsHud');
   domRefs.voiceBtn = document.getElementById('voiceBtn');
   domRefs.voiceOverlay = document.getElementById('voiceOverlay');
@@ -1400,18 +1447,26 @@ function bindHudElements() {
     domRefs.audioBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      toggleGameAudioMuteFromUi();
-      setAudioVolumePanelOpen(true);
+      toggleAudioVolumePanel();
     });
   }
 
-  if (domRefs.audioVolumeSlider) {
-    const handleAudioVolumeInput = (e) => {
+  if (domRefs.audioMasterSlider) {
+    const handleAudioMasterInput = (e) => {
       e.stopPropagation();
       setAudioVolumeFromUi(e.currentTarget.value);
     };
-    domRefs.audioVolumeSlider.addEventListener('input', handleAudioVolumeInput);
-    domRefs.audioVolumeSlider.addEventListener('change', handleAudioVolumeInput);
+    domRefs.audioMasterSlider.addEventListener('input', handleAudioMasterInput);
+    domRefs.audioMasterSlider.addEventListener('change', handleAudioMasterInput);
+  }
+
+  if (domRefs.audioVoiceSlider) {
+    const handleAudioVoiceInput = (e) => {
+      e.stopPropagation();
+      setVoiceVolumeFromUi(e.currentTarget.value);
+    };
+    domRefs.audioVoiceSlider.addEventListener('input', handleAudioVoiceInput);
+    domRefs.audioVoiceSlider.addEventListener('change', handleAudioVoiceInput);
   }
 
   if (domRefs.playerOptionsBtn) {
@@ -1524,7 +1579,7 @@ function bindHudElements() {
 
       setGameplayKeyState(e.code, true);
       if ((e.code === 'KeyV' || e.key === 'v' || e.key === 'V') && !e.repeat) {
-        toggleGameAudioMuteFromUi();
+        toggleAudioVolumePanel();
         return;
       }
       if (hudContext.handleGameplayKeydown(e)) return;
@@ -1590,6 +1645,8 @@ function bindHudElements() {
     hudLayoutObserver.observe(domRefs.audioBtn);
     const mainHud = document.getElementById('mainhud');
     if (mainHud) hudLayoutObserver.observe(mainHud);
+    const chatWindow = document.getElementById('chatWindow');
+    if (chatWindow) hudLayoutObserver.observe(chatWindow);
   }
 
   updateSettingsBtn();

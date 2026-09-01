@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   AUDIO_VOLUME_STORAGE_KEY,
   DEFAULT_AUDIO_VOLUME,
+  VOICE_VOLUME_STORAGE_KEY,
   createAudioVolumeState,
   readAudioVolumeState,
   setAudioVolume,
@@ -60,6 +61,11 @@ const fakeStorage = {
 writeAudioVolumeState(fakeStorage, muted);
 assert.equal(storage.has(AUDIO_VOLUME_STORAGE_KEY), true);
 assert.deepEqual(readAudioVolumeState(fakeStorage), muted);
+
+const voiceState = setAudioVolume(defaultState, 63);
+writeAudioVolumeState(fakeStorage, voiceState, VOICE_VOLUME_STORAGE_KEY);
+assert.equal(storage.has(VOICE_VOLUME_STORAGE_KEY), true);
+assert.deepEqual(readAudioVolumeState(fakeStorage, VOICE_VOLUME_STORAGE_KEY), voiceState);
 
 storage.set(AUDIO_VOLUME_STORAGE_KEY, '{not-json');
 assert.deepEqual(readAudioVolumeState(fakeStorage), defaultState);

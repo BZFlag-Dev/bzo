@@ -23,6 +23,12 @@ function normalizeDeviceId(value) {
   return String(value);
 }
 
+function normalizeVolumePercent(value, fallback = 100) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.round(Math.max(0, Math.min(100, numeric)));
+}
+
 function comparePlayerIds(left, right) {
   const leftId = normalizePlayerId(left);
   const rightId = normalizePlayerId(right);
@@ -106,6 +112,7 @@ function createVoiceError(code, message, cause) {
  * @param {RTCConfiguration} [options.rtcConfig] RTCPeerConnection configuration.
  * @param {RTCPeerConnection} [options.RTCPeerConnection] Test/browser constructor override.
  * @param {boolean} [options.startMuted=true] Keep the microphone disabled after capture.
+ * @param {number} [options.voiceVolume=100] Playback volume for remote WebRTC audio, as a percentage.
  * @returns {object} Voice manager API.
  */
 export function createVoiceManager(options = {}) {
@@ -139,6 +146,7 @@ export function createVoiceManager(options = {}) {
   let microphoneRequest = null;
   let lifecycleGeneration = 0;
   let lastError = null;
+  let voiceVolume = normalizeVolumePercent(options.voiceVolume);
 
   const roster = new Map();
   const peers = new Map();
@@ -162,6 +170,23 @@ export function createVoiceManager(options = {}) {
       && Boolean(localStream && localStream.getAudioTracks().length);
   }
 
+  function setRemoteAudioVolume(audio) {
+    if (!audio) return;
+    try {
+      // Remote audio is decoded by the browser's WebRTC pipeline and rendered
+      // through an HTMLMediaElement. Its `volume` gain is therefore local to
+      // playback and never changes the microphone track sent to peers.
+      audio.volume = voiceVolume / 100;
+    } catch {
+      // A host may provide a media-element test double without a writable
+      // volume property; voice signalling must continue regardless.
+    }
+  }
+
+  function applyRemoteAudioVolume() {
+    peers.forEach((entry) => setRemoteAudioVolume(entry.remoteAudio));
+  }
+
   function getState() {
     return {
       started,
@@ -173,6 +198,7 @@ export function createVoiceManager(options = {}) {
       microphoneEnabled,
       microphonePermission,
       inputDeviceId,
+      voiceVolume,
       hasLocalStream: Boolean(localStream),
       peerIds: Array.from(peers.keys()),
       rosterIds: Array.from(roster.keys()),
@@ -248,6 +274,7 @@ export function createVoiceManager(options = {}) {
     audio.setAttribute('aria-hidden', 'true');
     audio.dataset.voicePeerId = peerId;
     audio.style.display = 'none';
+    setRemoteAudioVolume(audio);
     if (document.body) document.body.appendChild(audio);
     invoke('onRemoteAudio', { peerId, element: audio });
     return audio;
@@ -724,6 +751,13 @@ export function createVoiceManager(options = {}) {
     return requestMicrophone({ enable: microphoneEnabled });
   }
 
+  function setVoiceVolume(value) {
+    voiceVolume = normalizeVolumePercent(value, voiceVolume);
+    applyRemoteAudioVolume();
+    emitState();
+    return getState();
+  }
+
   async function toggleMicrophone(forceState) {
     if (isObserverTeam(team)) {
       const error = createVoiceError('observer_microphone_denied', 'Observers can listen but cannot use a microphone.');
@@ -882,6 +916,7 @@ export function createVoiceManager(options = {}) {
     requestMicrophone,
     setInputDevice,
     setAudioConstraints,
+    setVoiceVolume,
     setRtcConfig,
     toggleMicrophone,
     handleServerMessage,
