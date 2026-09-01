@@ -1,6 +1,6 @@
 {
   "name": "bzo",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "description": "Web based BZFlag like 3D multiplayer tank game, Battlezone Online",
   "main": "server.js",
   "scripts": {
@@ -9,22 +9,22 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "check:server": "node --check server.js",
-    "check": "npm run check:server && npm run lint && npm run check:controls-docs && npm run check:shared-pairs && npm run test:input-context && npm run test:player-teams && npm run test:team-mode && npm run test:shot-limits && npm run test:server-name && npm run test:tank-motion && npm run test:collision-geometry && npm run test:render-capabilities",
+    "check": "npm run check:server && npm run lint && npm run check:controls-docs && npm run check:shared-pairs && npm run test:input-context && npm run test:teams && npm run test:team-mode && npm run test:shots && npm run test:server-name && npm run test:motion && npm run test:collision && npm run test:capabilities",
     "check:controls-docs": "node scripts/check-controls-docs.mjs",
     "check:shared-pairs": "node scripts/check-shared-pairs.mjs",
     "test:input-context": "node scripts/test-input-context.mjs",
-    "test:player-teams": "node scripts/test-player-teams.mjs",
+    "test:teams": "node scripts/test-teams.mjs",
     "test:team-mode": "node scripts/test-team-mode.mjs",
     "test:server-name": "node scripts/test-server-name.mjs",
-    "test:tank-motion": "node scripts/test-tank-motion.mjs",
-    "test:shot-limits": "node scripts/test-shot-limits.mjs",
-    "test:render-capabilities": "node scripts/test-render-capabilities.mjs",
+    "test:motion": "node scripts/test-motion.mjs",
+    "test:shots": "node scripts/test-shots.mjs",
+    "test:capabilities": "node scripts/test-capabilities.mjs",
     "release:prepare": "node scripts/prepare-release.mjs",
     "release:check": "node scripts/check-release.mjs",
     "release:check:increment": "node scripts/check-tag-increment.mjs",
     "changelog:extract": "node scripts/extract-changelog.mjs",
     "prepare": "node -e \"const { existsSync } = require('node:fs'); process.exit(existsSync('node_modules/.bin/husky') ? 0 : 1)\" && husky || true",
-    "test:collision-geometry": "node scripts/test-collision-geometry.mjs"
+    "test:collision": "node scripts/test-collision.mjs"
   },
   "keywords": [
     "game",

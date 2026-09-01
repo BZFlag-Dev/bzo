@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.46] - 2026-09-01
+
+Housekeeping. Nothing in this release changes how the game plays or looks.
+
+### Changed
+- Shared client/server modules carry short names: `collision`, `motion`, `teams`, `shots`, and `headset`, alongside `capabilities` and `settings` on the client. Their test scripts and `npm run test:*` targets follow.
+- The four XR HUD overlays -- radar, chat, shot slots, scoreboard -- are built by one helper instead of each repeating the same canvas, texture, and camera-parented plane setup.
+- HUD toggle buttons declare what they read, write, and persist rather than each wiring its own click handler and label logic. A button whose capability gate is closed goes dead the same way for all of them.
+- Tank treads and wheels are assembled by one builder per part rather than mirrored left and right blocks, and the tinted BZFlag textures share one creator.
+- Random obstacle generation places boxes and pyramids through one routine. A procedurally generated map still follows the same rules, but will not come out identical to one from the previous release.
+
 ## [1.0.45] - 2026-09-01
 
 ### Added
