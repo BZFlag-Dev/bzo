@@ -90,6 +90,9 @@ import {
 } from './input.js';
 import { XRMenuRenderer } from './xr-menu.js';
 import {
+  colorToCSS,
+  formatTeamScore,
+  getTeamScoreRows,
   updateDebugDisplay,
   updateHudButtons,
   toggleDebugHud,
@@ -120,6 +123,7 @@ import {
   PLAYER_TEAM,
   PLAYER_TEAMS,
   PLAYER_TEAM_LABELS,
+  getPlayerTeamColor,
   getPlayerTeamSelections,
   isObserverTeam,
   normalizePlayerTeam,
@@ -213,6 +217,9 @@ let xrScoreboardCanvas = null;
 let xrScoreboardTexture = null;
 let xrScoreboardTextureMesh = null;
 const XR_HUD_PLANE_Z = -0.85;
+// BZFlag fires with Enter or the left mouse button and keeps the space bar for
+// dropping a flag (ActionBinding.cxx:92-95).
+const FIRE_KEY = 'Enter';
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 // BZFlag's displayRadarRange default (defaultBZDB.cxx). The level is deliberately
@@ -241,6 +248,9 @@ let xrSettingsMenuActivateLatched = false;
 let xrSettingsMenuBackLatched = false;
 let nextAllowedShotAt = 0;
 let playerTeam = PLAYER_TEAM.ROGUE;
+// One entry per colour team the server offers: { team, size, wins, losses }.
+// Empty until a team-mode server sends its first update.
+let teamScores = [];
 let selectedPlayerTeam = PLAYER_TEAM.AUTOMATIC;
 let availablePlayerTeams = [PLAYER_TEAM.ROGUE, PLAYER_TEAM.OBSERVER];
 let selectedVoiceInputDeviceId = '';
@@ -2137,28 +2147,26 @@ function getDebugState() {
   };
 }
 
+// Keys the game acts on. Holding the browser off them is the keydown
+// listener's job in input.js, which claims the whole set before this runs.
 function handleGameplayKeydown(event) {
   if (event.code === 'KeyP') {
     sendToServer({ type: 'pause' });
-    event.preventDefault();
     return true;
   }
 
   if (event.key === 'n' || event.key === 'N') {
     focusChatWithTarget(CHAT_TARGET_ALL);
-    event.preventDefault();
     return true;
   }
 
   if (event.code === 'Period' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
     handleReplyToLastSender();
-    event.preventDefault();
     return true;
   }
 
   if (event.code === 'Comma' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
     handleMessageNemesisTarget();
-    event.preventDefault();
     return true;
   }
 
@@ -2171,53 +2179,46 @@ function handleGameplayKeydown(event) {
   };
   const tabId = chatTabsByCode[event.code];
   if (tabId) {
-    if (setActiveChatTab(tabId)) event.preventDefault();
+    setActiveChatTab(tabId);
     return true;
   }
 
   if (event.code === 'BracketLeft' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
     cycleChatTab(-1);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'BracketRight' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
     cycleChatTab(1);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'PageUp' || event.key === 'PageUp') {
     scrollChatPage(1);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'PageDown' || event.key === 'PageDown') {
     scrollChatPage(-1);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'End' || event.key === 'End') {
     scrollChatToNewest();
-    event.preventDefault();
     return true;
   }
-  if ((event.code === 'Equal' && event.shiftKey) || event.code === 'NumpadAdd') {
+  // Shift is ignored: + and = are one key, and demanding the shift made zooming
+  // out a two-handed job while zooming in needed none.
+  if (event.code === 'Equal' || event.code === 'NumpadAdd') {
     adjustRadarZoom(1);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'Minus' || event.code === 'NumpadSubtract') {
     adjustRadarZoom(-1);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'Backslash') {
     setRadarZoomLevel(RADAR_ZOOM_DEFAULT);
-    event.preventDefault();
     return true;
   }
   if (event.code === 'KeyQ' && ws && ws.readyState === WebSocket.OPEN) {
     sendToServer({ type: 'selfDestruct' });
-    event.preventDefault();
     return true;
   }
   if (event.code === 'Escape') {
@@ -2784,13 +2785,13 @@ function init() {
         justActivatedMouseControl = false;
         return;
       }
-      setGameplayKeyState('Space', true);
+      setGameplayKeyState(FIRE_KEY, true);
     }
   });
 
   document.addEventListener('mouseup', (e) => {
     if (e.button === 0) {
-      setGameplayKeyState('Space', false);
+      setGameplayKeyState(FIRE_KEY, false);
     }
   });
 
@@ -3012,6 +3013,7 @@ function handleServerMessage(message) {
       myPlayerId = message.player.id;
       gameConfig = message.config;
       setAvailablePlayerTeams(message.teamMode.teams);
+      teamScores = message.teamScores || [];
       if (message.voiceRtcConfig && typeof message.voiceRtcConfig === 'object') {
         voiceRtcConfig = message.voiceRtcConfig;
         callVoiceManager('setRtcConfig', voiceRtcConfig);
@@ -3133,6 +3135,11 @@ function handleServerMessage(message) {
         callUpdateScoreboard();
         showMessage(`${message.player.name} joined the game`);
       }
+      break;
+
+    case 'teamUpdate':
+      teamScores = message.teams || [];
+      updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks, teamScores });
       break;
 
     case 'playerLeft': {
@@ -3755,7 +3762,7 @@ function handlePlayerRespawn(message) {
 }
 // Helper to call updateScoreboard with all required parameters
 function callUpdateScoreboard() {
-  updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks });
+  updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks, teamScores });
 }
 
 function handleMapsList(message) {
@@ -5512,8 +5519,9 @@ function handleMotion(deltaTime) {
     lastSentTime = now;
 
   }
-  // Fire button: keyboard Space, mobile/XR/gamepad virtualInput.fire
-  const firePressed = (!isMobile && keys['Space']) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
+  // Fire: the keyboard fire key or the left mouse button, and on mobile, XR or
+  // a gamepad, virtualInput.fire.
+  const firePressed = (!isMobile && keys[FIRE_KEY]) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
   const fireNow = performance.now();
   if (firePressed && fireNow >= nextAllowedShotAt) {
     const maxActiveShots = normalizeShotSlotCount(gameConfig?.SHOT_MAX_ACTIVE);
@@ -6245,13 +6253,15 @@ function ensureXRScoreboardOverlay() {
     return String(a.name).localeCompare(String(b.name));
   });
 
+  const teamRows = getTeamScoreRows(teamScores);
   const margin = 12;
   const rowHeight = 18;
   const headerHeight = 20;
   const maxRows = 8;
   const visiblePlayers = playerData.slice(0, maxRows);
+  const teamBlockHeight = teamRows.length ? headerHeight + teamRows.length * rowHeight + 8 : 0;
   const panelW = 320;
-  const panelH = Math.max(120, headerHeight + 10 + visiblePlayers.length * rowHeight + 12);
+  const panelH = Math.max(120, teamBlockHeight + headerHeight + 10 + visiblePlayers.length * rowHeight + 12);
   xrScoreboardCanvas.width = panelW;
   xrScoreboardCanvas.height = panelH;
 
@@ -6265,12 +6275,26 @@ function ensureXRScoreboardOverlay() {
 
   ctx.fillStyle = '#4CAF50';
   ctx.font = 'bold 14px monospace';
-  ctx.fillText('Player', margin, 16);
-  ctx.fillText('K/D', panelW - 42, 16);
+  if (teamRows.length) {
+    ctx.fillText('Team Score', margin, 16);
+    ctx.font = '13px monospace';
+    teamRows.forEach((row, index) => {
+      const y = 38 + index * rowHeight;
+      ctx.fillStyle = colorToCSS(getPlayerTeamColor(row.team));
+      ctx.fillText(row.label, margin, y);
+      ctx.fillText(formatTeamScore(row), panelW - 110, y);
+    });
+    ctx.fillStyle = '#4CAF50';
+    ctx.font = 'bold 14px monospace';
+  }
+
+  const playerHeaderY = 16 + teamBlockHeight;
+  ctx.fillText('Player', margin, playerHeaderY);
+  ctx.fillText('K/D', panelW - 42, playerHeaderY);
 
   ctx.font = '13px monospace';
   visiblePlayers.forEach((player, index) => {
-    const y = 38 + index * rowHeight;
+    const y = playerHeaderY + 22 + index * rowHeight;
     const name = String(player.name || 'Player');
     ctx.fillStyle = player.isCurrent ? '#8BE28C' : '#E6F1FF';
     ctx.fillText(name.length > 14 ? `${name.slice(0, 11)}...` : name, margin, y);
@@ -6281,7 +6305,7 @@ function ensureXRScoreboardOverlay() {
   xrScoreboardTexture.needsUpdate = true;
 
   const baseWidth = 0.36;
-  const baseHeight = Math.min(0.30, 0.06 + visiblePlayers.length * 0.025);
+  const baseHeight = Math.min(0.36, 0.06 + (visiblePlayers.length + teamRows.length) * 0.025);
   xrScoreboardTextureMesh.scale.set(1, 1, 1);
   xrScoreboardTextureMesh.geometry.dispose();
   xrScoreboardTextureMesh.geometry = new THREE.PlaneGeometry(baseWidth, baseHeight);

@@ -11,7 +11,9 @@ import {
   PLAYER_TEAM,
   PLAYER_TEAMS,
   PLAYER_TEAM_LABELS,
+  getPlayerTeamColor,
   getPlayerTeamSelections,
+  isColorTeam,
   isObserverTeam,
   normalizePlayerTeam,
   normalizePlayerTeamSelection,
@@ -88,5 +90,61 @@ assert.equal(normalizePlayerTeam(' red '), PLAYER_TEAM.RED);
 assert.equal(normalizePlayerTeamSelection(' AUTOMATIC '), PLAYER_TEAM.AUTOMATIC);
 // Non-strings are rejected rather than coerced.
 assert.equal(normalizePlayerTeam({ toString: () => 'blue' }), PLAYER_TEAM.ROGUE);
+
+// Only colour teams keep a team score, and both copies must agree on which
+// those are: the server scores kills by it, the client draws rows by it.
+for (const team of [...PLAYER_TEAMS, 'automatic', 'unknown', '', null]) {
+  assert.equal(
+    serverTeams.isColorTeam(team),
+    isColorTeam(team),
+    `client/server isColorTeam diverged for ${String(team)}`
+  );
+  assert.equal(
+    serverTeams.getPlayerTeamColor(team),
+    getPlayerTeamColor(team),
+    `client/server getPlayerTeamColor diverged for ${String(team)}`
+  );
+}
+
+assert.equal(isColorTeam(PLAYER_TEAM.RED), true);
+assert.equal(isColorTeam(PLAYER_TEAM.PURPLE), true);
+assert.equal(isColorTeam(PLAYER_TEAM.ROGUE), false);
+assert.equal(isColorTeam(PLAYER_TEAM.OBSERVER), false);
+// An unknown team normalizes to rogue, which scores for nobody.
+assert.equal(isColorTeam('unknown'), false);
+
+// Team scoring, against bzfs.cxx:3540.
+const { getTeamScoreDeltasForKill } = serverTeams;
+const RED = PLAYER_TEAM.RED;
+const BLUE = PLAYER_TEAM.BLUE;
+const ROGUE = PLAYER_TEAM.ROGUE;
+
+// A kill across teams: one win for the killer's team, one loss for the victim's.
+assert.deepEqual(getTeamScoreDeltasForKill(RED, BLUE), [
+  { team: RED, wins: 1, losses: 0 },
+  { team: BLUE, wins: 0, losses: 1 },
+]);
+
+// Killing a team mate costs the team two and wins nothing.
+assert.deepEqual(getTeamScoreDeltasForKill(RED, RED), [{ team: RED, wins: 0, losses: 2 }]);
+
+// Killing yourself costs one.
+assert.deepEqual(getTeamScoreDeltasForKill(RED, RED, true), [{ team: RED, wins: 0, losses: 1 }]);
+
+// A rogue killer wins for nobody; the victim's team still loses.
+assert.deepEqual(getTeamScoreDeltasForKill(ROGUE, BLUE), [{ team: BLUE, wins: 0, losses: 1 }]);
+
+// A rogue victim costs nobody; the killer's team still wins.
+assert.deepEqual(getTeamScoreDeltasForKill(RED, ROGUE), [{ team: RED, wins: 1, losses: 0 }]);
+
+// Rogue on rogue, and a rogue's own destruction, score nothing at all.
+assert.deepEqual(getTeamScoreDeltasForKill(ROGUE, ROGUE), []);
+assert.deepEqual(getTeamScoreDeltasForKill(ROGUE, ROGUE, true), []);
+
+// An unknown killer -- a shot whose owner has left -- still costs the victim.
+assert.deepEqual(getTeamScoreDeltasForKill(undefined, BLUE), [{ team: BLUE, wins: 0, losses: 1 }]);
+
+// Observers are not a colour team either way.
+assert.deepEqual(getTeamScoreDeltasForKill(PLAYER_TEAM.OBSERVER, PLAYER_TEAM.OBSERVER), []);
 
 console.log('player team tests passed');

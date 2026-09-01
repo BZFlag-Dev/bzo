@@ -268,6 +268,59 @@ Leave it unset unless an operator deliberately wants a non-BZFlag fire rate --
 in particular do not add it to `example-server.json`, which is copied to
 `server.json` on first start.
 
+## Keyboard
+
+`GAMEPLAY_OWNED_KEYS` in `public/input.js` lists every key gameplay consumes,
+and the keydown listener calls `preventDefault` on the whole set once the
+guards have established that no dialog or text field wants the event. **Add a
+key there in the same change that binds it.** Several defaults break play
+outright: Tab walks focus onto the HUD buttons, where Space then presses one
+instead of firing, and Firefox opens quick find on `/` and swallows the
+keyboard. The rest have no default worth naming today, which is what quick find
+looked like until someone played in Firefox.
+
+Nothing carrying Ctrl, Meta, or Alt is ours, whatever key it is built on:
+Ctrl+W, Cmd+Q and Alt+Left pass straight through. Escape is deliberately left
+alone -- a browser will not let go of it, and it also leaves pointer lock.
+
+Two upstream bindings collide with keys bzo already spends, and both matter for
+features that are still to come (`ActionBinding.cxx:91-98`):
+
+| upstream | key | in bzo |
+|---|---|---|
+| `fire` | Enter, Left Mouse | matches |
+| `drop` (drop flag) | Space | claimed and unbound, waiting for flags |
+| `identify` (guided missile lock) | I | taken by the debug HUD |
+
+The space bar is deliberately bound to nothing: it is upstream's drop-flag key,
+and holding the browser off it in the meantime keeps it from pressing whichever
+HUD button has focus. Guided missiles still have to displace the debug HUD from
+`I`, or diverge from every other BZFlag client. Pick when the feature lands.
+
+## Team scores
+
+In team mode the server keeps a score per colour team, exactly as bzfs does:
+
+- `bzfs.cxx:3540` -- a kill across teams wins one for the killer's team and
+  loses one for the victim's; a kill inside a team only loses, two for a team
+  mate and one for yourself. Rogues and observers score for nobody, either as
+  killer or as victim.
+- `bzfs.cxx:2377` -- a team's tally resets when its first player joins an empty
+  team. Losing its last player does **not** reset it: `removePlayer` decrements
+  the size and sends a team update, leaving wins and losses where they were, so
+  a score outlives the team until someone joins it again. A map change restarts
+  the process here, which is what resets the rest.
+- `ScoreboardRenderer.cxx:341` -- the scoreboard shows `score (wins-losses)
+  size` per team, sorted by score, skipping teams with nobody on them. bzo adds
+  the team's name to that row; upstream relies on the row's colour alone.
+
+The rule itself is `getTeamScoreDeltasForKill` in the `player-teams` pair, kept
+pure so `scripts/test-player-teams.mjs` can hold it against upstream's without
+a server around it. `MsgTeamUpdate` carries size, wins and losses per team
+upstream; bzo sends the same fields as `teamUpdate`, and the same array rides
+along in the `init` payload so a joining player starts with the current
+standings.
+
 ## Audio
 
 Gameplay samples live in `public/audio/` and come from upstream BZFlag

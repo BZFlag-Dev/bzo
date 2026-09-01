@@ -43,9 +43,9 @@ const canonicalChecks = [
     help: /<strong>A\/D<\/strong>\s*or\s*<strong>Left\/Right<\/strong>/i,
   },
   {
-    name: 'shoot control (Space)',
-    readme: /`Space`/i,
-    help: /<strong>Space<\/strong>/i,
+    name: 'shoot control (Enter)',
+    readme: /`Enter` — shoot/i,
+    help: /<strong>Enter<\/strong> — Shoot/i,
   },
   {
     name: 'jump control (Tab)',

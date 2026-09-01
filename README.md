@@ -208,7 +208,7 @@ If you want automatic container updates, use your preferred container update man
 
 - `W` / `S` or `Up` / `Down` — move forward/backward
 - `A` / `D` or `Left` / `Right` — turn left/right
-- `Space` — shoot
+- `Enter` — shoot
 - `Tab` — jump
 - `Q` — self-destruct
 - `P` — pause/resume
@@ -226,7 +226,7 @@ If you want automatic container updates, use your preferred container update man
 - `O` — toggle operator panel
 - `F` — toggle fullscreen
 - `I` — toggle debug HUD
-- `+` or `Numpad +` — zoom radar out (increase range)
+- `=` or `+` or `Numpad +` — zoom radar out (increase range)
 - `-` or `Numpad -` — zoom radar in (decrease range)
 - `\` — reset radar zoom to the default medium range (0.5x shot-distance)
 - `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets

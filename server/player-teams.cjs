@@ -209,6 +209,31 @@ function selectPlayerTeam(requestedTeam, teamMode, teamCounts = {}, teamScores =
   return candidates[Math.floor(random() * candidates.length)];
 }
 
+// Team::isColorTeam upstream. Rogues and observers carry no team score: a
+// rogue kill feeds nobody's tally, and neither does dying as one.
+function isColorTeam(team) {
+  const normalized = normalizePlayerTeam(team);
+  return normalized !== PLAYER_TEAM.ROGUE && normalized !== PLAYER_TEAM.OBSERVER;
+}
+
+// bzfs.cxx:3540. A kill across teams wins one for the killer's team and loses
+// one for the victim's. A kill inside a team only loses: two for killing a team
+// mate, one for killing yourself. Rogues and observers score for nobody, so a
+// rogue's kill feeds no tally and a rogue's death costs none.
+//
+// Returned rather than applied so the rule can be tested against upstream's
+// without a server around it.
+function getTeamScoreDeltasForKill(killerTeam, victimTeam, selfKill = false) {
+  const deltas = [];
+  if (killerTeam && killerTeam === victimTeam) {
+    if (isColorTeam(victimTeam)) deltas.push({ team: victimTeam, wins: 0, losses: selfKill ? 1 : 2 });
+    return deltas;
+  }
+  if (isColorTeam(killerTeam)) deltas.push({ team: killerTeam, wins: 1, losses: 0 });
+  if (isColorTeam(victimTeam)) deltas.push({ team: victimTeam, wins: 0, losses: 1 });
+  return deltas;
+}
+
 function getPlayerTeamColor(team) {
   return PLAYER_TEAM_COLORS[normalizePlayerTeam(team)];
 }
@@ -229,4 +254,6 @@ module.exports = {
   selectPlayerTeam,
   getPlayerTeamColor,
   getInitialPlayerColor,
+  isColorTeam,
+  getTeamScoreDeltasForKill,
 };

@@ -637,6 +637,41 @@ function callOptionalHudCallback(names, ...args) {
   return false;
 }
 
+// Every key gameplay consumes, by `event.code`, so the browser can be told to
+// keep its hands off while the game has the keyboard.
+//
+// Some of these have a default that actively breaks play: Tab walks focus onto
+// the HUD buttons, where Space then presses one instead of firing; Firefox
+// opens quick find on / and swallows everything after it; the arrows and the
+// Page keys scroll. The rest have no default worth naming today -- which is
+// exactly what quick find looked like until someone played in Firefox.
+const GAMEPLAY_OWNED_KEYS = new Set([
+  // Drive and turn
+  'KeyW', 'KeyS', 'KeyA', 'KeyD',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  // Fire, jump, self-destruct, pause. Enter would otherwise press whichever HUD
+  // button holds focus, and the space bar is claimed though nothing is bound to
+  // it yet: it is upstream's drop-flag key, and unclaimed it presses buttons.
+  'Enter', 'Space', 'Tab', 'KeyQ', 'KeyP',
+  // Chat and its tabs
+  'KeyN', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
+  'BracketLeft', 'BracketRight', 'Period', 'Comma',
+  'PageUp', 'PageDown', 'End',
+  // View, HUD, radar, help
+  'KeyM', 'KeyC', 'KeyO', 'KeyF', 'KeyI', 'KeyB',
+  'Slash', 'Backslash', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract',
+  // Not a binding: Firefox opens its link quick-find on an apostrophe and eats
+  // the keyboard until dismissed, which from inside a tank looks like a freeze.
+  'Quote',
+]);
+
+// A browser or OS shortcut is never ours: Ctrl+W, Cmd+Q, Alt+Left and the rest
+// pass straight through, whatever key they are built on.
+function isGameplayOwnedKey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  return GAMEPLAY_OWNED_KEYS.has(event.code);
+}
+
 function isMobileBrowser() {
   const ua = navigator.userAgent || navigator.vendor || window.opera;
   if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return true;
@@ -1358,6 +1393,9 @@ function bindHudElements() {
       if (isOperatorPanelVisible()) return;
       if (visibleDialog) return;
       if (isEditableElement(activeElement)) return;
+
+      // Past every dialog and text field, so the game has the keyboard.
+      if (isGameplayOwnedKey(e)) e.preventDefault();
 
       setGameplayKeyState(e.code, true);
       if (hudContext.handleGameplayKeydown(e)) return;

@@ -31,6 +31,8 @@ const {
   selectPlayerTeam,
   getPlayerTeamColor,
   getInitialPlayerColor,
+  isColorTeam,
+  getTeamScoreDeltasForKill,
 } = require('./server/player-teams.cjs');
 const path = require('path');
 const fs = require('fs');
@@ -1090,6 +1092,57 @@ const defaultTeamLimit = Number.isInteger(configuredMaxPlayers) && configuredMax
   : 16;
 const TEAM_MODE = resolveTeamMode(serverConfig.teamMode, mapTeamMode, defaultTeamLimit);
 log(`Team mode: ${TEAM_MODE.enabled ? 'enabled' : 'disabled'}; autoTeam=${TEAM_MODE.autoTeam}; teams=${TEAM_MODE.teams.map((team) => `${team}:${TEAM_MODE.limits[team]}`).join(',')}`);
+
+// Team scores follow bzfs: a team's score is wins minus losses, only colour
+// teams keep one, and a team's tally resets when its first player joins an
+// empty team (bzfs.cxx:2380) or when the world does (bzfs.cxx:1231).
+const teamScores = new Map();
+
+function getTeamScore(team) {
+  let score = teamScores.get(team);
+  if (!score) {
+    score = { wins: 0, losses: 0 };
+    teamScores.set(team, score);
+  }
+  return score;
+}
+
+function getTeamSizes() {
+  const sizes = {};
+  players.forEach((candidate) => {
+    if (!candidate.joined) return;
+    sizes[candidate.team] = (sizes[candidate.team] || 0) + 1;
+  });
+  return sizes;
+}
+
+// One entry per colour team the server offers, whatever its size: a team that
+// empties mid-match keeps its score on screen until it is reset.
+function getTeamScoreState() {
+  const sizes = getTeamSizes();
+  return TEAM_MODE.teams.filter(isColorTeam).map((team) => ({
+    team,
+    size: sizes[team] || 0,
+    ...getTeamScore(team),
+  }));
+}
+
+function broadcastTeamScores() {
+  if (!TEAM_MODE.enabled) return;
+  broadcastAll({ type: 'teamUpdate', teams: getTeamScoreState() });
+}
+
+function recordTeamScoreForKill(killer, victim) {
+  if (!TEAM_MODE.enabled || !victim) return;
+  const deltas = getTeamScoreDeltasForKill(killer?.team, victim.team, killer?.id === victim.id);
+  if (!deltas.length) return;
+  for (const delta of deltas) {
+    const score = getTeamScore(delta.team);
+    score.wins += delta.wins;
+    score.losses += delta.losses;
+  }
+  broadcastTeamScores();
+}
 log(OBSTACLES);
 
 let TELEPORTER_OBSTACLES_BY_INDEX = new Map();
@@ -2745,6 +2798,7 @@ function simulateProjectilesStep(stepSeconds, now) {
           if (shooter) {
             shooter.kills++;
           }
+          recordTeamScoreForKill(shooter, player);
 
           logShotEnd(proj, 'player_hit', { x: proj.x, y: proj.y, z: proj.z }, `victim=${player.id}`);
 
@@ -2963,6 +3017,7 @@ wss.on('connection', (ws, req) => {
     players: Array.from(players.values()).map(p => p.getState()),
     config: GAME_CONFIG,
     teamMode: TEAM_MODE,
+    teamScores: getTeamScoreState(),
     voiceRtcConfig: { iceServers: VOICE_ICE_SERVERS },
     obstacles: OBSTACLES,
     teleporterGraph: TELEPORTER_GRAPH,
@@ -3374,6 +3429,7 @@ wss.on('connection', (ws, req) => {
           if (player.health <= 0) break;
           player.health = 0;
           player.deaths++;
+          recordTeamScoreForKill(player, player);
           log(`Player "${player.name}" self-destructed.`);
 
           broadcastAll({
@@ -3407,13 +3463,15 @@ wss.on('connection', (ws, req) => {
             break;
           }
           const teamCounts = {};
-          const teamScores = {};
+          // What the players on each team have scored between them, which is
+          // what auto-assignment balances on. Not the team score.
+          const teamPlayerScores = {};
           players.forEach((candidate) => {
             if (!candidate.joined || candidate.id === player.id) return;
             teamCounts[candidate.team] = (teamCounts[candidate.team] || 0) + 1;
-            teamScores[candidate.team] = (teamScores[candidate.team] || 0) + candidate.kills - candidate.deaths;
+            teamPlayerScores[candidate.team] = (teamPlayerScores[candidate.team] || 0) + candidate.kills - candidate.deaths;
           });
-          const assignedTeam = selectPlayerTeam(requestedTeam, TEAM_MODE, teamCounts, teamScores);
+          const assignedTeam = selectPlayerTeam(requestedTeam, TEAM_MODE, teamCounts, teamPlayerScores);
           if (!assignedTeam) {
             ws.send(JSON.stringify({ error: `Team is full: ${requestedTeam}` }));
             break;
@@ -3425,6 +3483,12 @@ wss.on('connection', (ws, req) => {
           player.team = assignedTeam;
           if (TEAM_MODE.enabled) {
             player.color = getPlayerTeamColor(player.team);
+            // bzfs.cxx:2377 resets a team the moment its size becomes one.
+            // `teamCounts` excludes this player, so a lone player rejoining
+            // their own team resets it too, as a leave and join would upstream.
+            if (!teamCounts[assignedTeam] && isColorTeam(assignedTeam)) {
+              teamScores.delete(assignedTeam);
+            }
           }
           player.voiceMicEnabled = false;
           player.joined = true;
@@ -3462,6 +3526,7 @@ wss.on('connection', (ws, req) => {
             type: 'playerJoined',
             player: player.getState(),
           });
+          broadcastTeamScores();
           refreshVoiceRosters(true);
           break;
         }
@@ -3675,6 +3740,7 @@ wss.on('connection', (ws, req) => {
       type: 'playerLeft',
       id: player.id,
     });
+    broadcastTeamScores();
     refreshVoiceRosters(true);
   });
 });

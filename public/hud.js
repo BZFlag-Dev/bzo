@@ -8,6 +8,7 @@
 // hud.js - Handles HUD and debug display logic
 
 import { normalizeShotSlotCount } from './shot-limits.mjs';
+import { PLAYER_TEAM_LABELS, getPlayerTeamColor, isColorTeam } from './player-teams.mjs';
 
 const degreeBarRenderState = {
   canvas: null,
@@ -223,12 +224,74 @@ export function updateDebugDisplay({
 }
 
 // Updates the scoreboard with current player stats
+// ScoreboardRenderer::renderTeamScores. A team's score is its wins minus its
+// losses, rows sort by it, and a team with nobody on it is left out. Upstream
+// tells the teams apart by colour alone; a name column costs nothing here and
+// survives a player who cannot.
+export function getTeamScoreRows(teamScores) {
+  return (teamScores || [])
+    .filter((entry) => entry && entry.size > 0 && isColorTeam(entry.team))
+    .map((entry) => ({
+      ...entry,
+      label: PLAYER_TEAM_LABELS[entry.team] || entry.team,
+      score: entry.wins - entry.losses,
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+// The same contents bzfs shows: score, the wins and losses behind it, and the
+// number of players on the team.
+export function formatTeamScore(row) {
+  return `${row.score} (${row.wins}-${row.losses}) ${row.size}`;
+}
+
+function updateTeamScoreboard(teamScores) {
+  const container = document.getElementById('teamScoreboard');
+  if (!container) return;
+  container.innerHTML = '';
+  const rows = getTeamScoreRows(teamScores);
+  container.classList.toggle('teamScoreboardEmpty', rows.length === 0);
+  if (!rows.length) return;
+
+  const header = document.createElement('div');
+  header.className = 'teamScoreHeader';
+  const headerName = document.createElement('span');
+  headerName.className = 'scoreboardName';
+  headerName.textContent = 'Team Score';
+  const headerStats = document.createElement('span');
+  headerStats.className = 'scoreboardStats';
+  headerStats.textContent = 'Score (W-L) Size';
+  header.appendChild(headerName);
+  header.appendChild(headerStats);
+  container.appendChild(header);
+
+  rows.forEach((row) => {
+    const entry = document.createElement('div');
+    entry.className = 'scoreboardEntry teamScoreEntry';
+    entry.style.color = colorToCSS(getPlayerTeamColor(row.team));
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'scoreboardName';
+    nameSpan.textContent = row.label;
+
+    const statsSpan = document.createElement('span');
+    statsSpan.className = 'scoreboardStats';
+    statsSpan.textContent = formatTeamScore(row);
+
+    entry.appendChild(nameSpan);
+    entry.appendChild(statsSpan);
+    container.appendChild(entry);
+  });
+}
+
 export function updateScoreboard({
   myPlayerId,
   myPlayerName,
   myTank,
-  tanks
+  tanks,
+  teamScores
 }) {
+  updateTeamScoreboard(teamScores);
   const scoreboardList = document.getElementById('scoreboardList');
   if (!scoreboardList) return;
   scoreboardList.innerHTML = '';

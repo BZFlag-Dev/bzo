@@ -24,6 +24,15 @@ export const PLAYER_TEAMS = Object.freeze([
   PLAYER_TEAM.PURPLE,
 ]);
 
+export const PLAYER_TEAM_COLORS = Object.freeze({
+  [PLAYER_TEAM.ROGUE]: 0xffff00,
+  [PLAYER_TEAM.OBSERVER]: 0xffffff,
+  [PLAYER_TEAM.RED]: 0xff0000,
+  [PLAYER_TEAM.BLUE]: 0x1a33ff,
+  [PLAYER_TEAM.GREEN]: 0x00ff00,
+  [PLAYER_TEAM.PURPLE]: 0xff00ff,
+});
+
 export const PLAYER_TEAM_LABELS = Object.freeze({
   [PLAYER_TEAM.AUTOMATIC]: 'Automatic',
   [PLAYER_TEAM.ROGUE]: 'Rogue',
@@ -50,4 +59,15 @@ export function getPlayerTeamSelections(availableTeams) {
 
 export function isObserverTeam(team) {
   return normalizePlayerTeam(team) === PLAYER_TEAM.OBSERVER;
+}
+
+// Team::isColorTeam upstream. Rogues and observers carry no team score: a
+// rogue kill feeds nobody's tally, and neither does dying as one.
+export function isColorTeam(team) {
+  const normalized = normalizePlayerTeam(team);
+  return normalized !== PLAYER_TEAM.ROGUE && normalized !== PLAYER_TEAM.OBSERVER;
+}
+
+export function getPlayerTeamColor(team) {
+  return PLAYER_TEAM_COLORS[normalizePlayerTeam(team)];
 }
