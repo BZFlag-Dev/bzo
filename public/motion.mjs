@@ -5,7 +5,7 @@
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 
-// tank-motion.mjs - Tank movement against solid geometry, ported from BZFlag's
+// motion.mjs - Tank movement against solid geometry, ported from BZFlag's
 // LocalPlayer::doUpdateMotion (LocalPlayer.cxx:520-666).
 //
 // BZFlag does not push a tank out of an obstacle it already overlaps. It
@@ -20,13 +20,13 @@
 // question entirely -- it only ever asks "is the tank clear here", which the
 // collision test already answers exactly.
 
-const MIN_SEARCH_STEP = 0.0001;
-const MAX_SEARCH_STEPS = 7;
-const TINY_DISTANCE = 0.001;
-const MAX_BUMP_HEIGHT = 0.33;
-const ZERO_TOLERANCE = 1e-8;
+export const MIN_SEARCH_STEP = 0.0001;
+export const MAX_SEARCH_STEPS = 7;
+export const TINY_DISTANCE = 0.001;
+export const MAX_BUMP_HEIGHT = 0.33;
+export const ZERO_TOLERANCE = 1e-8;
 // Upstream loops until the timestep is spent; this bounds a pathological wedge.
-const MAX_SLIDE_PASSES = 4;
+export const MAX_SLIDE_PASSES = 4;
 
 function nearZero(value) {
   return Math.abs(value) < ZERO_TOLERANCE;
@@ -35,7 +35,7 @@ function nearZero(value) {
 // `hitTest(fromX, fromY, fromZ, fromAz, toX, toY, toZ, toAz)` returns the
 // blocking obstacle or null. `getNormal(obstacle, x, y, z, az, hitX, hitY, hitZ,
 // hitAz)` returns a unit {x, y, z} pointing out of the surface.
-function resolveTankMotion({
+export function resolveTankMotion({
   x, y, z, azimuth,
   velocityX, velocityY, velocityZ,
   angularVelocity = 0,
@@ -169,13 +169,3 @@ function resolveTankMotion({
     onBuilding,
   };
 }
-
-module.exports = {
-  MIN_SEARCH_STEP,
-  MAX_SEARCH_STEPS,
-  TINY_DISTANCE,
-  MAX_BUMP_HEIGHT,
-  ZERO_TOLERANCE,
-  MAX_SLIDE_PASSES,
-  resolveTankMotion,
-};

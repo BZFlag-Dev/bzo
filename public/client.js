@@ -101,10 +101,13 @@ import {
   updateScoreboard,
   updateAltimeter,
   updateDegreeBar,
-  updateShotStatus
+  updateShotStatus,
+  roundedRect,
+  readStoredFlag,
+  bindToggleButton
 } from './hud.js';
 import { renderManager } from './render.js';
-import { describeRenderCapabilities } from './render-capabilities.mjs';
+import { describeRenderCapabilities } from './capabilities.mjs';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import {
@@ -129,9 +132,9 @@ import {
   isObserverTeam,
   normalizePlayerTeam,
   normalizePlayerTeamSelection,
-} from './player-teams.mjs';
+} from './teams.mjs';
 import { createVoiceManager } from './voice.js';
-import { normalizeShotSlotCount } from './shot-limits.mjs';
+import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
 import { getSoundPaths } from './audio.js';
 import { setupInstallPrompt } from './install.js';
@@ -146,8 +149,8 @@ import {
   isWithinPyramidFootprint,
   pyramidIntersectsTank,
   testOrigRectTank,
-} from './collision-geometry.mjs';
-import { resolveTankMotion } from './tank-motion.mjs';
+} from './collision.mjs';
+import { resolveTankMotion } from './motion.mjs';
 
 // Register the service worker that makes the game installable and serves its
 // assets from disk. The version rides in the script URL, so a release changes
@@ -206,18 +209,15 @@ let startupBuildInfoAnnounced = false;
 let lastAnnouncedServerDescription = null;
 let lastAnnouncedServerMotd = null;
 let radarCanvas, radarCtx;
-let xrRadarTextureMesh = null;
-let xrRadarTexture = null;
-let xrChatCanvas = null;
-let xrChatTexture = null;
-let xrChatTextureMesh = null;
-let xrShotStatusCanvas = null;
-let xrShotStatusTexture = null;
-let xrShotStatusTextureMesh = null;
-let xrScoreboardCanvas = null;
-let xrScoreboardTexture = null;
-let xrScoreboardTextureMesh = null;
+// One record per XR HUD overlay: the canvas it paints, the texture wrapping it,
+// and the camera-parented plane it draws on. ensureXRHudPanel fills them in.
+const xrRadarPanel = { canvas: null, texture: null, mesh: null };
+const xrChatPanel = { canvas: null, texture: null, mesh: null };
+const xrShotStatusPanel = { canvas: null, texture: null, mesh: null };
+const xrScoreboardPanel = { canvas: null, texture: null, mesh: null };
 const XR_HUD_PLANE_Z = -0.85;
+const XR_RADAR_PLANE_SIZE = 0.45;
+const XR_CHAT_PLANE_WIDTH = 0.9;
 // BZFlag fires with Enter or the left mouse button and keeps the space bar for
 // dropping a flag (ActionBinding.cxx:92-95).
 const FIRE_KEY = 'Enter';
@@ -1619,20 +1619,12 @@ let supportSurfaceDebugMarker = null;
 let supportSurfaceDebugTouchedThisFrame = false;
 let supportFootprintDebugMarker = null;
 let supportFootprintDebugTouchedThisFrame = false;
-let showDebugGeometry = (() => {
-  const saved = localStorage.getItem('showDebugGeometry');
-  if (saved !== null) return saved === 'true';
-  return localStorage.getItem('showGhosts') === 'true';
-})(); // Toggle for ghost meshes and debug geometry
+// Toggle for ghost meshes and debug geometry
+let showDebugGeometry = readStoredFlag('showDebugGeometry', readStoredFlag('showGhosts'));
 
 // Debug tracking
 let debugEnabled = false;
-let debugLabelsEnabled = false;
-// Restore debugLabelsEnabled from localStorage if present
-const savedDebugLabels = localStorage.getItem('debugLabelsEnabled');
-if (savedDebugLabels !== null) {
-  debugLabelsEnabled = savedDebugLabels === 'true';
-}
+let debugLabelsEnabled = readStoredFlag('debugLabelsEnabled');
 renderManager.setDebugLabelsEnabled(debugLabelsEnabled);
 const packetsSent = new Map();
 const packetsReceived = new Map();
@@ -2344,131 +2336,96 @@ function updateDebugLabelsButton() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-      updateRadarZoomButton();
+  updateRadarZoomButton();
 
-      const radarZoomBtn = document.getElementById('radarZoomBtn');
-      if (radarZoomBtn) {
-        radarZoomBtn.addEventListener('click', () => {
-          cycleRadarZoomLevel();
-        });
-      }
+  document.getElementById('radarZoomBtn')?.addEventListener('click', cycleRadarZoomLevel);
 
-        // Dynamic Lighting toggle button
-        const dynamicLightingBtn = document.getElementById('dynamicLightingBtn');
-        // Default: enabled
-        let dynamicLightingEnabled = true;
-        const savedDynamicLighting = localStorage.getItem('dynamicLightingEnabled');
-        if (savedDynamicLighting !== null) {
-          dynamicLightingEnabled = savedDynamicLighting === 'true';
+  // A context that cannot light the scene overrides the saved preference: the
+  // row goes dead rather than promising something it cannot draw.
+  const canLight = renderManager.canUseDynamicLighting();
+  renderManager.dynamicLightingEnabled = readStoredFlag('dynamicLightingEnabled', true) && canLight;
+  bindToggleButton(document.getElementById('dynamicLightingBtn'), {
+    get: () => renderManager.dynamicLightingEnabled,
+    set: (value) => { renderManager.dynamicLightingEnabled = value; },
+    storageKey: 'dynamicLightingEnabled',
+    onTitle: 'Disable Dynamic Lighting',
+    offTitle: 'Enable Dynamic Lighting',
+    available: () => canLight,
+    unavailableTitle: 'Dynamic Lighting needs more shader uniforms than this browser reports',
+  });
+
+  const refreshAnaglyphBtn = bindToggleButton(document.getElementById('anaglyphBtn'), {
+    get: () => renderManager.getAnaglyphEnabled(),
+    set: (value) => renderManager.setAnaglyphEnabled(value),
+    onTitle: 'Disable Anaglyph 3D',
+    offTitle: 'Enable Anaglyph 3D',
+    // The headset draws its own stereo pair, so anaglyph has nothing to add.
+    available: () => !isXREnabled(),
+    unavailableTitle: 'Anaglyph 3D is unavailable in VR mode',
+    forceOffWhenUnavailable: true,
+  });
+  window.addEventListener('webxrsessionchange', refreshAnaglyphBtn);
+
+  bindToggleButton(document.getElementById('debugGeometryBtn'), {
+    get: () => showDebugGeometry,
+    set: (value) => { showDebugGeometry = value; },
+    storageKey: 'showDebugGeometry',
+    onTitle: 'Hide Debug Geometry',
+    offTitle: 'Show Debug Geometry',
+    onChange: updateDebugGeometryVisibility,
+  });
+
+  // Add handler for Upload Map button
+  const uploadBtn = document.getElementById('uploadBtn');
+  const uploadMap = document.getElementById('uploadMap');
+  if (uploadBtn && uploadMap) {
+    uploadBtn.addEventListener('click', () => {
+      const file = uploadMap.files && uploadMap.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const content = e.target.result;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'uploadMap',
+            mapName: file.name,
+            mapContent: content
+          }));
         }
-        // A context that cannot light the scene overrides the saved preference:
-        // the row goes dead rather than promising something it cannot draw.
-        const canLight = renderManager.canUseDynamicLighting();
-        renderManager.dynamicLightingEnabled = dynamicLightingEnabled && canLight;
-        if (dynamicLightingBtn) {
-          const updateBtn = () => {
-            dynamicLightingBtn.classList.toggle('active', renderManager.dynamicLightingEnabled);
-            dynamicLightingBtn.disabled = !canLight;
-            dynamicLightingBtn.title = canLight
-              ? (renderManager.dynamicLightingEnabled ? 'Disable Dynamic Lighting' : 'Enable Dynamic Lighting')
-              : 'Dynamic Lighting needs more shader uniforms than this browser reports';
-          };
-          dynamicLightingBtn.addEventListener('click', () => {
-            if (!canLight) return;
-            renderManager.dynamicLightingEnabled = !renderManager.dynamicLightingEnabled;
-            localStorage.setItem('dynamicLightingEnabled', renderManager.dynamicLightingEnabled.toString());
-            updateBtn();
-          });
-          updateBtn();
-        }
-      // Anaglyph 3D toggle button
-      const anaglyphBtn = document.getElementById('anaglyphBtn');
-      if (anaglyphBtn) {
-        const updateBtn = () => {
-          const xrEnabled = isXREnabled();
-          if (xrEnabled) renderManager.setAnaglyphEnabled(false);
-          const enabled = renderManager.getAnaglyphEnabled();
-          anaglyphBtn.disabled = xrEnabled;
-          anaglyphBtn.classList.toggle('active', enabled);
-          anaglyphBtn.title = xrEnabled
-            ? 'Anaglyph 3D is unavailable in VR mode'
-            : enabled ? 'Disable Anaglyph 3D' : 'Enable Anaglyph 3D';
-        };
-        anaglyphBtn.addEventListener('click', () => {
-          const enabled = !renderManager.getAnaglyphEnabled();
-          renderManager.setAnaglyphEnabled(enabled);
-          updateBtn();
-        });
-        window.addEventListener('webxrsessionchange', updateBtn);
-        updateBtn();
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  const setMotdBtn = document.getElementById('setMotdBtn');
+  const motdInput = document.getElementById('motdInput');
+  if (setMotdBtn && motdInput) {
+    setMotdBtn.addEventListener('click', () => {
+      const motd = motdInput.value.trim();
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      sendToServer({
+        type: 'setOperatorConfig',
+        motd,
+      });
+    });
+  }
+
+  const setShotMaxActiveBtn = document.getElementById('setShotMaxActiveBtn');
+  const shotMaxActiveInput = document.getElementById('shotMaxActiveInput');
+  if (setShotMaxActiveBtn && shotMaxActiveInput) {
+    setShotMaxActiveBtn.addEventListener('click', () => {
+      const parsed = Number(shotMaxActiveInput.value);
+      if (!Number.isFinite(parsed)) {
+        showMessage('Shot max active must be a number.');
+        return;
       }
-
-      // Debug geometry toggle button
-      const debugGeometryBtn = document.getElementById('debugGeometryBtn');
-      if (debugGeometryBtn) {
-        const updateBtn = () => {
-          debugGeometryBtn.classList.toggle('active', showDebugGeometry);
-          debugGeometryBtn.title = showDebugGeometry ? 'Hide Debug Geometry' : 'Show Debug Geometry';
-        };
-        debugGeometryBtn.addEventListener('click', () => {
-          showDebugGeometry = !showDebugGeometry;
-          localStorage.setItem('showDebugGeometry', showDebugGeometry.toString());
-          updateDebugGeometryVisibility();
-          updateBtn();
-        });
-        updateBtn();
-      }
-    // Add handler for Upload Map button
-    const uploadBtn = document.getElementById('uploadBtn');
-    const uploadMap = document.getElementById('uploadMap');
-    if (uploadBtn && uploadMap) {
-      uploadBtn.addEventListener('click', () => {
-        const file = uploadMap.files && uploadMap.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = function(e) {
-          const content = e.target.result;
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'uploadMap',
-              mapName: file.name,
-              mapContent: content
-            }));
-          }
-        };
-        reader.readAsText(file);
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      sendToServer({
+        type: 'setOperatorConfig',
+        shotMaxActive: Math.round(parsed),
       });
-    }
-
-    const setMotdBtn = document.getElementById('setMotdBtn');
-    const motdInput = document.getElementById('motdInput');
-    if (setMotdBtn && motdInput) {
-      setMotdBtn.addEventListener('click', () => {
-        const motd = motdInput.value.trim();
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        sendToServer({
-          type: 'setOperatorConfig',
-          motd,
-        });
-      });
-    }
-
-    const setShotMaxActiveBtn = document.getElementById('setShotMaxActiveBtn');
-    const shotMaxActiveInput = document.getElementById('shotMaxActiveInput');
-    if (setShotMaxActiveBtn && shotMaxActiveInput) {
-      setShotMaxActiveBtn.addEventListener('click', () => {
-        const parsed = Number(shotMaxActiveInput.value);
-        if (!Number.isFinite(parsed)) {
-          showMessage('Shot max active must be a number.');
-          return;
-        }
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        sendToServer({
-          type: 'setOperatorConfig',
-          shotMaxActive: Math.round(parsed),
-        });
-      });
-    }
+    });
+  }
   const btn = document.getElementById('debugLabelsBtn');
   if (btn) {
     btn.addEventListener('click', () => {
@@ -2753,8 +2710,7 @@ function init() {
   announceBuildInfoOnce();
 
   // Restore debug state from localStorage
-  const savedDebugState = localStorage.getItem('debugEnabled');
-  if (savedDebugState === 'true') {
+  if (readStoredFlag('debugEnabled')) {
     const mouseBtn = document.getElementById('mouseBtn');
     const debugBtn = document.getElementById('debugBtn');
     const fullscreenBtn = document.getElementById('fullscreenBtn');
@@ -3289,7 +3245,7 @@ function handleServerMessage(message) {
         // Detect jump start (record jump direction)
         if (oldVerticalVel <= 0 && message.vv > 10) {
           tank.userData.jumpDirection = message.r;
-          renderManager.playLocalJumpSound(tank.position);
+          renderManager.playSound('jump', tank.position);
           renderManager.fireTankJumpJets(tank);
         }
 
@@ -3342,7 +3298,7 @@ function handleServerMessage(message) {
         if (isTeleportPacket) {
           const suppressLocalFx = message.id === myPlayerId && performance.now() < suppressLocalTeleportFxUntil;
           if (!suppressLocalFx) {
-            renderManager.playTeleportSound(tank.position);
+            renderManager.playSound('teleport', tank.position);
             triggerSpawnEffectForTank(tank);
           }
 
@@ -5224,7 +5180,7 @@ function handleMotion(deltaTime) {
     myTank.userData.slideDirection = undefined;
     forceMoveSend = true; // Force send on jump
     if (myTank) {
-      renderManager.playLocalJumpSound(myTank.position);
+      renderManager.playSound('jump', myTank.position);
       renderManager.fireTankJumpJets(myTank);
     }
   }
@@ -5343,7 +5299,7 @@ function handleMotion(deltaTime) {
     myTank.rotation.y = playerRotation;
 
     if (teleportedThisFrame) {
-      renderManager.playTeleportSound(myTank.position);
+      renderManager.playSound('teleport', myTank.position);
       triggerSpawnEffectForTank(myTank);
       suppressLocalTeleportFxUntil = performance.now() + 250;
 
@@ -5982,109 +5938,89 @@ function resizeRadar() {
   radarCanvas.style.height = size + 'px';
 }
 
+// Every XR HUD overlay is the same object: a 2D canvas wrapped in a
+// CanvasTexture on a plane parented to the camera, so it rides the head. Only
+// the canvas size, the plane size and placement, and the painting differ.
+function ensureXRHudPanel(panel, { canvas = null, canvasWidth = 0, canvasHeight = 0 }) {
+  const baseCamera = renderManager?.getCamera();
+  if (!baseCamera) return null;
+
+  if (canvas) {
+    panel.canvas = canvas;
+  } else if (!panel.canvas) {
+    panel.canvas = document.createElement('canvas');
+    panel.canvas.width = canvasWidth;
+    panel.canvas.height = canvasHeight;
+  }
+
+  if (!panel.texture) {
+    panel.texture = new THREE.CanvasTexture(panel.canvas);
+    panel.texture.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  if (!panel.mesh) {
+    panel.mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        map: panel.texture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        opacity: 1,
+      }),
+    );
+    panel.mesh.renderOrder = Number.MAX_SAFE_INTEGER;
+    panel.mesh.visible = false;
+  }
+
+  if (panel.mesh.parent !== baseCamera) {
+    panel.mesh.parent?.remove(panel.mesh);
+    baseCamera.add(panel.mesh);
+  }
+
+  return panel.mesh;
+}
+
+// Resize the plane to the panel's current size and place it on the HUD plane.
+// The settings menu covers the view, so nothing else shows while it is open.
+function placeXRHudPanel(panel, { width, height, x, y }) {
+  panel.mesh.geometry.dispose();
+  panel.mesh.geometry = new THREE.PlaneGeometry(width, height);
+  panel.mesh.scale.set(1, 1, 1);
+  panel.mesh.position.set(x, y, XR_HUD_PLANE_Z);
+  panel.mesh.rotation.set(0, 0, 0);
+  panel.mesh.visible = isXREnabled() && !xrSettingsMenuOpen;
+}
+
 function ensureXRRadarTexture() {
-  if (!renderManager || !renderManager.getCamera()) return;
+  if (!radarCanvas) return;
+  if (!ensureXRHudPanel(xrRadarPanel, { canvas: radarCanvas })) return;
 
-  const baseCamera = renderManager.getCamera();
-  if (!baseCamera) return;
+  const size = XR_RADAR_PLANE_SIZE * 0.75;
+  const centerShift = 0.25 * size;
+  placeXRHudPanel(xrRadarPanel, {
+    width: size,
+    height: size,
+    x: 0.42 - centerShift,
+    y: 0.38 - centerShift,
+  });
 
-  if (!radarCanvas) {
-    return;
-  }
-
-  if (!xrRadarTexture) {
-    xrRadarTexture = new THREE.CanvasTexture(radarCanvas);
-    xrRadarTexture.colorSpace = THREE.SRGBColorSpace;
-  }
-
-  if (!xrRadarTextureMesh) {
-    const material = new THREE.MeshBasicMaterial({
-      map: xrRadarTexture,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      opacity: 1,
-    });
-    const geometry = new THREE.PlaneGeometry(0.45, 0.45);
-    xrRadarTextureMesh = new THREE.Mesh(geometry, material);
-    xrRadarTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
-    xrRadarTextureMesh.visible = false;
-    baseCamera.add(xrRadarTextureMesh);
-  }
-
-  if (xrRadarTextureMesh.parent !== baseCamera) {
-    if (xrRadarTextureMesh.parent) {
-      xrRadarTextureMesh.parent.remove(xrRadarTextureMesh);
-    }
-    baseCamera.add(xrRadarTextureMesh);
-  }
-
-  const sizeScale = 0.75;
-  const planeWidth = 0.45 * sizeScale;
-  const planeHeight = 0.45 * sizeScale;
-  const centerShift = 0.25 * Math.max(planeWidth, planeHeight);
-  const targetX = 0.42 - centerShift;
-  const targetY = 0.38 - centerShift;
-
-  xrRadarTextureMesh.scale.set(1, 1, 1);
-  xrRadarTextureMesh.geometry.dispose();
-  xrRadarTextureMesh.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-  xrRadarTextureMesh.position.set(targetX, targetY, XR_HUD_PLANE_Z);
-  xrRadarTextureMesh.rotation.set(0, 0, 0);
-  xrRadarTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
-
-  if (isXREnabled()) {
-    xrRadarTexture.needsUpdate = true;
-  }
+  if (isXREnabled()) xrRadarPanel.texture.needsUpdate = true;
 }
 
 function ensureXRChatOverlay() {
-  if (!renderManager || !renderManager.getCamera()) return;
+  if (!ensureXRHudPanel(xrChatPanel, { canvasWidth: 1024, canvasHeight: 220 })) return;
 
-  const baseCamera = renderManager.getCamera();
-  if (!baseCamera) return;
-
-  if (!xrChatCanvas) {
-    xrChatCanvas = document.createElement('canvas');
-    xrChatCanvas.width = 1024;
-    xrChatCanvas.height = 220;
-    xrChatTexture = new THREE.CanvasTexture(xrChatCanvas);
-    xrChatTexture.colorSpace = THREE.SRGBColorSpace;
-  }
-
-  if (!xrChatTextureMesh) {
-    const material = new THREE.MeshBasicMaterial({
-      map: xrChatTexture,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      opacity: 1,
-    });
-    const geometry = new THREE.PlaneGeometry(0.9, 0.42);
-    xrChatTextureMesh = new THREE.Mesh(geometry, material);
-    xrChatTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
-    xrChatTextureMesh.visible = false;
-    baseCamera.add(xrChatTextureMesh);
-  }
-
-  if (xrChatTextureMesh.parent !== baseCamera) {
-    if (xrChatTextureMesh.parent) {
-      xrChatTextureMesh.parent.remove(xrChatTextureMesh);
-    }
-    baseCamera.add(xrChatTextureMesh);
-  }
-
-  const ctx = xrChatCanvas.getContext('2d');
+  const canvas = xrChatPanel.canvas;
+  const ctx = canvas.getContext('2d');
   if (!ctx) {
-    xrChatTextureMesh.visible = false;
+    xrChatPanel.mesh.visible = false;
     return;
   }
 
-  const w = xrChatCanvas.width;
-  const h = xrChatCanvas.height;
-  const radius = 12;
+  const w = canvas.width;
+  const h = canvas.height;
   const panelX = 14;
   const panelY = 14;
   const panelW = w - 28;
@@ -6092,17 +6028,7 @@ function ensureXRChatOverlay() {
 
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = 'rgba(13, 16, 22, 0.78)';
-  ctx.beginPath();
-  ctx.moveTo(panelX + radius, panelY);
-  ctx.lineTo(panelX + panelW - radius, panelY);
-  ctx.quadraticCurveTo(panelX + panelW, panelY, panelX + panelW, panelY + radius);
-  ctx.lineTo(panelX + panelW, panelY + panelH - radius);
-  ctx.quadraticCurveTo(panelX + panelW, panelY + panelH, panelX + panelW - radius, panelY + panelH);
-  ctx.lineTo(panelX + radius, panelY + panelH);
-  ctx.quadraticCurveTo(panelX, panelY + panelH, panelX, panelY + panelH - radius);
-  ctx.lineTo(panelX, panelY + radius);
-  ctx.quadraticCurveTo(panelX, panelY, panelX + radius, panelY);
-  ctx.closePath();
+  roundedRect(ctx, panelX, panelY, panelW, panelH, 12);
   ctx.fill();
 
   const activeMessages = chatState.messages[chatState.activeTab] || [];
@@ -6137,61 +6063,17 @@ function ensureXRChatOverlay() {
     ctx.fillText(tab.label, x + 6, tabStripY + 13);
   });
 
-  xrChatTexture.needsUpdate = true;
-
-  const chatPlaneWidth = 0.9;
-  const chatPlaneHeight = 0.18;
-  const chatCenterX = 0;
-  const chatCenterY = -0.48;
-
-  xrChatTextureMesh.scale.set(1, 1, 1);
-  xrChatTextureMesh.geometry.dispose();
-  xrChatTextureMesh.geometry = new THREE.PlaneGeometry(chatPlaneWidth, chatPlaneHeight);
-  xrChatTextureMesh.position.set(chatCenterX, chatCenterY, XR_HUD_PLANE_Z);
-  xrChatTextureMesh.rotation.set(0, 0, 0);
-  xrChatTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
+  xrChatPanel.texture.needsUpdate = true;
+  placeXRHudPanel(xrChatPanel, { width: XR_CHAT_PLANE_WIDTH, height: 0.18, x: 0, y: -0.48 });
 }
 
 function ensureXRShotStatusOverlay() {
-  if (!renderManager || !renderManager.getCamera()) return;
+  if (!ensureXRHudPanel(xrShotStatusPanel, { canvasWidth: 220, canvasHeight: 200 })) return;
 
-  const baseCamera = renderManager.getCamera();
-  if (!baseCamera) return;
-
-  if (!xrShotStatusCanvas) {
-    xrShotStatusCanvas = document.createElement('canvas');
-    xrShotStatusCanvas.width = 220;
-    xrShotStatusCanvas.height = 200;
-    xrShotStatusTexture = new THREE.CanvasTexture(xrShotStatusCanvas);
-    xrShotStatusTexture.colorSpace = THREE.SRGBColorSpace;
-  }
-
-  if (!xrShotStatusTextureMesh) {
-    const material = new THREE.MeshBasicMaterial({
-      map: xrShotStatusTexture,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      opacity: 1,
-    });
-    const geometry = new THREE.PlaneGeometry(0.28, 0.22);
-    xrShotStatusTextureMesh = new THREE.Mesh(geometry, material);
-    xrShotStatusTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
-    xrShotStatusTextureMesh.visible = false;
-    baseCamera.add(xrShotStatusTextureMesh);
-  }
-
-  if (xrShotStatusTextureMesh.parent !== baseCamera) {
-    if (xrShotStatusTextureMesh.parent) {
-      xrShotStatusTextureMesh.parent.remove(xrShotStatusTextureMesh);
-    }
-    baseCamera.add(xrShotStatusTextureMesh);
-  }
-
-  const ctx = xrShotStatusCanvas.getContext('2d');
+  const canvas = xrShotStatusPanel.canvas;
+  const ctx = canvas.getContext('2d');
   if (!ctx) {
-    xrShotStatusTextureMesh.visible = false;
+    xrShotStatusPanel.mesh.visible = false;
     return;
   }
 
@@ -6205,100 +6087,60 @@ function ensureXRShotStatusOverlay() {
   const slotLifetimeMs = shotSpeed > 0 ? (shotRange / shotSpeed) * 1000 : 0;
   const slotProgress = new Array(maxSlots).fill(1);
 
-  if (projectiles && typeof projectiles.forEach === 'function') {
-    projectiles.forEach((projectile) => {
-      if (projectile?.userData?.playerId !== myPlayerId) return;
-      const slotIndex = Number.isInteger(projectile?.userData?.shotSlot) ? projectile.userData.shotSlot : -1;
-      if (slotIndex < 0 || slotIndex >= maxSlots) return;
-      const createdAt = Number.isFinite(projectile?.userData?.createdAt) ? projectile.userData.createdAt : Date.now();
-      const ageMs = Math.max(0, Date.now() - createdAt);
-      const progress = slotLifetimeMs > 0 ? Math.max(0, Math.min(1, ageMs / slotLifetimeMs)) : 0;
-      slotProgress[slotIndex] = progress;
-    });
-  }
+  projectiles.forEach((projectile) => {
+    if (projectile?.userData?.playerId !== myPlayerId) return;
+    const slotIndex = Number.isInteger(projectile?.userData?.shotSlot) ? projectile.userData.shotSlot : -1;
+    if (slotIndex < 0 || slotIndex >= maxSlots) return;
+    const createdAt = Number.isFinite(projectile?.userData?.createdAt) ? projectile.userData.createdAt : Date.now();
+    const ageMs = Math.max(0, Date.now() - createdAt);
+    slotProgress[slotIndex] = slotLifetimeMs > 0 ? Math.max(0, Math.min(1, ageMs / slotLifetimeMs)) : 0;
+  });
 
-  const barCount = maxSlots;
   const barGap = 2;
   const barHeight = 7;
   const barWidth = 32;
-  const totalHeight = barCount * barHeight + Math.max(0, barCount - 1) * barGap;
-  xrShotStatusCanvas.width = barWidth;
-  xrShotStatusCanvas.height = Math.max(32, totalHeight);
+  const totalHeight = maxSlots * barHeight + Math.max(0, maxSlots - 1) * barGap;
+  canvas.width = barWidth;
+  canvas.height = Math.max(32, totalHeight);
 
-  ctx.clearRect(0, 0, xrShotStatusCanvas.width, xrShotStatusCanvas.height);
-  ctx.clearRect(0, 0, xrShotStatusCanvas.width, xrShotStatusCanvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   slotProgress.forEach((progress, index) => {
-    const x = 0;
     const y = index * (barHeight + barGap);
-
     if (progress >= 1) {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fillRect(x, y, barWidth, barHeight);
-    } else {
-      ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-      ctx.fillRect(x, y, barWidth, barHeight);
-      const fillWidth = barWidth * Math.max(0, Math.min(1, progress));
-      ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
-      ctx.fillRect(x, y, fillWidth, barHeight);
+      ctx.fillRect(0, y, barWidth, barHeight);
+      return;
     }
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+    ctx.fillRect(0, y, barWidth, barHeight);
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+    ctx.fillRect(0, y, barWidth * Math.max(0, Math.min(1, progress)), barHeight);
   });
 
-  xrShotStatusTexture.needsUpdate = true;
+  xrShotStatusPanel.texture.needsUpdate = true;
 
   const shotWidth = 0.08;
-  const shotHeight = Math.min(0.18, 0.02 + barCount * 0.015);
-  const radarPlaneWidth = xrRadarTextureMesh && xrRadarTextureMesh.geometry ? xrRadarTextureMesh.geometry.parameters.width : 0.3375;
-  const radarRightEdge = xrRadarTextureMesh ? (xrRadarTextureMesh.position.x + (radarPlaneWidth / 2)) : (0.42 - (0.25 * 0.3375) + (0.3375 / 2));
-  const shotX = radarRightEdge - (shotWidth / 2);
-  xrShotStatusTextureMesh.scale.set(1, 1, 1);
-  xrShotStatusTextureMesh.geometry.dispose();
-  xrShotStatusTextureMesh.geometry = new THREE.PlaneGeometry(shotWidth, shotHeight);
-  xrShotStatusTextureMesh.position.set(shotX, 0.02, XR_HUD_PLANE_Z);
-  xrShotStatusTextureMesh.rotation.set(0, 0, 0);
-  xrShotStatusTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
+  const radarMesh = xrRadarPanel.mesh;
+  const radarPlaneWidth = radarMesh?.geometry ? radarMesh.geometry.parameters.width : XR_RADAR_PLANE_SIZE * 0.75;
+  const radarRightEdge = radarMesh
+    ? radarMesh.position.x + (radarPlaneWidth / 2)
+    : 0.42 - (0.25 * radarPlaneWidth) + (radarPlaneWidth / 2);
+  placeXRHudPanel(xrShotStatusPanel, {
+    width: shotWidth,
+    height: Math.min(0.18, 0.02 + maxSlots * 0.015),
+    x: radarRightEdge - (shotWidth / 2),
+    y: 0.02,
+  });
 }
 
 function ensureXRScoreboardOverlay() {
-  if (!renderManager || !renderManager.getCamera()) return;
+  if (!ensureXRHudPanel(xrScoreboardPanel, { canvasWidth: 720, canvasHeight: 340 })) return;
 
-  const baseCamera = renderManager.getCamera();
-  if (!baseCamera) return;
-
-  if (!xrScoreboardCanvas) {
-    xrScoreboardCanvas = document.createElement('canvas');
-    xrScoreboardCanvas.width = 720;
-    xrScoreboardCanvas.height = 340;
-    xrScoreboardTexture = new THREE.CanvasTexture(xrScoreboardCanvas);
-    xrScoreboardTexture.colorSpace = THREE.SRGBColorSpace;
-  }
-
-  if (!xrScoreboardTextureMesh) {
-    const material = new THREE.MeshBasicMaterial({
-      map: xrScoreboardTexture,
-      transparent: true,
-      depthTest: false,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      opacity: 1,
-    });
-    const geometry = new THREE.PlaneGeometry(0.75, 0.45);
-    xrScoreboardTextureMesh = new THREE.Mesh(geometry, material);
-    xrScoreboardTextureMesh.renderOrder = Number.MAX_SAFE_INTEGER;
-    xrScoreboardTextureMesh.visible = false;
-    baseCamera.add(xrScoreboardTextureMesh);
-  }
-
-  if (xrScoreboardTextureMesh.parent !== baseCamera) {
-    if (xrScoreboardTextureMesh.parent) {
-      xrScoreboardTextureMesh.parent.remove(xrScoreboardTextureMesh);
-    }
-    baseCamera.add(xrScoreboardTextureMesh);
-  }
-
-  const ctx = xrScoreboardCanvas.getContext('2d');
+  const canvas = xrScoreboardPanel.canvas;
+  const ctx = canvas.getContext('2d');
   if (!ctx) {
-    xrScoreboardTextureMesh.visible = false;
+    xrScoreboardPanel.mesh.visible = false;
     return;
   }
 
@@ -6343,8 +6185,8 @@ function ensureXRScoreboardOverlay() {
   const teamBlockHeight = teamRows.length ? headerHeight + teamRows.length * rowHeight + 8 : 0;
   const panelW = 320;
   const panelH = Math.max(120, teamBlockHeight + headerHeight + 10 + visiblePlayers.length * rowHeight + 12);
-  xrScoreboardCanvas.width = panelW;
-  xrScoreboardCanvas.height = panelH;
+  canvas.width = panelW;
+  canvas.height = panelH;
 
   ctx.clearRect(0, 0, panelW, panelH);
   ctx.fillStyle = 'rgba(7, 10, 14, 0.78)';
@@ -6383,21 +6225,17 @@ function ensureXRScoreboardOverlay() {
     ctx.fillText(`${player.kills} / ${player.deaths}`, panelW - 46, y);
   });
 
-  xrScoreboardTexture.needsUpdate = true;
+  xrScoreboardPanel.texture.needsUpdate = true;
 
   const baseWidth = 0.36;
   const baseHeight = Math.min(0.36, 0.06 + (visiblePlayers.length + teamRows.length) * 0.025);
-  xrScoreboardTextureMesh.scale.set(1, 1, 1);
-  xrScoreboardTextureMesh.geometry.dispose();
-  xrScoreboardTextureMesh.geometry = new THREE.PlaneGeometry(baseWidth, baseHeight);
-
-  const chatLeftEdge = -(0.9 / 2);
-  const scoreboardLeftEdge = chatLeftEdge;
-  const scoreboardCenterX = scoreboardLeftEdge + (baseWidth / 2);
-  const scoreboardCenterY = 0.42 - (baseHeight / 2);
-  xrScoreboardTextureMesh.position.set(scoreboardCenterX, scoreboardCenterY, XR_HUD_PLANE_Z);
-  xrScoreboardTextureMesh.rotation.set(0, 0, 0);
-  xrScoreboardTextureMesh.visible = isXREnabled() && !xrSettingsMenuOpen;
+  placeXRHudPanel(xrScoreboardPanel, {
+    width: baseWidth,
+    height: baseHeight,
+    // Left-aligned with the chat panel below it.
+    x: -(XR_CHAT_PLANE_WIDTH / 2) + (baseWidth / 2),
+    y: 0.42 - (baseHeight / 2),
+  });
 }
 
 const RADAR_WORLD_INSET_PX = 10;

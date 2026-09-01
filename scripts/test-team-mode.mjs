@@ -17,7 +17,7 @@ const {
   selectPlayerTeam,
   getPlayerTeamColor,
   getInitialPlayerColor,
-} = require('../server/player-teams.cjs');
+} = require('../server/teams.cjs');
 
 assert.deepEqual(normalizeServerTeamMode(false), {
   enabled: false,

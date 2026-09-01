@@ -6,6 +6,7 @@
  */
 
 import * as THREE from 'three';
+import { roundedRect } from './hud.js';
 
 const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = 1200;
@@ -13,11 +14,6 @@ const PANEL_WIDTH_METERS = 0.95;
 const PANEL_HEIGHT_METERS = 1.1;
 const PANEL_DISTANCE_METERS = 1.25;
 const MAX_VISIBLE_ROWS = 9;
-
-function roundedRect(context, x, y, width, height, radius) {
-  context.beginPath();
-  context.roundRect(x, y, width, height, radius);
-}
 
 function fitText(context, text, maxWidth) {
   const source = String(text || '');

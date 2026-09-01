@@ -10,7 +10,7 @@
 
 import { getXRControllerInput, xrState } from './webxr.js';
 import { focusFirstDialogControl, getVisibleDialogRoot, handleDialogControllerInput, handleDialogKeydown, hideDialog, showDialog } from './menus.js';
-import { initSettingsMenu } from './settings-menu.js';
+import { initSettingsMenu } from './settings.js';
 import { INPUT_CONTEXT, InputContextManager } from './input-context.mjs';
 
 // Shared virtual input state exposed to the game loop.

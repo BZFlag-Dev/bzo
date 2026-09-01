@@ -4,17 +4,17 @@ import {
   MAX_BUMP_HEIGHT,
   TINY_DISTANCE,
   resolveTankMotion,
-} from '../public/tank-motion.mjs';
+} from '../public/motion.mjs';
 import {
   TANK_HALF_LENGTH,
   TANK_HALF_WIDTH,
   getOrigRectNormal,
   getTankLocalAngle,
   testOrigRectTank,
-} from '../public/collision-geometry.mjs';
+} from '../public/collision.mjs';
 
 const require = createRequire(import.meta.url);
-const serverMotion = require('../server/tank-motion.cjs');
+const serverMotion = require('../server/motion.cjs');
 
 // A single axis-aligned wall slab, as an obstacle the resolver can query.
 function makeWorld(obstacles) {

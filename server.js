@@ -10,7 +10,7 @@ const logPath = require('path').join(__dirname, 'server.log');
 // Clear server.log on restart
 require('fs').writeFileSync(logPath, '');
 const { WebSocketServer } = require('ws');
-const { normalizeShotSlotCount } = require('./server/shot-limits.cjs');
+const { normalizeShotSlotCount } = require('./server/shots.cjs');
 const {
   documentTitle,
   escapeHtml,
@@ -23,7 +23,7 @@ const {
   pyramidIntersectsCylinder,
   pyramidIntersectsTank,
   testOrigRectTank,
-} = require('./server/collision-geometry.cjs');
+} = require('./server/collision.cjs');
 const {
   normalizePlayerTeamSelection,
   parseBZWTeamMode,
@@ -33,10 +33,10 @@ const {
   getInitialPlayerColor,
   isColorTeam,
   getTeamScoreDeltasForKill,
-} = require('./server/player-teams.cjs');
+} = require('./server/teams.cjs');
 const path = require('path');
 const fs = require('fs');
-const { isHeadsetBrowserUA } = require('./server/headset-ua.cjs');
+const { isHeadsetBrowserUA } = require('./server/headset.cjs');
 
 
 // Common log function: logs to console and to server.log
@@ -995,78 +995,37 @@ function generateObstacles() {
     return false;
   }
 
-  // Generate boxes
-  for (let i = 0; i < numBoxes; i++) {
-    let attempts = 0;
-    let validPosition = false;
-    let obstacle;
-    while (!validPosition && attempts < 50) {
-      const x = (Math.random() - 0.5) * (mapSize * 0.8);
-      const z = (Math.random() - 0.5) * (mapSize * 0.8);
-      const w = 6 + Math.random() * 6;
-      const d = 6 + Math.random() * 6;
-      const rotation = Math.random() * Math.PI * 2;
-      let h, baseY;
-      if (Math.random() < 0.6) {
-        h = 4 + Math.random() * 4;
-        baseY = 0;
-      } else {
-        h = 3 + Math.random() * 2;
-        baseY = 3 + Math.random() * 3;
+  // Place one obstacle at random, retrying until it clears the centre and every
+  // obstacle already placed. Boxes and pyramids differ only in what is built.
+  function placeObstacles(count, build) {
+    for (let i = 0; i < count; i++) {
+      for (let attempts = 0; attempts < 50; attempts++) {
+        const x = (Math.random() - 0.5) * (mapSize * 0.8);
+        const z = (Math.random() - 0.5) * (mapSize * 0.8);
+        const w = 6 + Math.random() * 6;
+        const d = 6 + Math.random() * 6;
+
+        if (Math.sqrt(x * x + z * z) < minDistance) continue;
+        if (isTooClose(x, z, w, d, obstacles)) continue;
+
+        // Most sit on the ground; the rest float, leaving a gap to drive under.
+        const grounded = Math.random() < 0.6;
+        const h = grounded ? 4 + Math.random() * 4 : 3 + Math.random() * 2;
+        const baseY = grounded ? 0 : 3 + Math.random() * 3;
+
+        obstacles.push(build({ x, z, w, d, h, baseY, rotation: Math.random() * Math.PI * 2 }, i));
+        break;
       }
-      obstacle = { x, z, w, d, h, baseY, rotation, name: `O${i}` , type: 'box'};
-      const distFromCenter = Math.sqrt(x * x + z * z);
-      if (distFromCenter < minDistance) {
-        attempts++;
-        continue;
-      }
-      if (isTooClose(x, z, w, d, obstacles)) {
-        attempts++;
-        continue;
-      }
-      validPosition = true;
-    }
-    if (validPosition && obstacle) {
-      obstacles.push(obstacle);
     }
   }
 
-  // Generate pyramids
-  for (let i = 0; i < numPyramids; i++) {
-    let attempts = 0;
-    let validPosition = false;
-    let pyramid;
-    while (!validPosition && attempts < 50) {
-      const x = (Math.random() - 0.5) * (mapSize * 0.8);
-      const z = (Math.random() - 0.5) * (mapSize * 0.8);
-      const w = 6 + Math.random() * 6;
-      const d = 6 + Math.random() * 6;
-      const rotation = Math.random() * Math.PI * 2;
-      let h, baseY;
-      if (Math.random() < 0.6) {
-        h = 4 + Math.random() * 4;
-        baseY = 0;
-      } else {
-        h = 3 + Math.random() * 2;
-        baseY = 3 + Math.random() * 3;
-      }
-      const inverted = Math.random() < 0.2; // 20% chance for random inverted pyramid
-      pyramid = { x, z, w, d, h, baseY, rotation, name: `P${i}` , type: 'pyramid', inverted };
-      const distFromCenter = Math.sqrt(x * x + z * z);
-      if (distFromCenter < minDistance) {
-        attempts++;
-        continue;
-      }
-      if (isTooClose(x, z, w, d, obstacles)) {
-        attempts++;
-        continue;
-      }
-      validPosition = true;
-    }
-    if (validPosition && pyramid) {
-      obstacles.push(pyramid);
-    }
-  }
+  placeObstacles(numBoxes, (shape, i) => ({ ...shape, name: `O${i}`, type: 'box' }));
+  placeObstacles(numPyramids, (shape, i) => ({
+    ...shape,
+    name: `P${i}`,
+    type: 'pyramid',
+    inverted: Math.random() < 0.2, // 20% chance for random inverted pyramid
+  }));
 
   return obstacles;
 }

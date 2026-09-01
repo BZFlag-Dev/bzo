@@ -7,8 +7,8 @@
 
 // hud.js - Handles HUD and debug display logic
 
-import { normalizeShotSlotCount } from './shot-limits.mjs';
-import { PLAYER_TEAM_LABELS, getPlayerTeamColor, isColorTeam } from './player-teams.mjs';
+import { normalizeShotSlotCount } from './shots.mjs';
+import { PLAYER_TEAM_LABELS, getPlayerTeamColor, isColorTeam } from './teams.mjs';
 
 const degreeBarRenderState = {
   canvas: null,
@@ -83,6 +83,13 @@ export function colorToCSS(color) {
   return '#888';
 }
 
+// Trace a rounded rectangle as the current path. Every 2D panel bzo paints --
+// HUD, XR overlay, XR menu -- draws its background this way.
+export function roundedRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, width, height, radius);
+}
+
 // Toggle debug labels over objects
 export function toggleDebugLabels({ debugLabelsEnabled, setDebugLabelsEnabled, updateHudButtons, showMessage }) {
   setDebugLabelsEnabled(!debugLabelsEnabled);
@@ -100,6 +107,52 @@ export function setActive(btn, active, activeTitle, inactiveTitle) {
     btn.classList.remove('active');
     if (inactiveTitle) btn.title = inactiveTitle;
   }
+}
+
+// Read a persisted on/off HUD preference.
+export function readStoredFlag(key, fallback = false) {
+  const saved = localStorage.getItem(key);
+  return saved === null ? fallback : saved === 'true';
+}
+
+// Wire a HUD toggle button to a value it does not own: read it, flip it on
+// click, persist it when the caller names a storage key, and keep the class and
+// title in step. `available` is re-read on every refresh, so a gate that changes
+// during play -- entering VR -- lands without a second listener; the returned
+// refresh is what such a listener calls. A button whose gate is closed goes
+// dead rather than promising what the context cannot do.
+export function bindToggleButton(btn, {
+  get,
+  set,
+  onTitle,
+  offTitle,
+  storageKey = null,
+  available = () => true,
+  unavailableTitle = '',
+  forceOffWhenUnavailable = false,
+  onChange = null,
+}) {
+  if (!btn) return () => {};
+
+  const refresh = () => {
+    const usable = available();
+    if (!usable && forceOffWhenUnavailable && get()) set(false);
+    btn.disabled = !usable;
+    setActive(btn, get());
+    btn.title = usable ? (get() ? onTitle : offTitle) : unavailableTitle;
+  };
+
+  btn.addEventListener('click', () => {
+    if (!available()) return;
+    const next = !get();
+    set(next);
+    if (storageKey) localStorage.setItem(storageKey, next.toString());
+    if (onChange) onChange(next);
+    refresh();
+  });
+
+  refresh();
+  return refresh;
 }
 
 // Update HUD button states

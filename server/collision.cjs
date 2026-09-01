@@ -19,8 +19,8 @@
 // upstream tests a rotated rectangle (testRectRect) bzo tests a circle
 // (testRectCircle) against the same shrunk cross-section.
 //
-// Keep this file byte-identical in behavior with server/collision-geometry.cjs.
-// scripts/test-collision-geometry.mjs enforces that.
+// Keep this file byte-identical in behavior with server/collision.cjs.
+// scripts/test-collision.mjs enforces that.
 
 const ZERO_TOLERANCE = 1.0e-6;
 

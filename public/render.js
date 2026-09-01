@@ -14,7 +14,7 @@ import {
   detectRenderCapabilities,
   supportsDynamicLighting,
   supportsProjectedShadows,
-} from './render-capabilities.mjs';
+} from './capabilities.mjs';
 import {
   GAME_SOUNDS,
   GAME_SOUND_NAMES,
@@ -2156,6 +2156,80 @@ class RenderManager {
     return meshes;
   }
 
+  // One tread group -- the middle band plus the front and rear caps. The two
+  // sides differ only in which template meshes they clone, so they share the
+  // build; the cloned textures come back for updateTreads to scroll.
+  _buildTreadGroup(parts, { treadTexture, treadTextureRotated, treadCapMat, treadCapMatSide }) {
+    const repeating = (source) => {
+      const texture = source.clone();
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      return texture;
+    };
+
+    const group = new THREE.Group();
+    const textures = [];
+
+    const middleTexture = repeating(treadTextureRotated);
+    const middleMaterial = new THREE.MeshLambertMaterial({ map: middleTexture });
+    group.add(this._cloneTemplateMesh(parts.middle, [
+      treadCapMatSide,
+      treadCapMatSide,
+      middleMaterial,
+      middleMaterial,
+      treadCapMatSide,
+      treadCapMatSide,
+    ]));
+    textures.push(middleTexture);
+
+    const capGroups = parts.frontCap.geometry.groups.length;
+    for (const capPart of [parts.frontCap, parts.rearCap]) {
+      const capTexture = repeating(treadTexture);
+      const capMaterial = new THREE.MeshLambertMaterial({ map: capTexture });
+      group.add(this._cloneTemplateMesh(
+        capPart,
+        capGroups === 2
+          ? [capMaterial, treadCapMat]
+          : [capMaterial, treadCapMat, treadCapMat],
+      ));
+      textures.push(capTexture);
+    }
+
+    return { group, textures };
+  }
+
+  // The wheels on one side, each offset around its own texture so they do not
+  // turn in lockstep. The sides differ only in which way the mesh is nudged
+  // clear of the body.
+  _buildWheels(templateWheels, outwardDirection) {
+    const wheels = [];
+    const faceTextures = [];
+    const sideTextures = [];
+
+    templateWheels.forEach((templateWheel, index) => {
+      const sideTexture = this._createWheelTexture();
+      const faceTexture = this._createWheelTreadTexture();
+      faceTexture.rotation = (index * 0.17) * Math.PI * 2;
+      faceTexture.center.set(0.5, 0.5);
+      faceTexture.needsUpdate = true;
+      sideTexture.offset.x = index * 0.17;
+      sideTexture.needsUpdate = true;
+
+      const wheel = this._cloneTemplateMesh(templateWheel, [
+        new THREE.MeshLambertMaterial({ map: sideTexture }),
+        new THREE.MeshLambertMaterial({ map: faceTexture }),
+        new THREE.MeshLambertMaterial({ map: faceTexture }),
+      ]);
+      this._nudgeWheelMeshOutward(wheel, outwardDirection);
+
+      wheels.push(wheel);
+      faceTextures.push(faceTexture);
+      sideTextures.push(sideTexture);
+    });
+
+    return { wheels, faceTextures, sideTextures };
+  }
+
   _createTankFromTemplate(color = 0x4caf50, name = '', modelPath = this._tankModelPath) {
     const template = this._tankTemplateByPath.get(modelPath);
     if (!template) {
@@ -2225,147 +2299,36 @@ class RenderManager {
     tankGroup.add(body);
     tankGroup.userData.body = body;
 
-    tankGroup.userData.leftTreadTextures = [];
-    tankGroup.userData.rightTreadTextures = [];
-    tankGroup.userData.leftWheelTextures = [];
-    tankGroup.userData.rightWheelTextures = [];
-    tankGroup.userData.leftWheelSideTextures = [];
-    tankGroup.userData.rightWheelSideTextures = [];
+    const treadMaterials = {
+      treadTexture,
+      treadTextureRotated,
+      treadCapMat: new THREE.MeshLambertMaterial({ map: treadCapTexture }),
+      treadCapMatSide: new THREE.MeshLambertMaterial({ map: treadCapTextureSide }),
+    };
+    const leftTread = hasLeftTread ? this._buildTreadGroup({
+      middle: templateParts.leftTreadMiddle,
+      frontCap: templateParts.leftTreadFrontCap,
+      rearCap: templateParts.leftTreadRearCap,
+    }, treadMaterials) : null;
+    const rightTread = hasRightTread ? this._buildTreadGroup({
+      middle: templateParts.rightTreadMiddle,
+      frontCap: templateParts.rightTreadFrontCap,
+      rearCap: templateParts.rightTreadRearCap,
+    }, treadMaterials) : null;
 
-    const treadCapMat = new THREE.MeshLambertMaterial({ map: treadCapTexture });
-    const treadCapMatSide = new THREE.MeshLambertMaterial({ map: treadCapTextureSide });
+    tankGroup.userData.leftTreadTextures = leftTread ? leftTread.textures : [];
+    tankGroup.userData.rightTreadTextures = rightTread ? rightTread.textures : [];
 
-    const leftTreadGroup = hasLeftTread ? new THREE.Group() : null;
-    const rightTreadGroup = hasRightTread ? new THREE.Group() : null;
+    const leftWheels = this._buildWheels(leftWheelParts, -1);
+    const rightWheels = this._buildWheels(rightWheelParts, 1);
+    [...leftWheels.wheels, ...rightWheels.wheels].forEach((wheel) => tankGroup.add(wheel));
 
-    if (hasLeftTread) {
-      const leftTreadRotatedTex = treadTextureRotated.clone();
-      leftTreadRotatedTex.wrapS = THREE.RepeatWrapping;
-      leftTreadRotatedTex.wrapT = THREE.RepeatWrapping;
-      const leftTreadRotatedMat = new THREE.MeshLambertMaterial({ map: leftTreadRotatedTex });
-      const leftTreadMiddle = this._cloneTemplateMesh(templateParts.leftTreadMiddle, [
-        treadCapMatSide,
-        treadCapMatSide,
-        leftTreadRotatedMat,
-        leftTreadRotatedMat,
-        treadCapMatSide,
-        treadCapMatSide,
-      ]);
-      leftTreadGroup.add(leftTreadMiddle);
-      tankGroup.userData.leftTreadTextures.push(leftTreadRotatedTex);
-
-      const leftCapGroups = templateParts.leftTreadFrontCap.geometry.groups.length;
-      const leftTreadFrontTex = treadTexture.clone();
-      leftTreadFrontTex.wrapS = THREE.RepeatWrapping;
-      leftTreadFrontTex.wrapT = THREE.RepeatWrapping;
-      const leftTreadFrontMat = new THREE.MeshLambertMaterial({ map: leftTreadFrontTex });
-      const leftTreadFront = this._cloneTemplateMesh(
-        templateParts.leftTreadFrontCap,
-        leftCapGroups === 2
-          ? [leftTreadFrontMat, treadCapMat]
-          : [leftTreadFrontMat, treadCapMat, treadCapMat],
-      );
-      leftTreadGroup.add(leftTreadFront);
-      tankGroup.userData.leftTreadTextures.push(leftTreadFrontTex);
-
-      const leftTreadRearTex = treadTexture.clone();
-      leftTreadRearTex.wrapS = THREE.RepeatWrapping;
-      leftTreadRearTex.wrapT = THREE.RepeatWrapping;
-      const leftTreadRearMat = new THREE.MeshLambertMaterial({ map: leftTreadRearTex });
-      const leftTreadRear = this._cloneTemplateMesh(
-        templateParts.leftTreadRearCap,
-        leftCapGroups === 2
-          ? [leftTreadRearMat, treadCapMat]
-          : [leftTreadRearMat, treadCapMat, treadCapMat],
-      );
-      leftTreadGroup.add(leftTreadRear);
-      tankGroup.userData.leftTreadTextures.push(leftTreadRearTex);
-    }
-
-    if (hasRightTread) {
-      const rightTreadRotatedTex = treadTextureRotated.clone();
-      rightTreadRotatedTex.wrapS = THREE.RepeatWrapping;
-      rightTreadRotatedTex.wrapT = THREE.RepeatWrapping;
-      const rightTreadRotatedMat = new THREE.MeshLambertMaterial({ map: rightTreadRotatedTex });
-      const rightTreadMiddle = this._cloneTemplateMesh(templateParts.rightTreadMiddle, [
-        treadCapMatSide,
-        treadCapMatSide,
-        rightTreadRotatedMat,
-        rightTreadRotatedMat,
-        treadCapMatSide,
-        treadCapMatSide,
-      ]);
-      rightTreadGroup.add(rightTreadMiddle);
-      tankGroup.userData.rightTreadTextures.push(rightTreadRotatedTex);
-
-      const rightCapGroups = templateParts.rightTreadFrontCap.geometry.groups.length;
-      const rightTreadFrontTex = treadTexture.clone();
-      rightTreadFrontTex.wrapS = THREE.RepeatWrapping;
-      rightTreadFrontTex.wrapT = THREE.RepeatWrapping;
-      const rightTreadFrontMat = new THREE.MeshLambertMaterial({ map: rightTreadFrontTex });
-      const rightTreadFront = this._cloneTemplateMesh(
-        templateParts.rightTreadFrontCap,
-        rightCapGroups === 2
-          ? [rightTreadFrontMat, treadCapMat]
-          : [rightTreadFrontMat, treadCapMat, treadCapMat],
-      );
-      rightTreadGroup.add(rightTreadFront);
-      tankGroup.userData.rightTreadTextures.push(rightTreadFrontTex);
-
-      const rightTreadRearTex = treadTexture.clone();
-      rightTreadRearTex.wrapS = THREE.RepeatWrapping;
-      rightTreadRearTex.wrapT = THREE.RepeatWrapping;
-      const rightTreadRearMat = new THREE.MeshLambertMaterial({ map: rightTreadRearTex });
-      const rightTreadRear = this._cloneTemplateMesh(
-        templateParts.rightTreadRearCap,
-        rightCapGroups === 2
-          ? [rightTreadRearMat, treadCapMat]
-          : [rightTreadRearMat, treadCapMat, treadCapMat],
-      );
-      rightTreadGroup.add(rightTreadRear);
-      tankGroup.userData.rightTreadTextures.push(rightTreadRearTex);
-    }
-
-    tankGroup.userData.leftWheels = [];
-    tankGroup.userData.rightWheels = [];
-    leftWheelParts.forEach((templateWheel, index) => {
-      const wheelSideTexture = this._createWheelTexture();
-      const wheelFaceTexture = this._createWheelTreadTexture();
-      wheelFaceTexture.rotation = (index * 0.17) * Math.PI * 2;
-      wheelFaceTexture.center.set(0.5, 0.5);
-      wheelFaceTexture.needsUpdate = true;
-      wheelSideTexture.offset.x = index * 0.17;
-      wheelSideTexture.needsUpdate = true;
-      const wheel = this._cloneTemplateMesh(templateWheel, [
-        new THREE.MeshLambertMaterial({ map: wheelSideTexture }),
-        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
-        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
-      ]);
-      this._nudgeWheelMeshOutward(wheel, -1);
-      tankGroup.add(wheel);
-      tankGroup.userData.leftWheels.push(wheel);
-      tankGroup.userData.leftWheelTextures.push(wheelFaceTexture);
-      tankGroup.userData.leftWheelSideTextures.push(wheelSideTexture);
-    });
-    rightWheelParts.forEach((templateWheel, index) => {
-      const wheelSideTexture = this._createWheelTexture();
-      const wheelFaceTexture = this._createWheelTreadTexture();
-      wheelFaceTexture.rotation = (index * 0.17) * Math.PI * 2;
-      wheelFaceTexture.center.set(0.5, 0.5);
-      wheelFaceTexture.needsUpdate = true;
-      wheelSideTexture.offset.x = index * 0.17;
-      wheelSideTexture.needsUpdate = true;
-      const wheel = this._cloneTemplateMesh(templateWheel, [
-        new THREE.MeshLambertMaterial({ map: wheelSideTexture }),
-        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
-        new THREE.MeshLambertMaterial({ map: wheelFaceTexture }),
-      ]);
-      this._nudgeWheelMeshOutward(wheel, 1);
-      tankGroup.add(wheel);
-      tankGroup.userData.rightWheels.push(wheel);
-      tankGroup.userData.rightWheelTextures.push(wheelFaceTexture);
-      tankGroup.userData.rightWheelSideTextures.push(wheelSideTexture);
-    });
+    tankGroup.userData.leftWheels = leftWheels.wheels;
+    tankGroup.userData.rightWheels = rightWheels.wheels;
+    tankGroup.userData.leftWheelTextures = leftWheels.faceTextures;
+    tankGroup.userData.rightWheelTextures = rightWheels.faceTextures;
+    tankGroup.userData.leftWheelSideTextures = leftWheels.sideTextures;
+    tankGroup.userData.rightWheelSideTextures = rightWheels.sideTextures;
 
     const sampleWheel = tankGroup.userData.leftWheels[0] || tankGroup.userData.rightWheels[0];
     if (sampleWheel && sampleWheel.geometry) {
@@ -2378,9 +2341,8 @@ class RenderManager {
       tankGroup.userData.wheelRadius = 0.42;
     }
 
-    if (leftTreadGroup) tankGroup.add(leftTreadGroup);
-    if (rightTreadGroup) tankGroup.add(rightTreadGroup);
-    tankGroup.userData.treadGroups = [leftTreadGroup, rightTreadGroup].filter(Boolean);
+    tankGroup.userData.treadGroups = [leftTread?.group, rightTread?.group].filter(Boolean);
+    tankGroup.userData.treadGroups.forEach((group) => tankGroup.add(group));
 
     const turretTexture = bodyTexture.clone();
     turretTexture.wrapS = THREE.RepeatWrapping;
@@ -2744,6 +2706,22 @@ class RenderManager {
     return entry.promise;
   }
 
+  // Tint a BZFlag source texture into a canvas-backed texture. The image may
+  // still be loading, so the painter runs once now and again when it arrives.
+  _createTintedTexture(path, width, height, paint, baseColor, { srgb = true } = {}) {
+    const source = this._getSharedImage(path);
+    const { texture, redraw } = this._createCanvasBackedImageTexture(width, height, (ctx, canvas) => {
+      paint.call(this, ctx, canvas, source.loaded ? source.image : null, baseColor);
+    });
+    if (srgb) texture.colorSpace = THREE.SRGBColorSpace;
+
+    if (!source.loaded) {
+      source.listeners.push(redraw);
+    }
+
+    return texture;
+  }
+
   _paintTintedBZFlagTankTexture(ctx, canvas, image, baseColor) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -2780,21 +2758,9 @@ class RenderManager {
   }
 
   _createTankTexture(baseColor) {
-    const source = this._getSharedImage('/textures/green_tank.png');
-    const { texture, redraw } = this._createCanvasBackedImageTexture(128, 128, (ctx, canvas) => {
-      this._paintTintedBZFlagTankTexture(
-        ctx,
-        canvas,
-        source.loaded ? source.image : null,
-        baseColor,
-      );
-    });
-
-    if (!source.loaded) {
-      source.listeners.push(redraw);
-    }
-
-    return texture;
+    return this._createTintedTexture(
+      '/textures/green_tank.png', 128, 128, this._paintTintedBZFlagTankTexture, baseColor,
+      { srgb: false });
   }
 
   _paintTintedBZFlagBoltTexture(ctx, canvas, image, baseColor) {
@@ -2835,22 +2801,8 @@ class RenderManager {
   }
 
   _createBoltTexture(baseColor) {
-    const source = this._getSharedImage('/textures/green_bolt.png');
-    const { texture, redraw } = this._createCanvasBackedImageTexture(64, 64, (ctx, canvas) => {
-      this._paintTintedBZFlagBoltTexture(
-        ctx,
-        canvas,
-        source.loaded ? source.image : null,
-        baseColor,
-      );
-    });
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    if (!source.loaded) {
-      source.listeners.push(redraw);
-    }
-
-    return texture;
+    return this._createTintedTexture(
+      '/textures/green_bolt.png', 64, 64, this._paintTintedBZFlagBoltTexture, baseColor);
   }
 
   _paintTintedBZFlagTailTexture(ctx, canvas, image, baseColor) {
@@ -2893,22 +2845,8 @@ class RenderManager {
   }
 
   _createShotTailTexture(baseColor) {
-    const source = this._getSharedImage('/textures/shot_tail.png');
-    const { texture, redraw } = this._createCanvasBackedImageTexture(128, 32, (ctx, canvas) => {
-      this._paintTintedBZFlagTailTexture(
-        ctx,
-        canvas,
-        source.loaded ? source.image : null,
-        baseColor,
-      );
-    });
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    if (!source.loaded) {
-      source.listeners.push(redraw);
-    }
-
-    return texture;
+    return this._createTintedTexture(
+      '/textures/shot_tail.png', 128, 32, this._paintTintedBZFlagTailTexture, baseColor);
   }
 
   _createShotExplosionTexture() {
@@ -3187,29 +3125,13 @@ class RenderManager {
     if (shield.material) shield.material.dispose();
   }
 
-  playShootSound(position) { this.playSound('fire', position); }
-
-  playExplosionSound(position) { this.playSound('explosion', position); }
-
-  playLocalJumpSound(position) { this.playSound('jump', position); }
-
-  playLandSound(position) { this.playSound('land', position); }
-
-  playTeleportSound(position) { this.playSound('teleport', position); }
-
-  playSpawnSound(position) { this.playSound('pop', position); }
-
-  // BZFlag has no per-sound gain, so landing volume does not vary with impact
-  // speed. The intensity argument still drives the visual landing effect.
-  playLocalLandSound() {
-    this.playLocalSound('land');
-  }
-
   createLandingEffect(position, intensity = 1, { local = false } = {}) {
     if (!this.scene || !position) return;
     const clampedIntensity = Math.max(0.4, Math.min(1.6, intensity || 1));
-    if (local) this.playLocalLandSound();
-    else this.playLandSound(position);
+    // BZFlag has no per-sound gain, so landing volume does not vary with impact
+    // speed. The intensity argument still drives the visual landing effect.
+    if (local) this.playLocalSound('land');
+    else this.playSound('land', position);
 
     const ringGeometry = new THREE.RingGeometry(0.5, 0.9, 48);
     const ringMaterial = new THREE.MeshBasicMaterial({
@@ -3241,7 +3163,7 @@ class RenderManager {
 
   createSpawnEffect(position, color = 0x4caf50) {
     if (!this.scene || !position) return;
-    this.playSpawnSound(position);
+    this.playSound('pop', position);
 
     const tint = new THREE.Color(typeof color === 'number' ? color : 0x4caf50)
       .lerp(new THREE.Color(0xffffff), 0.35);
@@ -3380,7 +3302,7 @@ class RenderManager {
       this.projectileLights.set(projectile, shotLight);
     }
     this.worldGroup.add(projectile);
-    this.playShootSound(projectile.position);
+    this.playSound('fire', projectile.position);
     this.createMuzzleFlash(projectile.position, dir);
     return projectile;
   }
@@ -3411,7 +3333,7 @@ class RenderManager {
 
   createExplosion(position, tank) {
     if (!this.scene || !position) return;
-    this.playExplosionSound(position);
+    this.playSound('explosion', position);
 
     // Dynamic lighting flash
     let explosionLight = null;

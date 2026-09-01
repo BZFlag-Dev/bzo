@@ -19,7 +19,7 @@ Prefer upstream naming too -- see `docs/tank-model-format.md` for tank part name
 
 ### Capability, not cost
 
-`public/render-capabilities.mjs` reads what the machine can do from the
+`public/capabilities.mjs` reads what the machine can do from the
 renderer's own WebGL context, and answers only **can this run here**, never
 **is this fast enough here**. Where a capability is missing, disable the feature
 *and* the UI that offers it -- a row that promises what the context cannot draw
@@ -93,6 +93,11 @@ may change once that stops being the dominant cost.
   or refactoring, extract and reuse shared logic instead of copying code.
 - **Always remove trailing whitespace from edits.** No line ends with a space or
   tab.
+- **Module file names are short.** Drop any qualifier the directory or the
+  module's own role already supplies: `public/collision.mjs`, not
+  `collision-geometry.mjs`; `public/motion.mjs`, not `tank-motion.mjs`. Keep a
+  qualifier only where the bare noun would be ambiguous in its directory, as
+  `input-context.mjs` is. Names are kebab-case, matching the rest of `public/`.
 - **Do not put style information in `public/index.html`.** Presentation rules
   belong in `public/styles.css`. No inline `style` attributes, no `<style>`
   blocks. To show/hide an element, toggle a class rather than writing
@@ -136,10 +141,10 @@ version appears.
 | `public/input.js` | All input ownership and routing; `setupInputHandlers`, `virtualInput`, `keys` |
 | `public/hud.js` | HUD drawing helpers (scoreboard, altimeter, degree bar, shot status, debug) |
 | `public/menus.js` | Shared dialog lifecycle, focus, and keyboard/controller navigation |
-| `public/settings-menu.js` | Declarative Settings rows + DOM renderer |
+| `public/settings.js` | Declarative Settings rows + DOM renderer |
 | `public/xr-menu.js` | `XRMenuRenderer`: CanvasTexture menu panel for immersive XR |
 | `public/webxr.js` | XR session lifecycle and controller input |
-| `public/render-capabilities.mjs` | What the WebGL context supports; gates features and their UI |
+| `public/capabilities.mjs` | What the WebGL context supports; gates features and their UI |
 | `public/voice.js` | WebRTC nearby-voice manager |
 | `public/audio.js` | Procedurally generated audio buffers |
 | `public/sw.js` | Service worker: install support and asset caching |
@@ -153,8 +158,8 @@ version appears.
 
 Because the client is unbundled ESM and the server is CommonJS, logic needed on
 both sides is kept as a **hand-maintained pair**: `public/<name>.mjs` and
-`server/<name>.cjs`. Current pairs are `shot-limits`, `player-teams`, `collision-geometry`,
-`tank-motion` and `headset-ua`. `npm run check:shared-pairs` enforces them: the two mirrored
+`server/<name>.cjs`. Current pairs are `shots`, `teams`, `collision`,
+`motion` and `headset`. `npm run check:shared-pairs` enforces them: the two mirrored
 pairs must match line for line, and any name a hand-written pair exports on
 both sides must agree in type and arity. A pair that drifts does not throw --
 the client and server just quietly disagree about geometry, which surfaces as
@@ -162,20 +167,20 @@ position corrections.
 
 **Any such pair must have a parity test** in `scripts/` that loads both copies
 and asserts they agree across a shared input table. See
-`scripts/test-shot-limits.mjs` and `scripts/test-player-teams.mjs`. Without one,
-the copies drift silently — `player-teams` did exactly that, with the client
+`scripts/test-shots.mjs` and `scripts/test-teams.mjs`. Without one,
+the copies drift silently — `teams` did exactly that, with the client
 skipping the `trim()` the server performed.
 
 ### Collision geometry follows BZFlag
 
-Obstacle geometry lives in the `collision-geometry` pair and mirrors upstream
+Obstacle geometry lives in the `collision` pair and mirrors upstream
 BZFlag (`src/obstacle/`, `src/game/Intersect.cxx`). The client resolves moves and
 the server rejects them -- different jobs -- but both must agree about which
 volume is solid, because every disagreement is either an honest player wrongly
 rejected or a cheater wrongly allowed. Both sides agree by agreeing with the
 same reference implementation.
 
-`scripts/test-collision-geometry.mjs` fuzzes the two copies against each other.
+`scripts/test-collision.mjs` fuzzes the two copies against each other.
 
 **The server must be strictly more permissive than the client.** Move packets
 quantize position with `toFixed(2)`, so a transmitted position can sit ~0.007
@@ -201,7 +206,7 @@ how `render.js` draws obstacles (`mesh.rotation.y = obs.rotation`).
 `getSegmentBoxEntryTime`, `getShotTeleporterDims`, `getShotTeleporterCrossing`,
 `transformShotThroughTeleporter`, `traceShotThroughTeleporters`. Several have
 already drifted. When touching any of them, change both sides in the same edit;
-the fix is to move each into the `collision-geometry` pair, matching upstream
+the fix is to move each into the `collision` pair, matching upstream
 BZFlag, with fuzz coverage -- as the pyramid path already has.
 
 ## Visual effects
@@ -398,8 +403,8 @@ In team mode the server keeps a score per colour team, exactly as bzfs does:
   size` per team, sorted by score, skipping teams with nobody on them. bzo adds
   the team's name to that row; upstream relies on the row's colour alone.
 
-The rule itself is `getTeamScoreDeltasForKill` in the `player-teams` pair, kept
-pure so `scripts/test-player-teams.mjs` can hold it against upstream's without
+The rule itself is `getTeamScoreDeltasForKill` in the `teams` pair, kept
+pure so `scripts/test-teams.mjs` can hold it against upstream's without
 a server around it. `MsgTeamUpdate` carries size, wins and losses per team
 upstream; bzo sends the same fields as `teamUpdate`, and the same array rides
 along in the `init` payload so a joining player starts with the current
@@ -513,11 +518,15 @@ That runs, in order:
 | `npm run check:server` | `node --check server.js` |
 | `npm run lint` | ESLint across server, `public/`, and `scripts/` |
 | `npm run check:controls-docs` | README controls section matches the in-game help panel |
+| `npm run check:shared-pairs` | Each `public/<name>.mjs` and `server/<name>.cjs` still agree |
 | `npm run test:input-context` | `InputContextManager` ownership rules |
-| `npm run test:player-teams` | Team normalization, plus client/server parity |
+| `npm run test:teams` | Team normalization, plus client/server parity |
 | `npm run test:team-mode` | Server team-mode config and BZW `options` parsing |
-| `npm run test:shot-limits` | Shot slot limits, plus client/server parity |
-| `npm run test:collision-geometry` | Obstacle geometry, fuzzed for client/server parity |
+| `npm run test:server-name` | Host-derived server name and document title |
+| `npm run test:motion` | Tank motion resolution, plus client/server parity |
+| `npm run test:shots` | Shot slot limits, plus client/server parity |
+| `npm run test:collision` | Obstacle geometry, fuzzed for client/server parity |
+| `npm run test:capabilities` | WebGL capability detection and feature gating |
 
 CI runs the same checks on pushes and pull requests, and additionally runs
 `npm audit --omit=dev --audit-level=high` and a Node 18.19.1 / 24.19.0

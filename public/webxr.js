@@ -8,7 +8,7 @@
 // WebXR Manager for VR/AR support (Quest 2, Viture Luma Ultra, etc.)
 
 import { isInstalledApp } from './install.js';
-import { isHandheldUA, isHeadsetBrowserUA } from './headset-ua.mjs';
+import { isHandheldUA, isHeadsetBrowserUA } from './headset.mjs';
 
 export function isHeadsetBrowser() {
   return isHeadsetBrowserUA(navigator.userAgent);

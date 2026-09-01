@@ -15,7 +15,7 @@ Move the current settings/help/voice/operator overlays toward one shared dialog 
 ## Module Boundaries
 
 - `public/menus.js`: shared menu lifecycle, focus, keyboard navigation, controller navigation, and back/close behavior.
-- `public/settings-menu.js`: declarative Settings rows, values, and the DOM renderer. A future XR renderer will consume the same rows.
+- `public/settings.js`: declarative Settings rows, values, and the DOM renderer. A future XR renderer will consume the same rows.
 - `public/input.js`: input ownership and routing; it does not define menu contents.
 - Feature modules continue to own the actions and state behind individual settings until those features have a natural smaller owner.
 
@@ -49,7 +49,7 @@ Keyboard events have one document listener in `public/input.js`. Application com
 - Gamepad and XR controls route focus, activation, and back actions to open dialogs.
 - The gameplay frame consumes no control input while another context owns input.
 - Shared lifecycle and navigation now live in `public/menus.js`.
-- Settings rows and DOM rendering now live in `public/settings-menu.js` and reuse existing feature actions.
+- Settings rows and DOM rendering now live in `public/settings.js` and reuse existing feature actions.
 - Settings use a vertical label/value layout with keyboard, pointer, touch, gamepad, and XR-controller navigation.
 - Settings labels and values align around the dialog center so related text stays visually adjacent.
 - Settings, Help, Voice, Operator, and Entry share one responsive screen footprint and a lightweight translucent background.

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { MAX_SHOT_SLOTS, normalizeShotSlotCount } from '../public/shot-limits.mjs';
+import { MAX_SHOT_SLOTS, normalizeShotSlotCount } from '../public/shots.mjs';
 
 const require = createRequire(import.meta.url);
-const serverLimits = require('../server/shot-limits.cjs');
+const serverLimits = require('../server/shots.cjs');
 
 assert.equal(MAX_SHOT_SLOTS, 64);
 assert.equal(serverLimits.MAX_SHOT_SLOTS, MAX_SHOT_SLOTS);

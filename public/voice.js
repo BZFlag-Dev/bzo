@@ -9,7 +9,7 @@
 // WebSocket is used only for signaling and state; audio bytes never go through
 // the WebSocket connection.
 
-import { isObserverTeam, normalizePlayerTeam } from './player-teams.mjs';
+import { isObserverTeam, normalizePlayerTeam } from './teams.mjs';
 
 const VOICE_CHANNEL = 'nearby';
 

@@ -17,10 +17,10 @@ import {
   isObserverTeam,
   normalizePlayerTeam,
   normalizePlayerTeamSelection,
-} from '../public/player-teams.mjs';
+} from '../public/teams.mjs';
 
 const require = createRequire(import.meta.url);
-const serverTeams = require('../server/player-teams.cjs');
+const serverTeams = require('../server/teams.cjs');
 
 assert.deepEqual(PLAYER_TEAMS, [
   PLAYER_TEAM.ROGUE,
@@ -45,7 +45,7 @@ assert.deepEqual(getPlayerTeamSelections([PLAYER_TEAM.BLUE, PLAYER_TEAM.OBSERVER
 assert.equal(isObserverTeam(PLAYER_TEAM.OBSERVER), true);
 assert.equal(isObserverTeam(PLAYER_TEAM.ROGUE), false);
 
-// public/player-teams.mjs and server/player-teams.cjs are hand-maintained copies
+// public/teams.mjs and server/teams.cjs are hand-maintained copies
 // of the same normalization rules. Compare the shared surface directly so the
 // two cannot drift the way they did before (the client used to skip trimming).
 assert.deepEqual(serverTeams.PLAYER_TEAM, PLAYER_TEAM);
