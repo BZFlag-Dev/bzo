@@ -6,6 +6,31 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.49] - 2026-09-01
+
+Part of #6.
+
+### Added
+- Flags, in BZFlag's shape. A world now carries 16 superflag slots -- upstream's `-s` default count, all Useless for now -- and each one arrives through the same animation BZFlag uses: hovering at `_flagAltitude` inside a stack of coloured warp discs, fading in, then falling to the ground. Drive over one to pick it up, and it rides on top of your tank with its cloth rippling on BZFlag's two out-of-phase waves.
+- `Space` drops the carried flag, which is upstream's `drop` binding and the key bzo has been holding unbound for it. In VR the primary face button (A) drops, so firing is now the trigger alone; a gamepad drops with X/Square, and touch play gets a Drop button above Jump.
+- A dropped flag flies upstream's parabola to whatever surface is under the tank. On its fourth pickup, or anywhere but the ground, it rises out of the world instead and a fresh flag appears elsewhere on BZFlag's halflife schedule -- so a superflag dropped on a roof leaves rather than falling off it. Dying, pausing, self-destructing or disconnecting all give the flag up where you stood.
+- The radar draws flags as BZFlag does: a cross a flag radius across for each one on the ground, and a larger cross on your own blip while you are carrying.
+- The server hides which superflag is which until somebody picks it up, exactly as bzfs does -- so an unidentified flag on the ground tells you nothing but where it is.
+- `superFlags` in `server.json` sets how many slots a world has and which flag types may fill them.
+- Team flags and capture the flag. A team-mode map with bases now gives every colour team a flag on its base, in the team's own colour. Carry an enemy flag home, or your own onto their base, and it is a capture: everyone on the losing team blows up and respawns on their base, and the team score moves. Capturing your own flag wins nobody anything and costs your team the same loss, which is what the "Don't capture your own flag!!!" alert is for.
+- In capture the flag every spawn is on your own team's base, as BZFlag spawns them.
+- A team flag behaves like BZFlag's rather than like a superflag: it never expires, it appears at its base instead of flying in, it lands on buildings, and it will not come to rest on another team's base. It leaves the world when its team empties and returns when the team's first player arrives -- or, if an enemy carried it off first, after `teamFlagTimeout` seconds.
+- BZFlag's flag alerts and their sounds: "Flag Alert!!!" when an enemy takes your team's flag, "Team Grab!!!" when a team mate takes somebody else's, and the capture-won, capture-lost and own-goal sounds.
+- `teamFlagTimeout` in `server.json` sets how long an abandoned team flag survives.
+- The heading tape above the targeting box carries a marker pointing at your own team's flag, as BZFlag's does -- a diamond where its bearing falls on the tape, or an arrow pinned to the edge it is past. It keeps pointing while an enemy carries your flag off, which is when it matters most.
+- Both scoreboards name the flag a player is carrying, after their callsign and in the flag's colour, as BZFlag's does: a team flag in full, a superflag by its abbreviation.
+- BZFlag's `-fb` is supported: superflags may spawn on and come to rest on buildings. A map's `options` block turns it on, as it does in bzfs, or `flagsOnBuildings` in `server.json` does it server-wide. `maps/hix.bzw` now sets it, so its roofs and walkways carry flags.
+
+### Changed
+- The radar draws its layers in the right order. The dark panel used to be painted *over* the flags and shots already drawn under it, and the obstacles on top of that, so a flag standing on a base was buried under the base and a shot passing over a building was hidden by it. Panel first now, then the world border and compass, then obstacles, then shots, tanks and flags -- gameplay last, as BZFlag orders it.
+- Radar obstacles are painted lowest surface first, so where two overlap the higher one wins. The ring of supports around a hix base no longer looks like it is sitting on top of the base.
+- Flags on the radar use BZFlag's radar colour table rather than its tank colours. Upstream keeps the two apart on purpose -- red, green and purple are lifted so a team flag reads against a dark panel instead of sinking into it. Radar depth fading also matches upstream now, which stops at 0.35 for objects and 0.5 for obstacles rather than fading almost out.
+
 ## [1.0.48] - 2026-09-01
 
 ### Added
