@@ -549,6 +549,11 @@ function setVoiceAudioVolume(value) {
   return voiceAudioState;
 }
 
+function toggleVoiceAudioMute() {
+  const current = getVoiceVolumeState();
+  return setVoiceAudioVolume(current.muted ? current.restoreVolume : 0);
+}
+
 function updateVoiceInputDevices(devices = []) {
   const input = document.getElementById('voiceInputDevice');
   if (!input) return;
@@ -616,10 +621,13 @@ function updateVoiceHud(nextState = null) {
   } else if (state.lastError && state.lastError.message) {
     status = 'Microphone unavailable';
   }
+  const voicePlaybackMuted = voiceAudioState.muted || Number(state.voiceVolume) === 0;
 
   if (hud) {
     hud.classList.toggle('voiceChannelHud--active', transmitting);
     hud.classList.toggle('voiceChannelHud--muted', !transmitting);
+    hud.classList.toggle('voiceChannelHud--hidden', voicePlaybackMuted);
+    hud.setAttribute('aria-hidden', String(voicePlaybackMuted));
     hud.setAttribute('aria-label', `Nearby voice channel, ${status.toLowerCase()}`);
   }
   if (label) label.textContent = 'Nearby';
@@ -2498,6 +2506,7 @@ initHudControls({
   toggleGameAudioMute,
   getVoiceVolumeState,
   setVoiceVolume: setVoiceAudioVolume,
+  toggleVoiceAudioMute,
   getScene: () => scene,
   getChatInput: () => chatInput,
   toggleEntryDialog,

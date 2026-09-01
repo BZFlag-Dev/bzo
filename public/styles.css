@@ -642,6 +642,19 @@ body {
   width: 1em;
   max-width: 1em;
   margin-inline: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent-light);
+  font: inherit;
+  cursor: pointer;
+  appearance: none;
+}
+
+.audioVolumeIcon--microphone:hover,
+.audioVolumeIcon--microphone:focus-visible {
+  background: transparent;
+  color: var(--color-fg);
 }
 
 .audioVolumeIcon--microphone::before {
@@ -672,6 +685,28 @@ body {
   transform: translateX(-50%);
 }
 
+.audioVolumeMicrophoneSlash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: none;
+  width: 1.25em;
+  height: max(1px, 0.12em);
+  border-radius: 1px;
+  background: currentColor;
+  content: '';
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.audioVolumeIcon--microphone[data-muted="true"] .audioVolumeMicrophoneSlash {
+  display: block;
+}
+
+.audioVolumeIcon--microphone[data-muted="true"] {
+  color: var(--color-state-off);
+}
+
 /* Narrow screens and portrait displays keep the player card at the upper-left
    and place the audio controls directly underneath it. The panel keeps the
    same height as the card, so both vertical sliders remain easy to grab. */
@@ -699,6 +734,7 @@ body {
 }
 
 #audioBtn:focus-visible,
+#audioVoiceMuteBtn:focus-visible,
 .audioVolumeSlider:focus-visible {
   outline: 2px solid var(--color-btn-bg-focus);
   outline-offset: 2px;
@@ -1424,6 +1460,10 @@ canvas {
 .voiceChannelHud--muted {
   border-color: #f44336;
   box-shadow: 0 0 0.55rem rgba(244, 67, 54, 0.4);
+}
+
+.voiceChannelHud--hidden {
+  display: none;
 }
 
 .voiceChannelHudLabel,

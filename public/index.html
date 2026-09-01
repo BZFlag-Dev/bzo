@@ -74,7 +74,9 @@
       <div class="audioVolumeControl">
         <output id="audioVoiceValue" class="audioVolumeValue" for="audioVoiceSlider">100%</output>
         <input id="audioVoiceSlider" class="audioVolumeSlider" type="range" min="0" max="100" step="1" value="100" aria-label="Voice chat volume" aria-orientation="vertical" aria-valuetext="100%">
-        <span class="audioVolumeIcon audioVolumeIcon--microphone" aria-hidden="true"></span>
+        <button id="audioVoiceMuteBtn" class="audioVolumeIcon audioVolumeIcon--microphone" type="button" title="Mute voice chat" aria-label="Mute voice chat" aria-pressed="false" aria-controls="voiceChannelHud">
+          <span class="audioVolumeMicrophoneSlash" aria-hidden="true"></span>
+        </button>
       </div>
     </div>
   </div>
@@ -306,7 +308,7 @@
   <div id="controlBox"><div id="noMotionBox"></div></div>
   <canvas id="altimeter"></canvas>
   <canvas id="shotStatus"></canvas>
-  <div id="voiceChannelHud" class="voiceChannelHud voiceChannelHud--muted" role="status" aria-live="polite" aria-label="Nearby voice channel, microphone off">
+  <div id="voiceChannelHud" class="voiceChannelHud voiceChannelHud--muted" role="status" aria-live="polite" aria-label="Nearby voice channel, microphone off" aria-hidden="false">
     <span class="voiceChannelHudLabel">Nearby</span>
     <span id="voiceChannelHudStatus" class="voiceChannelHudStatus">Microphone off</span>
   </div>

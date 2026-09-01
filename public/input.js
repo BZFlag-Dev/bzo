@@ -592,6 +592,7 @@ const defaultHudContext = {
   toggleGameAudioMute: () => createAudioVolumeState(),
   getVoiceVolumeState: () => createAudioVolumeState(),
   setVoiceVolume: () => createAudioVolumeState(),
+  toggleVoiceAudioMute: () => createAudioVolumeState(),
 };
 
 let hudContext = { ...defaultHudContext };
@@ -613,6 +614,7 @@ const domRefs = {
   audioMasterValue: null,
   audioVoiceSlider: null,
   audioVoiceValue: null,
+  audioVoiceMuteBtn: null,
   settingsHud: null,
   voiceBtn: null,
   voiceOverlay: null,
@@ -915,6 +917,13 @@ function updateAudioVolumeUi(gameState = null, voiceState = null) {
   }
   if (domRefs.audioVoiceValue) {
     domRefs.audioVoiceValue.textContent = `${voiceValue}%`;
+  }
+  const voiceMuted = voice.muted || voice.volume === 0;
+  if (domRefs.audioVoiceMuteBtn) {
+    domRefs.audioVoiceMuteBtn.dataset.muted = String(voiceMuted);
+    domRefs.audioVoiceMuteBtn.setAttribute('aria-pressed', String(voiceMuted));
+    domRefs.audioVoiceMuteBtn.setAttribute('aria-label', `${voiceMuted ? 'Unmute' : 'Mute'} voice chat`);
+    domRefs.audioVoiceMuteBtn.title = `${voiceMuted ? 'Unmute' : 'Mute'} voice chat`;
   }
   if (domRefs.audioBtn) {
     const panelOpen = domRefs.audioVolumePanel?.classList.contains('is-open') === true;
@@ -1345,6 +1354,7 @@ function bindHudElements() {
   domRefs.audioMasterValue = document.getElementById('audioMasterValue');
   domRefs.audioVoiceSlider = document.getElementById('audioVoiceSlider');
   domRefs.audioVoiceValue = document.getElementById('audioVoiceValue');
+  domRefs.audioVoiceMuteBtn = document.getElementById('audioVoiceMuteBtn');
   domRefs.settingsHud = document.getElementById('settingsHud');
   domRefs.voiceBtn = document.getElementById('voiceBtn');
   domRefs.voiceOverlay = document.getElementById('voiceOverlay');
@@ -1467,6 +1477,16 @@ function bindHudElements() {
     };
     domRefs.audioVoiceSlider.addEventListener('input', handleAudioVoiceInput);
     domRefs.audioVoiceSlider.addEventListener('change', handleAudioVoiceInput);
+  }
+
+  if (domRefs.audioVoiceMuteBtn) {
+    domRefs.audioVoiceMuteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (callOptionalHudCallback(['toggleVoiceAudioMute', 'toggleVoiceVolumeMute'])) {
+        updateAudioVolumeUi();
+      }
+    });
   }
 
   if (domRefs.playerOptionsBtn) {
