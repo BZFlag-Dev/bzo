@@ -199,6 +199,15 @@ function formatWorldTime(worldTime) {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
 }
 
+// Triangle counts run to the millions, and a row that wraps is a row nobody
+// reads on a phone.
+function formatCount(value) {
+  if (!Number.isFinite(value)) return '';
+  if (value < 10000) return String(value);
+  if (value < 10000000) return `${(value / 1000).toFixed(1)}k`;
+  return `${(value / 1000000).toFixed(1)}M`;
+}
+
 // Updates the debug HUD with current stats
 export function updateDebugDisplay({
   fps,
@@ -218,7 +227,8 @@ export function updateDebugDisplay({
   latestOrientation,
   worldTime,
   gamepadConnected,
-  gamepadInfo
+  gamepadInfo,
+  renderStats
 }) {
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
@@ -238,6 +248,10 @@ export function updateDebugDisplay({
   }
   html += `<div><span class="label">Camera:</span><span class="value">${cameraMode ?? ''}</span></div>`;
   html += `<div><span class="label">Obs/Clouds:</span><span class="value">${OBSTACLES?.length ?? ''}/${clouds?.length ?? ''}</span></div>`;
+  if (renderStats) {
+    html += `<div><span class="label">Draws/Tris:</span><span class="value">${formatCount(renderStats.calls)}/${formatCount(renderStats.triangles)}</span></div>`;
+    html += `<div><span class="label">Prog/Tex/Geo:</span><span class="value">${formatCount(renderStats.programs)}/${formatCount(renderStats.textures)}/${formatCount(renderStats.geometries)}</span></div>`;
+  }
   if (typeof worldTime !== 'undefined') {
     html += `<div><span class="label">World Time:</span><span class="value">${worldTime.toFixed(1)} (${formatWorldTime(worldTime)})</span></div>`;
   }

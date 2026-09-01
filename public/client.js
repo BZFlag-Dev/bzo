@@ -107,7 +107,7 @@ import {
   bindToggleButton
 } from './hud.js';
 import { renderManager } from './render.js';
-import { describeRenderCapabilities } from './capabilities.mjs';
+import { describeMeasurements, describeRenderCapabilities } from './capabilities.mjs';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import {
@@ -165,6 +165,8 @@ if ('serviceWorker' in navigator) {
 let fps = 0;
 let frameCount = 0;
 let lastFpsUpdate = performance.now();
+// How long after a map is built the one automatic renderer.stats line waits.
+const RENDER_STATS_SAMPLE_DELAY_MS = 10000;
 
 function updateFps() {
   frameCount++;
@@ -211,10 +213,13 @@ let lastAnnouncedServerMotd = null;
 let radarCanvas, radarCtx;
 // One record per XR HUD overlay: the canvas it paints, the texture wrapping it,
 // and the camera-parented plane it draws on. ensureXRHudPanel fills them in.
-const xrRadarPanel = { canvas: null, texture: null, mesh: null };
-const xrChatPanel = { canvas: null, texture: null, mesh: null };
-const xrShotStatusPanel = { canvas: null, texture: null, mesh: null };
-const xrScoreboardPanel = { canvas: null, texture: null, mesh: null };
+// `planeWidth`/`planeHeight` are the size the plane was last built at, so a
+// frame that asks for the size it already has does not rebuild the geometry.
+const xrRadarPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
+const xrChatPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
+const xrShotStatusPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
+const xrScoreboardPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
+const XR_HUD_PANELS = [xrRadarPanel, xrChatPanel, xrShotStatusPanel, xrScoreboardPanel];
 const XR_HUD_PLANE_Z = -0.85;
 const XR_RADAR_PLANE_SIZE = 0.45;
 const XR_CHAT_PLANE_WIDTH = 0.9;
@@ -240,6 +245,7 @@ let activeInitSequence = 0;
 let xrSettingsShortcutLatched = false;
 let xrSettingsShortcutInFlight = false;
 let xrSettingsMenuOpen = false;
+let xrHudOverlaysActive = false;
 let xrSettingsMenuScreen = 'settings';
 let xrSettingsMenuRenderer = null;
 let xrSettingsMenuSelectedIndex = 0;
@@ -790,6 +796,11 @@ async function prepareInitialRender(message, sequenceId) {
       hideLoadingOverlay();
     }
   }, 180);
+  // Late enough to land on a settled frame rather than the first one after the
+  // world was built, and dropped if the map changed in the meantime.
+  window.setTimeout(() => {
+    if (sequenceId === activeInitSequence) logRenderStats('mapEntry');
+  }, RENDER_STATS_SAMPLE_DELAY_MS);
   return true;
 }
 
@@ -2178,6 +2189,23 @@ function updateDebugGeometryVisibility() {
   });
 }
 
+// The counters mean nothing apart from the machine that produced them, and the
+// machines a render level would be for -- a headset, a phone -- are the ones
+// nobody opens the debug HUD on. So one line lands when the HUD closes, and one
+// a while into every map, which is the only sample those devices ever send.
+function logRenderStats(reason) {
+  const stats = renderManager.getRenderStats();
+  if (!stats) return;
+  debugLog(`renderer.stats reason=${reason} fps=${fps} ${describeMeasurements(stats)}`);
+}
+
+function setDebugEnabledState(value) {
+  if (debugEnabled && !value) logRenderStats('debugHudClosed');
+  debugEnabled = value;
+  // Only toggles debug HUD, not debug labels
+  syncDebugTabVisibility();
+}
+
 function getDebugState() {
   return {
     fps,
@@ -2197,7 +2225,8 @@ function getDebugState() {
     latestOrientation,
     worldTime,
     gamepadConnected: isGamepadConnected(),
-    gamepadInfo: getGamepadInfo()
+    gamepadInfo: getGamepadInfo(),
+    renderStats: renderManager.getRenderStats()
   };
 }
 
@@ -2290,11 +2319,7 @@ initHudControls({
   toggleDebugLabels,
   updateDebugDisplay,
   getDebugEnabled: () => debugEnabled,
-  setDebugEnabled: (value) => {
-    debugEnabled = value;
-    // Only toggles debug HUD, not debug labels
-    syncDebugTabVisibility();
-  },
+  setDebugEnabled: setDebugEnabledState,
   getDebugLabelsEnabled: () => debugLabelsEnabled,
   setDebugLabelsEnabled: (value) => {
     debugLabelsEnabled = value;
@@ -2717,14 +2742,11 @@ function init() {
     const cameraBtn = document.getElementById('cameraBtn');
     toggleDebugHud({
       debugEnabled,
-      setDebugEnabled: (v) => {
-        debugEnabled = v;
-        syncDebugTabVisibility();
-      },
+      setDebugEnabled: setDebugEnabledState,
       updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
       showMessage,
       updateDebugDisplay,
-      getDebugState: () => ({ fps, latency, packetsSent, packetsReceived, sentBps, receivedBps, playerX, playerY, playerZ, playerRotation, myTank, cameraMode, OBSTACLES, clouds: renderManager.getClouds(), latestOrientation, worldTime, gamepadConnected: isGamepadConnected(), gamepadInfo: getGamepadInfo() })
+      getDebugState
     });
   }
 
@@ -5473,7 +5495,6 @@ function handleMotion(deltaTime) {
     ));
 
   if (shouldSendUpdate && ws && ws.readyState === WebSocket.OPEN) {
-    //if (debugEnabled) console.log(`[CLIENT] Sending dw: ${reasons.join(', ')}`);
 
     // Round velocities to the precision we send to match server expectations
     // For jump packets, send the intendedForward value used for movement, not calculated forwardSpeed
@@ -5985,12 +6006,39 @@ function ensureXRHudPanel(panel, { canvas = null, canvasWidth = 0, canvasHeight 
 // Resize the plane to the panel's current size and place it on the HUD plane.
 // The settings menu covers the view, so nothing else shows while it is open.
 function placeXRHudPanel(panel, { width, height, x, y }) {
-  panel.mesh.geometry.dispose();
-  panel.mesh.geometry = new THREE.PlaneGeometry(width, height);
+  if (panel.planeWidth !== width || panel.planeHeight !== height) {
+    panel.mesh.geometry.dispose();
+    panel.mesh.geometry = new THREE.PlaneGeometry(width, height);
+    panel.planeWidth = width;
+    panel.planeHeight = height;
+  }
   panel.mesh.scale.set(1, 1, 1);
   panel.mesh.position.set(x, y, XR_HUD_PLANE_Z);
   panel.mesh.rotation.set(0, 0, 0);
   panel.mesh.visible = isXREnabled() && !xrSettingsMenuOpen;
+}
+
+// Every overlay repaints its canvas and re-uploads it as a texture, and none of
+// them are drawn outside an XR session. So paint none of them there: hide the
+// panels once on the way out of a session, and skip the whole set until the
+// next one. The desktop HUD these mirror is DOM and canvas that draws itself.
+function updateXRHudOverlays() {
+  if (!isXREnabled()) {
+    if (!xrHudOverlaysActive) return;
+    xrHudOverlaysActive = false;
+    XR_HUD_PANELS.forEach((panel) => {
+      if (panel.mesh) panel.mesh.visible = false;
+    });
+    xrSettingsMenuRenderer?.hide();
+    return;
+  }
+
+  xrHudOverlaysActive = true;
+  ensureXRRadarTexture();
+  ensureXRShotStatusOverlay();
+  ensureXRChatOverlay();
+  ensureXRScoreboardOverlay();
+  ensureXRSettingsMenu();
 }
 
 function ensureXRRadarTexture() {
@@ -7194,11 +7242,7 @@ function animate(frameTime) {
 
   updateXRControllerInput();
   handleXRSettingsMenuInput(now);
-  ensureXRRadarTexture();
-  ensureXRShotStatusOverlay();
-  ensureXRChatOverlay();
-  ensureXRScoreboardOverlay();
-  ensureXRSettingsMenu();
+  updateXRHudOverlays();
 
   // Debug: log game state in XR once on entry
   if (isXREnabled() && !window.xrDebugLogged) {

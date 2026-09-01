@@ -39,15 +39,23 @@ const desktop = detectRenderCapabilities(fakeRenderer({
     MAX_TEXTURE_SIZE: 16384,
     MAX_SAMPLES: 8,
     MAX_FRAGMENT_UNIFORM_VECTORS: 1024,
+    VENDOR: 'NVIDIA Corporation',
+    RENDERER: 'Tegra Orin',
   },
   extensions: {
     EXT_texture_filter_anisotropic: { MAX_TEXTURE_MAX_ANISOTROPY_EXT: 'ANISO' },
+    WEBGL_debug_renderer_info: {
+      UNMASKED_VENDOR_WEBGL: 'VENDOR',
+      UNMASKED_RENDERER_WEBGL: 'RENDERER',
+    },
   },
 }), { devicePixelRatio: 2, deviceMemory: 8, hardwareConcurrency: 16 });
 assert.equal(desktop.webgl, true);
 assert.equal(desktop.stencil, true);
 assert.equal(desktop.maxTextureSize, 16384);
 assert.equal(desktop.maxFragmentUniforms, 1024);
+assert.equal(desktop.driverVendor, 'NVIDIA Corporation');
+assert.equal(desktop.driverRenderer, 'Tegra Orin');
 assert.equal(supportsProjectedShadows(desktop), true);
 assert.equal(supportsDynamicLighting(desktop), true);
 
@@ -93,5 +101,8 @@ assert.deepEqual(
 
 assert.match(describeRenderCapabilities(desktop), /stencil=true/);
 assert.match(describeRenderCapabilities(silent), /maxTextureSize=unknown/);
+// A driver name has spaces, so it is quoted rather than run into the next pair.
+assert.match(describeRenderCapabilities(desktop), /driverRenderer="Tegra Orin"/);
+assert.match(describeRenderCapabilities(silent), /driverRenderer=unknown/);
 
 console.log('render capability tests passed');

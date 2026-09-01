@@ -132,8 +132,30 @@ const PROJECTED_SHADOW_DIRECTION_EPSILON_SQ = 1e-6;
 const PROJECTED_SHADOW_STENCIL_REF = 1;
 const PROJECTED_SHADOW_DARKEN_OPACITY = 0.35;
 const PROJECTED_SHADOW_CASTER_Y = 0.01;
+// Height above the tallest obstacle that a shadow caster can still reach, for
+// airborne tanks. Sizes the darkening pass, not the shadows themselves.
+const PROJECTED_SHADOW_CASTER_HEADROOM = 20;
 const PROJECTED_SHADOW_OVERLAY_Y = 0.03;
 const GROUND_GRID_Y = 0.02;
+// How big the sun and moon look and how far away they sit, from
+// makeCelestialLists (BackgroundRenderer.cxx:1706 for the sun, :483 for the
+// moon): both are discs at twice the world size, sized by the angle they should
+// subtend rather than by a fixed radius, which is what makes them read as the
+// sun and the moon instead of as two small spheres parked in the distance.
+// These are upstream's expressions with the distance factored out, so they are
+// radius per unit of distance.
+//
+// Only the size and distance come from upstream. Where they are in the sky does
+// not: upstream computes real positions from a Julian day and a latitude, while
+// bzo sweeps a Minecraft clock through a fixed arc with the moon opposite the
+// sun. See AGENTS.md.
+const BZFLAG_CELESTIAL_DISTANCE_SCALE = 2.0;
+const BZFLAG_SUN_ANGULAR_RADIUS = Math.atan(Math.PI / 3) / 60;
+const BZFLAG_MOON_ANGULAR_RADIUS = Math.atan(Math.PI / 180);
+// Before everything else in the world, as upstream draws the sky first.
+const CELESTIAL_RENDER_ORDER = -1000;
+// The glow is bzo's, and rides just outside the sun's disc.
+const CELESTIAL_GLOW_RATIO = 1.5;
 // BZFlag does not draw the ground as one enormous quad. At its default quality
 // it draws a patch that follows the eye, skirted by four quads reaching the edge
 // of the world (BackgroundRenderer::drawGroundCentered, BackgroundRenderer.cxx:1132).
@@ -153,6 +175,47 @@ const GROUND_STRIPS = [
   [3, 0, 7, 4],
 ];
 const GROUND_GRID_RENDER_ORDER = 15;
+// Ground light receivers, mirroring BackgroundRenderer::drawGroundReceivers
+// (BackgroundRenderer.cxx:1312): a small additive fan on the ground under every
+// dynamic light, its falloff computed per vertex on the CPU rather than by a
+// shader. Upstream draws these alongside the real lights, not instead of them,
+// so bzo does too -- both are derived from the same attenuation below, which is
+// what keeps the pair in the same proportion here as upstream has it. The fan
+// reaches 19.2 units and the light itself carries further.
+const GROUND_RECEIVER_RINGS = 4;              // receiverRings
+const GROUND_RECEIVER_SLICES = 8;             // receiverSlices
+const GROUND_RECEIVER_RING_SIZE = 1.2;        // receiverRingSize, in meters
+const GROUND_RECEIVER_MIN_LUMINANCE = 0.02;   // draw(): (I * maxVal) < 0.02f
+const GROUND_RECEIVER_SUN_DIMMING = 0.6;      // draw(): B = 1 - 0.6 * sunBrightness
+// Above the shadow darkening pass, so a shot lights ground it has just darkened.
+const GROUND_RECEIVER_Y = 0.04;
+const GROUND_RECEIVER_RENDER_ORDER = 21;
+
+// BZFlag gives every dynamic light the same falloff, 1/(c + l*d + q*d*d) --
+// bolts (BoltSceneNode.cxx:52-55), jump jets (TankSceneNode.cxx:75-83) and
+// explosions (playing.cxx:3637) alike -- and varies only the colour it feeds in.
+// Three's punctual lights are intensity/d*d instead, so past about a metre and a
+// half the two curves agree when intensity is upstream's colour scale divided by
+// the quadratic term. Closer in upstream flattens at 1/c where Three keeps
+// climbing, and both are far past white either way.
+// Constant, linear, quadratic; shared with the ground receiver pass.
+const BZFLAG_LIGHT_ATTENUATION = [0.05, 0.0, 0.03];
+// maxDist, the radius upstream culls a light at (OpenGLLight.cxx:40). Its own
+// cutoff equation puts one of these lights at 2% around 41 units, so nothing
+// worth seeing is lost by stopping there. Three's cutoff eases the last stretch
+// to zero rather than clipping it.
+const BZFLAG_LIGHT_MAX_DISTANCE = 50;
+const BZFLAG_LIGHT_DECAY = 2;
+// The colour scales, which are the only thing that differs between the lights.
+const BZFLAG_SHOT_LIGHT_SCALE = 1.5;          // BoltSceneNode.cxx:85
+const BZFLAG_SHOT_IMPACT_LIGHT_SCALE = 1.2;   // playing.cxx:3636, scaled by size/tankLength
+const BZFLAG_EXPLOSION_LIGHT_SCALE = 9.6;     // playing.cxx:3654, colour * lightGain
+const BZFLAG_JUMPJET_LIGHT_SCALE = 3.0;       // TankSceneNode.cxx:308, (1.5,1,0.5) * 2
+
+// Upstream's colour scale as a Three light intensity, at the shared falloff.
+function bzflagLightIntensity(colorScale) {
+  return colorScale / BZFLAG_LIGHT_ATTENUATION[2];
+}
 
 class RenderManager {
   _getVerticalFovForAspect(aspect) {
@@ -265,11 +328,15 @@ class RenderManager {
   setWorldTime(worldTime) {
     this._worldTime = worldTime;
     if (!this.dynamicLightingEnabled) return;
-    // Compute sun/moon positions
-    // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
-    // We'll use a circle in the X/Y plane for sun/moon
-    const MAP_SIZE = Number.isFinite(this.groundExtent) ? (this.groundExtent * 2) / 3 : 100;
-    const sunDistance = MAP_SIZE;
+    // A Minecraft clock, not upstream's astronomy: 0 = 6:00, 6000 = noon,
+    // 12000 = 18:00, 18000 = midnight, sweeping a fixed arc in the world's X-Y
+    // plane with the moon exactly opposite the sun. See AGENTS.md.
+    //
+    // The distance is upstream's, though: twice the world size, just inside the
+    // mountains at 2.25 (BackgroundRenderer.cxx:1716, :1951). Further out than
+    // that and they fall past the far plane the mountains size.
+    const worldSize = Number.isFinite(this.groundMapSize) ? this.groundMapSize : 100;
+    const sunDistance = BZFLAG_CELESTIAL_DISTANCE_SCALE * worldSize;
     const moonDistance = sunDistance;
     const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
     const moonAngle = sunAngle + Math.PI;
@@ -375,6 +442,8 @@ class RenderManager {
       moonY,
       moonZ,
       sunColor: directThreeColor,
+      sunRadius: sunDistance * BZFLAG_SUN_ANGULAR_RADIUS,
+      moonRadius: moonDistance * BZFLAG_MOON_ANGULAR_RADIUS,
     });
     // Optionally: add/update sun/moon meshes for visuals (not just lighting)
     // ...
@@ -487,11 +556,14 @@ class RenderManager {
     }
 
     this.renderer.xr.enabled = true;
+    // renderFrame() resets the counters itself, so they cover the whole frame
+    // rather than whichever render() call happened to run last. The anaglyph
+    // effect draws three passes per frame, and Three resets on every one.
+    this.renderer.info.autoReset = false;
     this.renderCapabilities = detectRenderCapabilities(this.renderer, collectDeviceHints());
     this.renderer.setSize(viewport.width, viewport.height);
     // Disable real-time shadow mapping for performance
     this.renderer.shadowMap.enabled = false;
-    //this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.labelRenderer = new CSS2DRenderer();
@@ -603,6 +675,21 @@ class RenderManager {
 
   getRenderCapabilities() {
     return this.renderCapabilities ? { ...this.renderCapabilities } : null;
+  }
+
+  // What the last frame cost the GPU, for the debug HUD. Capabilities answer
+  // what the machine can do; these answer what we asked it to do, which is the
+  // half a render-level policy has no measurements for yet.
+  getRenderStats() {
+    if (!this.renderer) return null;
+    const { render, memory, programs } = this.renderer.info;
+    return {
+      calls: render.calls,
+      triangles: render.triangles,
+      programs: programs ? programs.length : 0,
+      textures: memory.textures,
+      geometries: memory.geometries,
+    };
   }
 
   canUseDynamicLighting() {
@@ -727,8 +814,37 @@ class RenderManager {
     return shadowMesh;
   }
 
-  _buildProjectedShadowOverlay(groundExtent) {
-    const overlayGeometry = new THREE.PlaneGeometry(groundExtent * 2, groundExtent * 2);
+  // Shadows only land where a caster can throw one: inside the world border,
+  // plus the longest shadow the lowest light the pass accepts can cast. The
+  // ground reaches ten times the world in every direction, and covering all of
+  // it means blending most of the screen -- every frame the horizon is in view
+  // -- over ground no shadow can reach. The headroom is for airborne tanks
+  // above the tallest obstacle.
+  _getProjectedShadowOverlayExtent() {
+    const border = Number.isFinite(this.groundMapSize) ? this.groundMapSize / 2 : 100;
+    const casterHeight = this.maxObstacleHeight + PROJECTED_SHADOW_CASTER_HEADROOM;
+    return Math.min(this.groundExtent, border + (casterHeight / PROJECTED_SHADOW_MIN_LIGHT_Y));
+  }
+
+  // Called again once the obstacles are in, because the tallest of them is what
+  // decides how far a shadow reaches.
+  _refreshProjectedShadowOverlay() {
+    if (!this.canUseProjectedShadows() || !Number.isFinite(this.groundExtent)) return;
+
+    const extent = this._getProjectedShadowOverlayExtent();
+    if (!this.projectedShadowOverlay) {
+      this.projectedShadowOverlay = this._buildProjectedShadowOverlay(extent);
+      this.worldGroup.add(this.projectedShadowOverlay);
+      return;
+    }
+    if (this.projectedShadowOverlay.userData.extent === extent) return;
+    this.projectedShadowOverlay.geometry.dispose();
+    this.projectedShadowOverlay.geometry = new THREE.PlaneGeometry(extent * 2, extent * 2);
+    this.projectedShadowOverlay.userData.extent = extent;
+  }
+
+  _buildProjectedShadowOverlay(overlayExtent) {
+    const overlayGeometry = new THREE.PlaneGeometry(overlayExtent * 2, overlayExtent * 2);
     const overlayMaterial = new THREE.MeshBasicMaterial({
       color: 0x000000,
       transparent: true,
@@ -752,7 +868,7 @@ class RenderManager {
     overlayMesh.rotation.x = -Math.PI / 2;
     overlayMesh.position.y = PROJECTED_SHADOW_OVERLAY_Y;
     overlayMesh.renderOrder = 20;
-    overlayMesh.frustumCulled = false;
+    overlayMesh.userData.extent = overlayExtent;
     return overlayMesh;
   }
 
@@ -897,9 +1013,157 @@ class RenderManager {
     }
   }
 
-  updateSunLighting() {
-    // Deprecated: use setWorldTime instead
-    return;
+  // --- Ground light receivers ---
+  // Upstream's ring radii are receiverRingSize * i*i, so the fan reaches 19.2
+  // units in four steps that get coarser as the light falls off. Position and
+  // index buffers are shared by every receiver; only the colours differ.
+  _getGroundReceiverGeometry() {
+    if (!this._groundReceiverPosition) {
+      const positions = [0, 0, 0];
+      for (let ring = 1; ring <= GROUND_RECEIVER_RINGS; ring += 1) {
+        const radius = GROUND_RECEIVER_RING_SIZE * ring * ring;
+        for (let slice = 0; slice < GROUND_RECEIVER_SLICES; slice += 1) {
+          const angle = (slice / GROUND_RECEIVER_SLICES) * Math.PI * 2;
+          positions.push(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+        }
+      }
+
+      const indices = [];
+      for (let slice = 0; slice < GROUND_RECEIVER_SLICES; slice += 1) {
+        const next = (slice + 1) % GROUND_RECEIVER_SLICES;
+        indices.push(0, 1 + slice, 1 + next);
+      }
+      for (let ring = 1; ring < GROUND_RECEIVER_RINGS; ring += 1) {
+        const inner = 1 + ((ring - 1) * GROUND_RECEIVER_SLICES);
+        const outer = 1 + (ring * GROUND_RECEIVER_SLICES);
+        for (let slice = 0; slice < GROUND_RECEIVER_SLICES; slice += 1) {
+          const next = (slice + 1) % GROUND_RECEIVER_SLICES;
+          indices.push(inner + slice, outer + slice, outer + next);
+          indices.push(inner + slice, outer + next, inner + next);
+        }
+      }
+
+      this._groundReceiverPosition = new THREE.BufferAttribute(new Float32Array(positions), 3);
+      this._groundReceiverIndex = indices;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', this._groundReceiverPosition);
+    geometry.setAttribute('color', new THREE.BufferAttribute(
+      new Float32Array(this._groundReceiverPosition.count * 4), 4,
+    ));
+    geometry.setIndex(this._groundReceiverIndex);
+    return geometry;
+  }
+
+  _getGroundReceiverMaterial() {
+    if (!this._groundReceiverMaterial) {
+      this._groundReceiverMaterial = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        // What upstream's receiverGState blends with: GL_SRC_ALPHA, GL_ONE.
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        // A flat additive decal is worth seeing from either side, and eight
+        // slices are not worth a winding argument.
+        side: THREE.DoubleSide,
+        fog: false,
+      });
+    }
+    return this._groundReceiverMaterial;
+  }
+
+  // I = B / (c + d*(l + d*q)), and past the centre also the cosine term
+  // height/d, exactly as upstream computes it per ring.
+  _getGroundReceiverIntensity(distance, dimming) {
+    const [constant, linear, quadratic] = BZFLAG_LIGHT_ATTENUATION;
+    return dimming / (constant + (distance * (linear + (distance * quadratic))));
+  }
+
+  // Repaint a receiver's vertex colours. The profile depends only on the light's
+  // colour, its height, and how bright the sun is, none of which change on a
+  // shot in flight -- so a receiver is painted once and then only moved.
+  _paintGroundReceiver(mesh, color, height, dimming) {
+    const profileKey = `${color.getHex()}|${Math.round(height * 4)}|${Math.round(dimming * 64)}`;
+    if (mesh.userData.receiverProfile === profileKey) return;
+    mesh.userData.receiverProfile = profileKey;
+
+    const attribute = mesh.geometry.getAttribute('color');
+    const alphaForRing = (ring) => {
+      if (ring >= GROUND_RECEIVER_RINGS) return 0; // upstream forces the rim to 0
+      if (ring === 0) return this._getGroundReceiverIntensity(height, dimming);
+      const radius = GROUND_RECEIVER_RING_SIZE * ring * ring;
+      const distance = Math.hypot(radius, height);
+      return this._getGroundReceiverIntensity(distance, dimming) * (height / distance);
+    };
+
+    let vertex = 0;
+    for (let ring = 0; ring <= GROUND_RECEIVER_RINGS; ring += 1) {
+      const alpha = Math.max(0, Math.min(1, alphaForRing(ring)));
+      const sliceCount = ring === 0 ? 1 : GROUND_RECEIVER_SLICES;
+      for (let slice = 0; slice < sliceCount; slice += 1) {
+        attribute.setXYZW(vertex, color.r, color.g, color.b, alpha);
+        vertex += 1;
+      }
+    }
+    attribute.needsUpdate = true;
+  }
+
+  // Upstream's sunBrightness dims the receivers in daylight so a shot does not
+  // paint a bright pool on ground the sun is already lighting.
+  _getGroundReceiverDimming() {
+    const sunBrightness = Math.max(0, Math.min(1, this.sunLight ? this.sunLight.intensity : 0));
+    return 1 - (GROUND_RECEIVER_SUN_DIMMING * sunBrightness);
+  }
+
+  // Every dynamic light bzo casts belongs to something parented to worldGroup,
+  // so the light's own position is already in the space the receivers live in.
+  _forEachDynamicLight(visit) {
+    if (this.projectileLights) {
+      for (const light of this.projectileLights.values()) {
+        if (light) visit(light);
+      }
+    }
+    for (const effect of this.activeShotExplosions) {
+      if (effect.light) visit(effect.light);
+    }
+    for (const effect of this.activeExplosions) {
+      if (effect.light) visit(effect.light);
+    }
+  }
+
+  updateGroundReceivers() {
+    if (!this.worldGroup) return;
+    if (!this._groundReceivers) this._groundReceivers = [];
+
+    const dimming = this._getGroundReceiverDimming();
+    const receivers = this._groundReceivers;
+    let used = 0;
+
+    this._forEachDynamicLight((light) => {
+      const height = light.position.y;
+      if (!(height > 0)) return;
+      const color = light.color;
+      const peak = this._getGroundReceiverIntensity(height, dimming)
+        * Math.max(color.r, color.g, color.b);
+      if (peak < GROUND_RECEIVER_MIN_LUMINANCE) return;
+
+      let mesh = receivers[used];
+      if (!mesh) {
+        mesh = new THREE.Mesh(this._getGroundReceiverGeometry(), this._getGroundReceiverMaterial());
+        mesh.renderOrder = GROUND_RECEIVER_RENDER_ORDER;
+        this.worldGroup.add(mesh);
+        receivers[used] = mesh;
+      }
+      mesh.position.set(light.position.x, GROUND_RECEIVER_Y, light.position.z);
+      this._paintGroundReceiver(mesh, color, height, dimming);
+      mesh.visible = true;
+      used += 1;
+    });
+
+    for (let index = used; index < receivers.length; index += 1) {
+      receivers[index].visible = false;
+    }
   }
 
   getScene() {
@@ -927,10 +1191,6 @@ class RenderManager {
     return true;
   }
 
-  getLabelRenderer() {
-    return this.labelRenderer;
-  }
-
   handleResize() {
     if (!this.camera || !this.renderer || !this.labelRenderer) return;
     const viewport = this._getViewportSize();
@@ -947,27 +1207,9 @@ class RenderManager {
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
 
+    this.renderer.info.reset();
     this.updateGroundCenter();
     this._updateTeleporterVisuals(performance.now() * 0.001);
-
-    // Debug XR rendering (log rarely to avoid spam)
-    if (xrState.enabled) {
-      if (!this.xrFrameCount) this.xrFrameCount = 0;
-      this.xrFrameCount++;
-
-      if (!this.xrDebugLogged) {
-        this.xrDebugLogged = true;
-        //debugLog(`[Render] Entered XR mode, scene children: ${this.scene.children.length}, worldGroup children: ${this.worldGroup ? this.worldGroup.children.length : 'NULL'}`);
-      }
-
-      // Log first frame, then every 60 frames to verify rendering is working
-      if (this.xrFrameCount === 1 || this.xrFrameCount % 60 === 0) {
-        //debugLog(`[Render] XR frame ${this.xrFrameCount}, worldGroup pos: (${this.worldGroup.position.x.toFixed(1)}, ${this.worldGroup.position.y.toFixed(1)}, ${this.worldGroup.position.z.toFixed(1)}), children: ${this.worldGroup.children.length}`);
-      }
-    } else {
-      this.xrDebugLogged = false;
-      this.xrFrameCount = 0;
-    }
 
     if (this.projectileLights) {
       for (const [projectile, light] of this.projectileLights.entries()) {
@@ -977,14 +1219,14 @@ class RenderManager {
       }
     }
 
+    // After the lights have been moved, so a receiver never trails its shot.
+    this.updateGroundReceivers();
+
     if (this.anaglyphEnabled && this.anaglyphEffect) {
       this.anaglyphEffect.render(this.scene, this.camera);
       this.labelRenderer.render(this.scene, this.camera);
     } else {
       // In XR mode, Three.js handles stereo automatically when we call renderer.render()
-      if (xrState.enabled && this.xrFrameCount === 1) {
-        //debugLog(`[Render] About to call renderer.render(), scene=${!!this.scene}, camera=${!!this.camera}, renderer.xr.enabled=${this.renderer.xr.enabled}, renderer.xr.isPresenting=${this.renderer.xr.isPresenting}`);
-      }
       this.renderer.render(this.scene, this.camera);
       // Note: labelRenderer may not work properly in XR; skip it for now
       if (!xrState.enabled) {
@@ -1130,8 +1372,7 @@ class RenderManager {
     innerFrameMaterial.color.setRGB(0.9, 0.8, 0.0);
 
     const portalTextureFront = createTeleporterPortalTexture();
-    const portalTextureBack = portalTextureFront.clone();
-    portalTextureBack.needsUpdate = true;
+    const portalTextureBack = createTeleporterPortalTexture();
 
     const centerMaterialFront = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -1353,15 +1594,17 @@ class RenderManager {
     groundTexture.wrapS = THREE.RepeatWrapping;
     groundTexture.wrapT = THREE.RepeatWrapping;
 
-    const groundMaterial = new THREE.MeshStandardMaterial({
+    // The ground is the largest thing on screen, so it is the last surface that
+    // should carry the most expensive shader. Upstream lights it diffuse-only,
+    // and every other surface here is Lambert; a metalness/roughness BRDF over
+    // that many fragments is paid for nothing. Front faces only: the ground is
+    // never seen from below.
+    const groundMaterial = new THREE.MeshLambertMaterial({
       map: groundTexture,
-      side: THREE.DoubleSide,
-      roughness: 0.8,
-      metalness: 0.1,
+      side: THREE.FrontSide,
     });
 
     this.ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    this.ground.receiveShadow = true;
     this.ground.frustumCulled = false;
     this.groundExtent = groundExtent;
     this.groundMapSize = mapSize;
@@ -1374,11 +1617,7 @@ class RenderManager {
     this.updateGroundCenter();
     this.worldGroup.add(this.ground);
 
-    if (this.canUseProjectedShadows()) {
-      this.projectedShadowOverlay = this._buildProjectedShadowOverlay(groundExtent);
-      this.worldGroup.add(this.projectedShadowOverlay);
-    }
-
+    this._refreshProjectedShadowOverlay();
     this.setGroundGridEnabled(this.showGroundGrid, mapSize);
   }
 
@@ -1638,6 +1877,7 @@ class RenderManager {
 
     // Update compass marker heights now that we know maxObstacleHeight
     this._updateCompassMarkerHeights();
+    this._refreshProjectedShadowOverlay();
   }
 
   setDebugLabelsEnabled(enabled) {
@@ -1837,43 +2077,53 @@ class RenderManager {
 
   clearCelestialBodies() {
     if (!this.scene) return;
+    // All three share one sphere, so it is disposed once rather than per mesh.
+    const geometries = new Set();
     this.celestialMeshes.forEach((mesh) => {
       this.worldGroup.remove(mesh);
-      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.geometry) geometries.add(mesh.geometry);
       if (mesh.material) mesh.material.dispose();
     });
+    geometries.forEach((geometry) => geometry.dispose());
     this.celestialMeshes = [];
     this.sunMesh = null;
     this.sunGlowMesh = null;
     this.moonMesh = null;
   }
 
-  _updateCelestialBodies({ sunX, sunY, sunZ, moonX, moonY, moonZ, sunColor, sunVisible = true, moonVisible = true }) {
+  // Unit spheres, scaled to the radius the caller worked out from the distance,
+  // so a bigger map moves them further out without shrinking them. They draw
+  // before the rest of the world and write no depth, which is how upstream ends
+  // up with the mountains in front of a low sun even though the sun is nearer
+  // than they are.
+  _updateCelestialBodies({
+    sunX, sunY, sunZ, moonX, moonY, moonZ, sunColor,
+    sunRadius, moonRadius, sunVisible = true, moonVisible = true,
+  }) {
     if (!this.scene || !this.worldGroup) return;
 
     if (!this.sunMesh || !this.sunGlowMesh || !this.moonMesh) {
       this.clearCelestialBodies();
 
-      const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
-      const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, fog: false, depthTest: true, depthWrite: false, toneMapped: false });
-      this.sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
-      this.sunMesh.renderOrder = 1000;
-      this.worldGroup.add(this.sunMesh);
-      this.celestialMeshes.push(this.sunMesh);
+      const celestialGeometry = new THREE.SphereGeometry(1, 32, 32);
+      const addCelestialMesh = (material, renderOrder) => {
+        const mesh = new THREE.Mesh(celestialGeometry, material);
+        mesh.renderOrder = renderOrder;
+        this.worldGroup.add(mesh);
+        this.celestialMeshes.push(mesh);
+        return mesh;
+      };
 
-      const glowGeometry = new THREE.SphereGeometry(12, 32, 32);
-      const glowMaterial = new THREE.MeshBasicMaterial({ color: 0xffff88, transparent: true, opacity: 0.3, fog: false, depthTest: true, depthWrite: false, toneMapped: false });
-      this.sunGlowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-      this.sunGlowMesh.renderOrder = 999;
-      this.worldGroup.add(this.sunGlowMesh);
-      this.celestialMeshes.push(this.sunGlowMesh);
-
-      const moonGeometry = new THREE.SphereGeometry(6, 32, 32);
-      const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, fog: false, depthTest: true, depthWrite: false, toneMapped: false });
-      this.moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
-      this.moonMesh.renderOrder = 1000;
-      this.worldGroup.add(this.moonMesh);
-      this.celestialMeshes.push(this.moonMesh);
+      this.sunMesh = addCelestialMesh(new THREE.MeshBasicMaterial({
+        color: 0xffff00, fog: false, depthTest: true, depthWrite: false, toneMapped: false,
+      }), CELESTIAL_RENDER_ORDER);
+      this.sunGlowMesh = addCelestialMesh(new THREE.MeshBasicMaterial({
+        color: 0xffff88, transparent: true, opacity: 0.3, fog: false,
+        depthTest: true, depthWrite: false, toneMapped: false,
+      }), CELESTIAL_RENDER_ORDER - 1);
+      this.moonMesh = addCelestialMesh(new THREE.MeshBasicMaterial({
+        color: 0xcccccc, fog: false, depthTest: true, depthWrite: false, toneMapped: false,
+      }), CELESTIAL_RENDER_ORDER);
     }
 
     this.sunMesh.visible = !!sunVisible;
@@ -1884,26 +2134,14 @@ class RenderManager {
     this.sunGlowMesh.position.set(sunX, sunY, sunZ);
     this.moonMesh.position.set(moonX, moonY, moonZ);
 
+    this.sunMesh.scale.setScalar(sunRadius);
+    this.sunGlowMesh.scale.setScalar(sunRadius * CELESTIAL_GLOW_RATIO);
+    this.moonMesh.scale.setScalar(moonRadius);
+
     if (sunColor) {
       this.sunMesh.material.color.copy(sunColor);
       this.sunGlowMesh.material.color.copy(sunColor).lerp(new THREE.Color(0xffffff), 0.2);
     }
-  }
-
-  createCelestialBodies(celestialData) {
-    if (!this.scene || !celestialData) return;
-    const sun = celestialData.sun || {};
-    const moon = celestialData.moon || {};
-    this._updateCelestialBodies({
-      sunX: sun.x || 0,
-      sunY: sun.y || 0,
-      sunZ: sun.z || 0,
-      moonX: moon.x || 0,
-      moonY: moon.y || 0,
-      moonZ: moon.z || 0,
-      sunVisible: sun.visible !== false,
-      moonVisible: moon.visible !== false,
-    });
   }
 
   clearClouds() {
@@ -2016,10 +2254,6 @@ class RenderManager {
 
     this._preloadTankModel(loadPath);
     return this._tankModelReadyPromisesByPath.get(loadPath);
-  }
-
-  getTankModel() {
-    return this._tankModelPath;
   }
 
   _findTankTemplateMesh(name, modelPath = this._tankModelPath) {
@@ -2603,27 +2837,41 @@ class RenderManager {
     return ghostTank;
   }
 
+  // A label keeps one canvas and one texture for the life of its sprite, and
+  // repaints in place only when what it says changes. The packet motion gizmo
+  // relabels itself on every movement packet, and a replaced CanvasTexture that
+  // nobody disposes holds its GPU texture for the life of the page -- which is
+  // a leak that grows with how fast the tank is driven.
   updateSpriteLabel(sprite, name, color = '#4CAF50') {
     if (!sprite) return;
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = 256;
-    canvas.height = 64;
-    context.clearRect(0, 0, canvas.width, canvas.height);
-    context.font = 'bold 36px Arial';
     // Convert numeric color to hex string if needed
     let cssColor = color;
     if (typeof color === 'number') {
       cssColor = '#' + color.toString(16).padStart(6, '0');
     }
+
+    const labelKey = `${name}|${cssColor}`;
+    if (sprite.userData.labelKey === labelKey && sprite.material.map) return;
+    sprite.userData.labelKey = labelKey;
+
+    if (!sprite.material.map) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 64;
+      sprite.material.map = new THREE.CanvasTexture(canvas);
+      sprite.material.needsUpdate = true;
+    }
+
+    const texture = sprite.material.map;
+    const canvas = texture.image;
+    const context = canvas.getContext('2d');
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.font = 'bold 36px Arial';
     context.fillStyle = cssColor;
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.fillText(name, canvas.width / 2, canvas.height / 2);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    sprite.material.map = texture;
-    sprite.material.needsUpdate = true;
+    texture.needsUpdate = true;
   }
 
   _getSharedImage(path) {
@@ -2883,6 +3131,9 @@ class RenderManager {
     return texture;
   }
 
+  // Walking an atlas moves the sampler, not the pixels: `repeat` and `offset`
+  // reach the shader as uniforms. Flagging the texture would re-upload the whole
+  // 512x512 explosion sheet on every frame of every impact.
   _setSpriteAtlasFrame(texture, frameIndex, columns, rows) {
     if (!texture) return;
     const totalFrames = Math.max(1, columns * rows);
@@ -2891,7 +3142,6 @@ class RenderManager {
     const row = Math.floor(clamped / columns);
     texture.repeat.set(1 / columns, 1 / rows);
     texture.offset.set(column / columns, row / rows);
-    texture.needsUpdate = true;
   }
 
   createShotImpact(position) {
@@ -2917,7 +3167,12 @@ class RenderManager {
 
     let light = null;
     if (this._dynamicLightingActive()) {
-      light = new THREE.PointLight(0xffcc80, 1.2, 28, 2.2);
+      light = new THREE.PointLight(
+        0xffcc80,
+        bzflagLightIntensity(BZFLAG_SHOT_IMPACT_LIGHT_SCALE),
+        BZFLAG_LIGHT_MAX_DISTANCE,
+        BZFLAG_LIGHT_DECAY,
+      );
       light.position.copy(position);
       this.worldGroup.add(light);
     }
@@ -3293,7 +3548,12 @@ class RenderManager {
     };
     // Only add a point light if dynamic lighting is enabled
     if (this._dynamicLightingActive()) {
-      const shotLight = new THREE.PointLight(projectileColor, 1.5, 12, 2);
+      const shotLight = new THREE.PointLight(
+        projectileColor,
+        bzflagLightIntensity(BZFLAG_SHOT_LIGHT_SCALE),
+        BZFLAG_LIGHT_MAX_DISTANCE,
+        BZFLAG_LIGHT_DECAY,
+      );
       shotLight.position.copy(projectile.position);
       this.worldGroup.add(shotLight);
       projectile.userData.shotLight = shotLight;
@@ -3339,10 +3599,15 @@ class RenderManager {
     let explosionLight = null;
     let lightIntensity = 0;
     if (this._dynamicLightingActive() && typeof THREE !== 'undefined') {
-      explosionLight = new THREE.PointLight(0xffe066, 3, 40, 2.5);
+      explosionLight = new THREE.PointLight(
+        0xffe066,
+        bzflagLightIntensity(BZFLAG_EXPLOSION_LIGHT_SCALE),
+        BZFLAG_LIGHT_MAX_DISTANCE,
+        BZFLAG_LIGHT_DECAY,
+      );
       explosionLight.position.copy(position);
-      lightIntensity = 500.0;
-      explosionLight.intensity = lightIntensity;
+      // updateExplosions() fades this down from here.
+      lightIntensity = explosionLight.intensity;
       this.worldGroup.add(explosionLight);
     }
 
@@ -3922,13 +4187,21 @@ class RenderManager {
     if (!tank.userData.jumpJetLight) {
       const { r, g, b } = BZFLAG_JUMPJET_LIGHT_COLOR;
       const peak = Math.max(r, g, b);
-      const light = new THREE.PointLight(new THREE.Color(r / peak, g / peak, b / peak), 0, 30, 2);
+      const light = new THREE.PointLight(
+        new THREE.Color(r / peak, g / peak, b / peak),
+        0,
+        BZFLAG_LIGHT_MAX_DISTANCE,
+        BZFLAG_LIGHT_DECAY,
+      );
       tank.add(light);
       tank.userData.jumpJetLight = light;
     }
     const light = tank.userData.jumpJetLight;
     light.visible = scale > 0;
-    light.intensity = scale * 2;
+    // Upstream scales the jet light's colour by how far the flames have grown
+    // (TankSceneNode.cxx:308); the colour here is normalised, so the scale
+    // rides on the intensity instead.
+    light.intensity = scale * bzflagLightIntensity(BZFLAG_JUMPJET_LIGHT_SCALE);
   }
 
   _getShotTeleportTexture() {

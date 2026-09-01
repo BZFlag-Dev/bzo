@@ -90,10 +90,6 @@ const inputContextManager = new InputContextManager({
   resetGameplayInput: clearTransientInput,
 });
 
-export function getInputContext() {
-  return inputContextManager.getContext();
-}
-
 export function isGameplayInputActive() {
   return inputContextManager.isGameplayActive();
 }
@@ -461,9 +457,6 @@ export function setupInputHandlers() {
 
 }
 
-// Update virtualInput from XR controller input
-let vxrFrameCounter = 0;
-
 export function updateVirtualInputFromXR() {
   if (!xrState.enabled) {
     resetXRInput();
@@ -534,12 +527,6 @@ export function updateVirtualInputFromXR() {
   // B button OR side grip button: jump
   xrInputState.jump = controllerInput.buttonB || controllerInput.buttonGrip;
   syncVirtualInput();
-
-  // Debug logging every 60 frames
-  vxrFrameCounter++;
-  if (vxrFrameCounter % 60 === 0) {
-    //debugLog(`virtualInput: forward=${newForward.toFixed(2)}, turn=${xrInputState.turn.toFixed(2)}, fire=${xrInputState.fire}, jump=${xrInputState.jump}`);
-  }
 }
 
 // --- HUD & Orientation helpers ---
@@ -931,13 +918,6 @@ function toggleHelpPanel() {
     hudContext.showMessage('Help Panel: Shown');
   }
   updateHelpBtn();
-}
-
-export function hideHelpPanel() {
-  if (!domRefs.helpPanel) return;
-  if (domRefs.helpPanel.style.display === 'block') {
-    toggleHelpPanel();
-  }
 }
 
 function isFullscreenActive() {

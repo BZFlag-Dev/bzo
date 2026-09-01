@@ -65,6 +65,22 @@ These are deliberate. Do not "fix" them without being asked.
   it differs from upstream's as a consequence. Accepted for now -- do not report
   the model set or the explosion as parity gaps.
 
+- **The sky follows a Minecraft clock, not real astronomy.** BZFlag computes
+  where the sun and moon actually are: `SceneRenderer::setTimeOfDay` takes a
+  Julian day and feeds `getSunPosition`/`getMoonPosition` in `daylight.cxx`,
+  which work from Greenwich sidereal time and the server's `_latitude` and
+  `_longitude`, so the arc tilts with latitude and the moon carries a real phase
+  and its own position in the sky. bzo instead runs a Minecraft-style tick
+  clock: `worldTime` 0..23999 sweeps the sun through a fixed arc in the world's
+  X--Y plane, and the moon sits exactly opposite it, full and unphased. Sun for
+  day, moon for night.
+
+  What bzo does take from upstream is how big they look and how far away they
+  are -- `2 * worldSize`, sized by the angle they subtend
+  (`makeCelestialLists`) -- because that is what makes them read as the sun and
+  the moon rather than as spheres in the distance. Do not report the arc, the
+  missing phases, or the absence of latitude as parity gaps.
+
 - **The radar range is not saved between sessions.** BZFlag persists
   `displayRadarRange` with the rest of BZDB. bzo starts every session at
   upstream's `0.5` default (Medium) instead, because a headset has no key,

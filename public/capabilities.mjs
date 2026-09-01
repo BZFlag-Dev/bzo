@@ -39,6 +39,17 @@ export function detectRenderCapabilities(renderer, hints = collectDeviceHints())
 
   const anisotropic = context?.getExtension?.('EXT_texture_filter_anisotropic')
     || context?.getExtension?.('WEBKIT_EXT_texture_filter_anisotropic');
+  // Which driver answered. This is identity, not capability, and it is here for
+  // one reason: a frame rate means something entirely different when the string
+  // says llvmpipe or SwiftShader than when it names a GPU, and every launch
+  // already logs this line. A browser may withhold the extension, which reads
+  // as unknown rather than as software.
+  const driverInfo = context?.getExtension?.('WEBGL_debug_renderer_info');
+  const driverString = (name) => {
+    if (!driverInfo || driverInfo[name] === undefined) return null;
+    const value = context.getParameter(driverInfo[name]);
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
 
   return {
     webgl: Boolean(context),
@@ -53,6 +64,8 @@ export function detectRenderCapabilities(renderer, hints = collectDeviceHints())
     maxAnisotropy: anisotropic
       ? (finitePositive(context.getParameter(anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) || 0)
       : 0,
+    driverVendor: driverString('UNMASKED_VENDOR_WEBGL'),
+    driverRenderer: driverString('UNMASKED_RENDERER_WEBGL'),
     devicePixelRatio: hints.devicePixelRatio || 1,
     deviceMemory: hints.deviceMemory,
     hardwareConcurrency: hints.hardwareConcurrency,
@@ -71,8 +84,18 @@ export function supportsDynamicLighting(capabilities) {
 
 // One line for server.log: the headsets and phones this has to run on have no
 // console worth reading.
-export function describeRenderCapabilities(capabilities) {
-  return Object.entries(capabilities)
-    .map(([key, value]) => `${key}=${value === null ? 'unknown' : value}`)
+export function describeMeasurements(values) {
+  return Object.entries(values)
+    .map(([key, value]) => {
+      if (value === null) return `${key}=unknown`;
+      // A driver name has spaces in it, and the line has to stay readable as
+      // pairs.
+      const text = String(value);
+      return `${key}=${/\s/.test(text) ? JSON.stringify(text) : text}`;
+    })
     .join(' ');
+}
+
+export function describeRenderCapabilities(capabilities) {
+  return describeMeasurements(capabilities);
 }

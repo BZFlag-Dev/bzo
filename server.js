@@ -666,7 +666,6 @@ if (MAP_SOURCE !== 'random') {
           requestServerRestart('map file change');
         }
       });
-      // console.log(`  ✓ Watching map file: ${path.basename(mapPath)}`);
     } catch (err) {
       logError(`Failed to watch map file: ${mapPath}`, err);
     }
@@ -1782,7 +1781,6 @@ function getTestSpawn(name) {
 }
 
 function findValidSpawnPosition(tankRadius = 2) {
-  //return { x: 0, y: 0, z: 0, rotation: 0 };
   const halfMap = GAME_CONFIG.MAP_SIZE / 2;
   const maxAttempts = 100;
   const y = 0;
@@ -3727,7 +3725,6 @@ fs.readdirSync(publicDir).forEach(file => {
         forceClientReload();
       }
     });
-    // console.log(`  ✓ Watching: ${path.basename(filePath)}`);
   }
 });
 

@@ -2,6 +2,16 @@
 
 Battlezone Online is a real-time multiplayer tank game built with Node.js, WebSockets, and Three.js.
 
+## Try it
+
+Two public test servers, both usually up:
+
+- <https://bz.rikers.org> — development, running whatever is current
+- <https://orin-bzo.rikers.org> — the `linux/arm64` Docker image, updated nightly
+
+Neither is a stable deployment, so expect either to be restarting or ahead of the
+latest release.
+
 ## What users can install
 
 There are two supported ways to run the game:

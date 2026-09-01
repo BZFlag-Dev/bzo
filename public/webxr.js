@@ -130,7 +130,6 @@ let xrInputSources = new Map(); // Map of controller input source ID -> controll
 let xrSessionLifecycle = null;
 let xrStartPromise = null;
 let xrEndPromise = null;
-const xrStateSubscribers = new Set();
 
 export const xrState = {
   enabled: false,
@@ -150,30 +149,10 @@ export function getXRStateSnapshot() {
   };
 }
 
-export function subscribeToXRState(listener) {
-  if (typeof listener !== 'function') {
-    throw new TypeError('XR state listener must be a function');
-  }
-
-  xrStateSubscribers.add(listener);
-  listener(getXRStateSnapshot());
-
-  return () => {
-    xrStateSubscribers.delete(listener);
-  };
-}
-
 // Send debug message through app-wide logger in client.js
 export function debugLog(message) {
   if (typeof window !== 'undefined' && typeof window.gameDebugLog === 'function') {
     window.gameDebugLog(message, 'WebXR');
-  }
-}
-
-function publishSessionState() {
-  const snapshot = getXRStateSnapshot();
-  for (const listener of [...xrStateSubscribers]) {
-    listener(snapshot);
   }
 }
 
@@ -279,7 +258,6 @@ async function startXRSession(renderer, animationCallback) {
 
     xrEnabled = true;
     xrState.enabled = true;
-    publishSessionState();
 
     // Set up the XR animation loop
     if (animationCallback) {
@@ -417,7 +395,6 @@ function resetXRState() {
   xrState.frameCounter = 0;
   xrInputSources.clear();
   xrState.controllers.clear();
-  publishSessionState();
 }
 
 // Store reference to reset animation loop
