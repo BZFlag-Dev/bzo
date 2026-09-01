@@ -297,6 +297,90 @@ and holding the browser off it in the meantime keeps it from pressing whichever
 HUD button has focus. Guided missiles still have to displace the debug HUD from
 `I`, or diverge from every other BZFlag client. Pick when the feature lands.
 
+## Mouse steering is the targeting box
+
+The two boxes drawn at the centre of the screen are the mouse mapping, not
+decoration, and bzo takes the mapping from `doMotion()`
+(`playing.cxx:1088-1131`):
+
+- Inside the inner box the tank does nothing.
+- From there the input ramps linearly, reaching full deflection exactly at the
+  outer box edge: `(|offset| - noMotionSize) / (maxMotionSize - noMotionSize)`.
+- Each axis clamps on its own, so running the cursor past the box pins that axis
+  at full and leaves the other free -- driving flat out while still steering.
+- Reverse stops at half speed, which `REVERSE_SPEED_RATIO` already applies.
+
+The box sizes are upstream's too: `MaxMotionSize` 37 and `NoMotionSize` 10
+(`global.h:88-91`) scaled by `min(width / 256, height / 192)`, which is what
+`HUDRenderer::resize` computes at the default `mouseboxsize` of 5, where its
+`effScale` equals that scale. They live in `--motion-box` and
+`--motion-dead-box` in `styles.css`, and `client.js` reads the geometry back off
+the elements rather than keeping a second copy of the numbers. The heading bar,
+altimeter, and voice readout hang off the same variable, as upstream hangs them
+off `maxMotionSize`.
+
+**Upstream also confines the cursor to the box** (`mouseClamp`, using
+`confineToMotionbox`); a browser cannot without pointer lock, so bzo lets the
+cursor leave. The mapping saturates either way -- the only cost is a longer drag
+back to centre.
+
+## The ground follows the eye
+
+The ground is not one enormous quad. It mirrors `drawGroundCentered()`
+(`BackgroundRenderer.cxx:1132`), which is upstream's default at quality 2: a
+patch of `centerSize` 128 that follows the eye, skirted by four quads reaching
+`10 * worldSize`. Texture coordinates are the world position times
+`groundHighResTexRepeat` (0.05, which bzo already used), so the texture is
+pinned to the world rather than to the patch sliding under it.
+
+**Do not replace it with a single large plane.** Everything near the camera then
+falls on one triangle kilometres across, and the texture coordinates
+interpolated across it drift as the view moves -- the ground visibly swims
+against the obstacles standing on it, worst at low speed. The centre patch keeps
+the near ground on a small triangle, where that error is nothing.
+`updateGroundCenter()` re-centres it once per frame from the eye in
+`worldGroup` space, so it works in XR, where the world moves instead of the
+camera.
+
+## Frame timing
+
+`animate()` takes the timestamp the animation loop hands it -- rAF's, or the
+frame's predicted display time inside an XR session -- and never samples
+`performance.now()` for the step. Those timestamps land on the display's
+cadence; a clock reading taken inside the callback also carries however long the
+main thread took to get there. Measured on this client, frame timestamps sit
+0.05ms off the vsync grid and a `performance.now()` reading sits 3.8ms off it.
+Spent as movement, that noise makes each displayed frame advance slightly too
+far or not far enough, which reads as the ground jittering -- worst at low
+speed, where the eye tracks the motion and expects it to be even.
+
+The step is also clamped to `MAX_FRAME_DELTA_SECONDS`, because a hidden tab
+delivers no frames and the first one back would otherwise spend the whole gap at
+once.
+
+**The local position is never rounded.** `playerX/Y/Z` carry full precision;
+`toFixed(2)` belongs to the move packet, the debug ghost mesh, and the teleport
+packet. The only rounded values that come back into the local state are
+server-authored ones -- `positionCorrection` and teleport echoes -- and those
+are events, not something every frame pays.
+
+## Chat entry owns the keyboard, not the mouse
+
+The chat panel sits along the bottom of the screen, which is exactly where mouse
+control puts the cursor to drive backwards. So while chat is idle the panel is
+click-through: only the tabs and the Send button take the pointer, and a click
+anywhere else over it -- the input included -- fires the tank. **The Send button
+is the only pointer that opens chat entry.** It is named Send rather than Chat
+because the tab strip already spends that word on the Chat tab. Clicking the input must not,
+because the input covers ground the player is aiming over.
+
+Chat entry -- focus in `#chatInput` -- ends on Enter, Escape, or the Send
+button, and nothing else. A click on the battlefield while typing is swallowed
+with `preventDefault`, which is what keeps focus, and so keeps the keyboard, in
+the input. Focus is the single source of that state: `setChatEntryActive` runs
+off the input's own focus and blur, so no code path may set `chatActive` by
+hand.
+
 ## Team scores
 
 In team mode the server keeps a score per colour team, exactly as bzfs does:

@@ -118,10 +118,13 @@ export function updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debu
 
 // Toggle debug HUD
 export function toggleDebugHud({ debugEnabled, setDebugEnabled, updateHudButtons, showMessage, updateDebugDisplay, getDebugState }) {
-  setDebugEnabled(!debugEnabled);
-  localStorage.setItem('debugEnabled', (!debugEnabled).toString());
+  // The panel is shown or hidden first: anything reacting to the new state --
+  // the chat layout that keeps clear of it, for one -- reads the panel itself,
+  // and would otherwise see the state it had before this toggle.
   const debugHud = document.getElementById('debugHud');
   if (debugHud) debugHud.style.display = !debugEnabled ? 'block' : 'none';
+  setDebugEnabled(!debugEnabled);
+  localStorage.setItem('debugEnabled', (!debugEnabled).toString());
   if (!debugEnabled && !window.debugUpdateInterval) {
     window.debugUpdateInterval = setInterval(() => updateDebugDisplay(getDebugState()), 500);
   } else if (debugEnabled && window.debugUpdateInterval) {

@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.45] - 2026-09-01
+
+### Added
+- A Send button in the chat panel. It starts chat entry, and pressing it again sends the message and hands the keyboard back to the game, as Enter does.
+
+### Changed
+- The chat panel no longer swallows the mouse. Only its own controls take the pointer, so a click over the transcript fires the tank -- which is where mouse control puts the cursor to drive backwards. While chat entry is active the panel takes the pointer back, and clicks stop firing.
+- Chat entry now ends only on Enter, Escape, or the Send button. A click on the battlefield leaves it typing rather than quietly dropping out.
+- Clicking the chat panel no longer starts chat entry. The Send button opens it, and until it does a click over the panel -- the input included -- fires the tank.
+- Mouse steering now follows BZFlag's targeting box exactly. The inner box is a dead zone where the tank holds still, the outer box edge is full turn and full speed, and each axis clamps on its own, so pushing the cursor past the box keeps the tank flat out while still steering. The boxes themselves are now upstream's size, and the heading bar, altimeter, and voice readout follow them.
+
+### Fixed
+- The ground texture no longer swims against the obstacles standing on it. The ground was one 8000 unit quad, so everything near the camera fell on a single enormous triangle whose texture coordinates drift as the view moves. It now follows BZFlag's own ground: a 128 unit patch that tracks the eye, skirted out to the edge of the world, with the texture pinned to world coordinates.
+- Ground jitter while driving. Every frame spent the time between animation callbacks as movement, which includes however long the main thread took to reach the callback, rather than the frame's own timestamp; each displayed frame therefore advanced slightly too far or not far enough. The step now comes from the frame timestamp, and is capped so returning to a hidden tab no longer spends the whole gap at once.
+- The mouse mapping ignored the targeting box it was drawn against: full deflection sat at 35% of the window's width and 33% of its height instead of the box edge, and there was no dead zone, so the tank crept whenever the cursor was a pixel off centre.
+- Opening the debug HUD moved the chat panel's left edge, and moved its right edge one toggle late -- chat cleared the panel's corner only after the panel had closed again. Chat now keeps its left edge where it is and gives up its right edge exactly while the panel is open.
+
 ## [1.0.44] - 2026-09-01
 
 ### Added

@@ -212,8 +212,8 @@ If you want automatic container updates, use your preferred container update man
 - `Tab` — jump
 - `Q` — self-destruct
 - `P` — pause/resume
-- `N` — open chat
-- `Enter` — send chat (while chat input is focused)
+- `N` — open chat (or click the `Send` button)
+- `Enter` — send chat (while chat input is focused, or click `Send` again)
 - `Esc` — exit chat input or mouse mode
 - `1` / `2` / `3` / `4` / `5` — switch chat tab (`All` / `Chat` / `Server` / `Misc` / `Debug`)
 - `[` / `]` — previous/next chat tab

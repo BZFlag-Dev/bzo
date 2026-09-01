@@ -55,6 +55,7 @@ const chatState = {
 let lastDirectSenderId = null;
 let nemesisPlayerId = null;
 let chatInput = null;
+let sendBtn = null;
 let chatActive = false;
 let virtualControlsEnabled = false;
 let latency = 0;
@@ -948,6 +949,36 @@ function focusChatWithTarget(targetId, { clearInput = true } = {}) {
   }
 }
 
+// Chat entry owns the keyboard while it is active, and ends only on Enter,
+// Escape, or the Send button. Focus is the single source of that state, so
+// everything routes through focus/blur rather than tracking a flag of its own.
+function setChatEntryActive(active) {
+  chatActive = active;
+  document.body.classList.toggle('chat-active', active);
+  if (sendBtn) {
+    sendBtn.classList.toggle('active', active);
+    sendBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+}
+
+function sendChatInputText() {
+  const chatTarget = document.getElementById('chatTarget');
+  const text = chatInput.value.trim();
+  if (text.length === 0) return;
+  const dst = normalizeMessageEndpoint(chatTarget.value, CHAT_TARGET_ALL);
+  sendToServer({ type: 'message', dst, msgType: CHAT_KIND_CHAT, text });
+  chatInput.value = '';
+}
+
+function toggleChatEntry() {
+  if (chatActive) {
+    sendChatInputText();
+    chatInput.blur();
+    return;
+  }
+  chatInput.focus();
+}
+
 function handleReplyToLastSender() {
   if (typeof lastDirectSenderId !== 'string' || lastDirectSenderId.length === 0) {
     showMessage('No recent direct sender to reply to');
@@ -1194,6 +1225,31 @@ let pauseCountdownStart = 0;
 let playerShields = new Map(); // Map of playerId to shield mesh
 let deathFollowTarget = null;
 
+// Computed width resolves the viewport units even while the box is hidden for
+// the death camera, which a layout rect would report as zero.
+function readBoxHalfExtent(elementId) {
+  const element = document.getElementById(elementId);
+  if (!element) return 0;
+  const width = parseFloat(window.getComputedStyle(element).width);
+  return Number.isFinite(width) ? width / 2 : 0;
+}
+
+function updateMotionBoxMetrics() {
+  motionBoxHalfExtent = readBoxHalfExtent('controlBox');
+  motionBoxDeadZone = readBoxHalfExtent('noMotionBox');
+}
+
+// One axis of the mapping, matching upstream's per-axis clamp: past the box the
+// axis is pinned at full deflection, so pulling the cursor further out steers
+// only through whatever the other axis is doing.
+function motionBoxAxisInput(offsetPx) {
+  const span = motionBoxHalfExtent - motionBoxDeadZone;
+  if (!(span > 0)) return 0;
+  const beyondDeadZone = Math.abs(offsetPx) - motionBoxDeadZone;
+  if (beyondDeadZone <= 0) return 0;
+  return Math.sign(offsetPx) * Math.min(1, beyondDeadZone / span);
+}
+
 function updateDeathCameraHudVisibility() {
   const controlBox = document.getElementById('controlBox');
   if (!controlBox) return;
@@ -1205,6 +1261,12 @@ function updateDeathCameraHudVisibility() {
 let mouseControlEnabled = false;
 let mouseX = 0; // Percentage from center (-1 to 1)
 let mouseY = 0; // Percentage from center (-1 to 1)
+// BZFlag's targeting box is the mouse mapping, not decoration: inside the inner
+// box the tank does nothing, and the outer box edge is full deflection
+// (playing.cxx:1088-1131). The boxes are sized in CSS, so their geometry is read
+// back off them rather than kept a second time here.
+let motionBoxHalfExtent = 0;
+let motionBoxDeadZone = 0;
 registerGameplayInputReset(() => {
   mouseX = 0;
   mouseY = 0;
@@ -2549,9 +2611,9 @@ function init() {
   collectClientCapabilities();
 
   // Chat UI
-  const chatWindow = document.getElementById('chatWindow');
   const chatTabs = document.getElementById('chatTabs');
   chatInput = document.getElementById('chatInput');
+  sendBtn = document.getElementById('sendBtn');
   const chatTarget = document.getElementById('chatTarget');
 
   // Helper to update chatTarget dropdown with player names
@@ -2606,6 +2668,20 @@ function init() {
   };
   if (chatMessagesDiv) {
     chatMessagesDiv.addEventListener('wheel', onChatWheel, { passive: false });
+    // The transcript only takes the pointer while chat entry is active, for
+    // selecting text out of it. A drag there is a copy and keeps its selection;
+    // a plain click is not, so the keyboard goes back to the input.
+    let chatEntryWasActive = false;
+    chatMessagesDiv.addEventListener('mousedown', () => {
+      chatEntryWasActive = chatActive;
+    });
+    chatMessagesDiv.addEventListener('mouseup', () => {
+      if (!chatEntryWasActive) return;
+      chatEntryWasActive = false;
+      const selection = window.getSelection();
+      if (selection && selection.toString().length > 0) return;
+      chatInput.focus();
+    });
   }
   if (chatTabs) {
     chatTabs.addEventListener('wheel', onChatWheel, { passive: false });
@@ -2630,40 +2706,47 @@ function init() {
       return;
     }
     if (e.key === 'Enter') {
-      const text = chatInput.value.trim();
-      if (text.length > 0) {
-        const dst = normalizeMessageEndpoint(chatTarget.value, CHAT_TARGET_ALL);
-        sendToServer({ type: 'message', dst, msgType: CHAT_KIND_CHAT, text });
-        chatInput.value = '';
-      }
+      sendChatInputText();
       chatInput.blur();
     } else if (e.key === 'Escape') {
       chatInput.blur();
     }
   });
 
-  // Prevent mouse/game events when chat input is focused or clicked
+  // Focus is what makes chat entry active, and the game gives up the keyboard
+  // with it.
   chatInput.addEventListener('focus', () => {
-    chatActive = true;
+    setChatEntryActive(true);
     setInputContext(INPUT_CONTEXT.CHAT);
   });
   chatInput.addEventListener('blur', () => {
-    chatActive = false;
+    setChatEntryActive(false);
     syncInputContextFromUi();
   });
-  chatInput.addEventListener('mousedown', (e) => {
-    chatActive = true;
-    // Only prevent propagation for the input itself
-    e.stopPropagation();
+  // Picking a recipient is a step on the way to typing, so the keyboard follows
+  // the choice into the input rather than being left with nothing focused.
+  chatTarget.addEventListener('change', () => {
+    chatInput.focus();
   });
 
-  // Prevent chatActive from blocking mouse motion for clicks on chatWindow background
-  chatWindow.addEventListener('mousedown', (e) => {
-    // If the click is NOT on the input, allow mouse motion activation
-    if (e.target !== chatInput) {
-      chatInput.blur();
-      chatActive = false;
+  // Acting on mousedown, with the default prevented, keeps the button from
+  // blurring the input first: by the time a click event arrived chat would
+  // already have ended, and the button would reopen it instead of sending.
+  let sendToggledByPointer = false;
+  sendBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sendToggledByPointer = true;
+    toggleChatEntry();
+  });
+  sendBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (sendToggledByPointer) {
+      sendToggledByPointer = false;
+      return;
     }
+    toggleChatEntry();
   });
   syncDebugTabVisibility();
   updateChatWindow();
@@ -2730,25 +2813,21 @@ function init() {
   resizeRadar();
   updateRadar();
   updateChatLayoutForDebugOverlap();
+  updateMotionBoxMetrics();
 
   // Event listeners
   window.addEventListener('resize', () => {
     onWindowResize();
     updateChatLayoutForDebugOverlap();
+    updateMotionBoxMetrics();
   });
 
   // Mouse movement for analog control
   // Mouse analog control using position relative to center (cursor always visible)
   document.addEventListener('mousemove', (e) => {
     if (!isGameplayInputActive() || !mouseControlEnabled) return;
-    // Allow mouse movement even if chat is active or chatInput is focused
-    const centerX = window.innerWidth / 2;
-    const centerY = window.innerHeight / 2;
-    mouseX = (e.clientX - centerX) / (window.innerWidth * 0.35); // 70% width
-    mouseY = (e.clientY - centerY) / (window.innerHeight * 0.33); // 33% height
-    // Clamp to -1..1
-    mouseX = Math.max(-1, Math.min(1, mouseX));
-    mouseY = Math.max(-1, Math.min(1, mouseY));
+    mouseX = motionBoxAxisInput(e.clientX - window.innerWidth / 2);
+    mouseY = motionBoxAxisInput(e.clientY - window.innerHeight / 2);
   });
 
   // Mouse click to shoot (or enable mouse controls on first click)
@@ -2758,18 +2837,21 @@ function init() {
     // reaches the tank. The click after that one is an ordinary gameplay click.
     if (dismissDialogFromOutsideClick(e.target)) return;
 
-    if (!isGameplayInputActive()) return;
-    // Only block mouse actions if the click is on the chat input itself
-    if (e.target === chatInput) return;
-
-    // Chat panel interactions should never trigger gameplay fire input.
-    if (e.target.closest && e.target.closest('#chatWindow')) {
-      if (e.target !== chatInput) {
-        chatInput.blur();
-        chatActive = false;
+    // Chat entry ends on Enter, Escape, or the Chat button, never on a stray
+    // click. Preventing the default keeps focus in the input, which is what
+    // holds the keyboard.
+    if (chatActive) {
+      if (!(e.target.closest && e.target.closest('#chatWindow'))) {
+        e.preventDefault();
       }
       return;
     }
+
+    if (!isGameplayInputActive()) return;
+
+    // The chat panel is click-through while chat is idle, so a click that does
+    // land in it is on one of its controls and belongs to chat, not the tank.
+    if (e.target.closest && e.target.closest('#chatWindow')) return;
 
     // Anything clickable in the HUD is chrome, not the battlefield. Matching on
     // the control itself rather than a list of ids means a button added later is
@@ -2779,7 +2861,6 @@ function init() {
       return;
     }
 
-    if (chatActive || document.activeElement === chatInput) return;
     if (e.button === 0) { // Left click
       if (justActivatedMouseControl) {
         justActivatedMouseControl = false;
@@ -6777,6 +6858,7 @@ function updateRadar() {
 }
 
 let lastTime = performance.now();
+const MAX_FRAME_DELTA_SECONDS = 0.1;
 
 function setXRButtonState(enabled) {
   const xrBtn = document.getElementById('xrBtn');
@@ -7241,19 +7323,30 @@ function extrapolatePosition(player, dt) {
   }
 }
 
-function runFallbackAnimationLoop() {
-  animate();
+function runFallbackAnimationLoop(frameTime) {
+  animate(frameTime);
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(runFallbackAnimationLoop);
   }
 }
 
-function animate() {
+// The frame's own timestamp, not the clock reading from whenever this callback
+// got scheduled. Three passes the animation frame's timestamp straight through
+// -- rAF's, and in an XR session the frame's predicted display time -- and those
+// land on the display's cadence, while `performance.now()` here also carries
+// however long the main thread took to reach this call. Measured on this client,
+// frame timestamps sit 0.05ms off the vsync grid and a `performance.now()`
+// reading sits 3.8ms off it. Spending that noise as movement makes every step
+// slightly too long or too short, which reads as the ground jittering -- worst
+// at low speed, where the eye tracks the motion and expects it to be even.
+function animate(frameTime) {
   selectedFaceDebugTouchedThisFrame = false;
   supportSurfaceDebugTouchedThisFrame = false;
   supportFootprintDebugTouchedThisFrame = false;
-  const now = performance.now();
-  const deltaTime = (now - lastTime) / 1000;
+  const now = Number.isFinite(frameTime) ? frameTime : performance.now();
+  // A hidden tab stops delivering frames, so the first one back would otherwise
+  // spend the whole gap at once and throw the tank across the map.
+  const deltaTime = Math.max(0, Math.min((now - lastTime) / 1000, MAX_FRAME_DELTA_SECONDS));
   lastTime = now;
 
   // Advance worldTime so 24000 ticks = 20 minutes (1200 seconds)

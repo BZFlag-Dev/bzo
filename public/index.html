@@ -146,6 +146,7 @@
         <option value="-1">SERVER</option>
       </select>
       <input id="chatInput" type="text" />
+      <button id="sendBtn" type="button" aria-pressed="false" title="Type a chat message, then send it">Send</button>
     </div>
   </div>
 
@@ -240,13 +241,14 @@
         <li><strong>ESC</strong> — Exit Mouse Mode (return to keyboard)</li>
         <li><strong>Mouse Up/Down</strong> — Control Speed</li>
         <li><strong>Mouse Left/Right</strong> — Turn Tank</li>
-        <li><strong>Left Click</strong> — Shoot</li>
+        <li><strong>Targeting Box</strong> — Inside the small box the tank holds still; the outer box edge is full turn and full speed, and going further out adds nothing</li>
+        <li><strong>Left Click</strong> — Shoot, anywhere on screen unless chat is active</li>
       </ul>
 
       <h2>Chat & Misc</h2>
       <ul>
-        <li><strong>N</strong> — Open Chat</li>
-        <li><strong>Enter</strong> — Send Chat</li>
+        <li><strong>N</strong> — Open Chat (or click the Send button)</li>
+        <li><strong>Enter</strong> — Send Chat (or click the Send button again)</li>
         <li><strong>ESC</strong> — Exit Chat Input</li>
         <li><strong>1</strong>/<strong>2</strong>/<strong>3</strong>/<strong>4</strong>/<strong>5</strong> — Chat tabs: All/Chat/Server/Misc/Debug</li>
         <li><strong>[</strong> / <strong>]</strong> — Previous/Next chat tab</li>
@@ -280,7 +282,7 @@
   </div>
 
   <canvas id="degreeBar"></canvas>
-  <div id="controlBox"></div>
+  <div id="controlBox"><div id="noMotionBox"></div></div>
   <canvas id="altimeter"></canvas>
   <canvas id="shotStatus"></canvas>
   <div id="voiceChannelHud" class="voiceChannelHud voiceChannelHud--muted" role="status" aria-live="polite" aria-label="Nearby voice channel, microphone off">

@@ -134,6 +134,24 @@ const PROJECTED_SHADOW_DARKEN_OPACITY = 0.35;
 const PROJECTED_SHADOW_CASTER_Y = 0.01;
 const PROJECTED_SHADOW_OVERLAY_Y = 0.03;
 const GROUND_GRID_Y = 0.02;
+// BZFlag does not draw the ground as one enormous quad. At its default quality
+// it draws a patch that follows the eye, skirted by four quads reaching the edge
+// of the world (BackgroundRenderer::drawGroundCentered, BackgroundRenderer.cxx:1132).
+// Everything near the camera then lands on a small triangle carrying small
+// texture coordinates, rather than on one kilometres across whose interpolation
+// drifts as the view moves -- which is the ground appearing to slide against the
+// obstacles standing on it.
+const GROUND_CENTER_SIZE = 128; // upstream centerSize
+const GROUND_TEX_REPEAT = 0.05; // upstream groundHighResTexRepeat (defaultBZDB.cxx:82)
+// Upstream's five triangle strips over the four outer and four centre corners.
+const GROUND_EYE_SCRATCH = new THREE.Vector3();
+const GROUND_STRIPS = [
+  [4, 5, 7, 6],
+  [0, 1, 4, 5],
+  [1, 2, 5, 6],
+  [2, 3, 6, 7],
+  [3, 0, 7, 4],
+];
 const GROUND_GRID_RENDER_ORDER = 15;
 
 class RenderManager {
@@ -250,7 +268,7 @@ class RenderManager {
     // Compute sun/moon positions
     // Minecraft: 0 = 6:00, 6000 = noon, 12000 = 18:00, 18000 = midnight
     // We'll use a circle in the X/Y plane for sun/moon
-    const MAP_SIZE = this.ground ? this.ground.geometry.parameters.width / 3 : 100;
+    const MAP_SIZE = Number.isFinite(this.groundExtent) ? (this.groundExtent * 2) / 3 : 100;
     const sunDistance = MAP_SIZE;
     const moonDistance = sunDistance;
     const sunAngle = ((worldTime / 24000) * 2 * Math.PI) - Math.PI / 2; // 0 at sunrise, pi at sunset
@@ -372,6 +390,10 @@ class RenderManager {
     this.container = null;
 
     this.ground = null;
+    this.groundExtent = null;
+    this.groundMapSize = null;
+    this._groundCenterX = null;
+    this._groundCenterZ = null;
     this.gridHelper = null;
     this.obstacleMeshes = [];
     this.mountainMeshes = [];
@@ -768,9 +790,8 @@ class RenderManager {
   }
 
   _inferMapSizeFromGround() {
-    const width = this.ground?.geometry?.parameters?.width;
-    if (Number.isFinite(width) && width > 0) {
-      return width / 20;
+    if (Number.isFinite(this.groundMapSize) && this.groundMapSize > 0) {
+      return this.groundMapSize;
     }
     return 100;
   }
@@ -926,6 +947,7 @@ class RenderManager {
   renderFrame() {
     if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
 
+    this.updateGroundCenter();
     this._updateTeleporterVisuals(performance.now() * 0.001);
 
     // Debug XR rendering (log rarely to avoid spam)
@@ -985,6 +1007,8 @@ class RenderManager {
       this.ground.geometry.dispose();
       this.ground.material.dispose();
       this.ground = null;
+      this.groundExtent = null;
+      this.groundMapSize = null;
     }
     if (this.projectedShadowOverlay && this.scene) {
       this.worldGroup.remove(this.projectedShadowOverlay);
@@ -1265,17 +1289,69 @@ class RenderManager {
     this.worldGroup.remove(object3D);
   }
 
+  // The ground's eight corners: four at the edge of the world, four around the
+  // eye. Texture coordinates are the world position scaled by the repeat, as
+  // upstream's `glTexCoord2f(vertices[index][0] * repeat, ...)` does, so the
+  // texture is pinned to the world rather than to the patch that moves under it.
+  _buildCenteredGroundGeometry(groundExtent) {
+    const geometry = new THREE.BufferGeometry();
+    const normals = new Float32Array(8 * 3);
+    for (let i = 0; i < 8; i++) normals[i * 3 + 1] = 1;
+    const indices = [];
+    for (const [a, b, c, d] of GROUND_STRIPS) {
+      indices.push(a, b, c, c, b, d);
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(8 * 3), 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(8 * 2), 2));
+    geometry.setIndex(indices);
+    // Four of the corners move every frame, so a bound measured from them would
+    // be stale; the ground reaches the edge of the world in any case.
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), groundExtent * 2);
+    return geometry;
+  }
+
+  _setGroundCorner(index, x, z) {
+    const { position, uv } = this.ground.geometry.attributes;
+    position.setXYZ(index, x, 0, z);
+    uv.setXY(index, x * GROUND_TEX_REPEAT, -z * GROUND_TEX_REPEAT);
+  }
+
+  // Keeps the centre patch under the eye, clamped so it never leaves the skirt
+  // it is cut out of. Called once per frame, before the scene is drawn.
+  updateGroundCenter() {
+    if (!this.ground || !this.camera || !this.worldGroup) return;
+    const limit = this.groundExtent - GROUND_CENTER_SIZE;
+    if (!(limit > 0)) return;
+
+    this.camera.updateWorldMatrix(true, false);
+    this.worldGroup.updateWorldMatrix(true, false);
+    const eye = this.camera.getWorldPosition(GROUND_EYE_SCRATCH);
+    this.worldGroup.worldToLocal(eye);
+    const centerX = Math.max(-limit, Math.min(limit, eye.x));
+    const centerZ = Math.max(-limit, Math.min(limit, eye.z));
+    if (this._groundCenterX === centerX && this._groundCenterZ === centerZ) return;
+    this._groundCenterX = centerX;
+    this._groundCenterZ = centerZ;
+
+    const size = GROUND_CENTER_SIZE;
+    this._setGroundCorner(4, centerX - size, centerZ + size);
+    this._setGroundCorner(5, centerX + size, centerZ + size);
+    this._setGroundCorner(6, centerX + size, centerZ - size);
+    this._setGroundCorner(7, centerX - size, centerZ - size);
+    this.ground.geometry.attributes.position.needsUpdate = true;
+    this.ground.geometry.attributes.uv.needsUpdate = true;
+  }
+
   buildGround(mapSize) {
     if (!this.scene) return;
     this.clearGround();
 
     const groundExtent = mapSize * 10;
-    const groundRepeat = 0.05;
-    const groundGeometry = new THREE.PlaneGeometry(groundExtent * 2, groundExtent * 2);
+    const groundGeometry = this._buildCenteredGroundGeometry(groundExtent);
     const groundTexture = createGroundTexture();
     groundTexture.wrapS = THREE.RepeatWrapping;
     groundTexture.wrapT = THREE.RepeatWrapping;
-    groundTexture.repeat.set(groundExtent * 2 * groundRepeat, groundExtent * 2 * groundRepeat);
 
     const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundTexture,
@@ -1285,8 +1361,17 @@ class RenderManager {
     });
 
     this.ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
+    this.ground.frustumCulled = false;
+    this.groundExtent = groundExtent;
+    this.groundMapSize = mapSize;
+    this._groundCenterX = null;
+    this._groundCenterZ = null;
+    this._setGroundCorner(0, -groundExtent, groundExtent);
+    this._setGroundCorner(1, groundExtent, groundExtent);
+    this._setGroundCorner(2, groundExtent, -groundExtent);
+    this._setGroundCorner(3, -groundExtent, -groundExtent);
+    this.updateGroundCenter();
     this.worldGroup.add(this.ground);
 
     if (this.canUseProjectedShadows()) {
