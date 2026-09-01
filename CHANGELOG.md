@@ -6,17 +6,19 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.44] - 2026-09-01
+
+### Added
+- Team scores in team mode, kept the way bzfs keeps them: a kill across teams wins one for the killer's team and loses one for the victim's, killing a team mate costs two and killing yourself costs one, and rogues and observers score for nobody. A team's tally resets when its first player joins an empty team, and survives the team emptying out.
+- A team scoreboard above the player list, in the HUD and in XR, showing `score (wins-losses) size` per team sorted by score, the way BZFlag's does.
+- Team standings reach a joining player in the `init` payload, and every change broadcasts a `teamUpdate` carrying the same size, wins, and losses per team that BZFlag's `MsgTeamUpdate` does.
+
 ### Changed
 - Radar zoom out no longer needs the shift key. It answered to `+` alone, which is Shift and `=`, while zoom in answered to a bare `-`; both are now one unshifted key.
 - Firing moved from the space bar to Enter, as BZFlag does it, leaving the space bar free for dropping a flag. The left mouse button still fires, and so do a trigger in XR, a gamepad, and the on-screen button.
 
 ### Fixed
 - The browser no longer acts on the keys the game uses. Tab moved focus onto the HUD buttons, where the next Space press pushed a button instead of firing, and Firefox opened quick find on `/` and kept the keyboard. Modified keys are untouched, so browser and OS shortcuts still work.
-
-### Added
-- Team scores in team mode, kept the way bzfs keeps them: a kill across teams wins one for the killer's team and loses one for the victim's, killing a team mate costs two and killing yourself costs one, and rogues and observers score for nobody. A team's tally resets when its first player joins an empty team, and survives the team emptying out.
-- A team scoreboard above the player list, in the HUD and in XR, showing `score (wins-losses) size` per team sorted by score, the way BZFlag's does.
-- Team standings reach a joining player in the `init` payload, and every change broadcasts a `teamUpdate` carrying the same size, wins, and losses per team that BZFlag's `MsgTeamUpdate` does.
 
 ## [1.0.43] - 2026-08-31
 
