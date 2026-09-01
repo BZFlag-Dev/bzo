@@ -6,6 +6,31 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.47] - 2026-09-01
+
+Closes #30.
+
+### Added
+- README lists the two public test servers: `bz.rikers.org` for development and `orin-bzo.rikers.org` for the nightly `linux/arm64` image.
+- Shots, impacts and explosions cast a pool of light on the ground again, drawn as BZFlag draws it: an additive fan under each dynamic light whose falloff is computed per vertex from the light's own attenuation, dimmed in daylight (`BackgroundRenderer::drawGroundReceivers`). It reaches 19 units where the point light alone faded out inside three, and costs forty triangles rather than a per-fragment light.
+- The launch `renderer.capabilities` line names the GL driver that answered. A frame rate means something entirely different when the string says llvmpipe or SwiftShader than when it names a GPU, and it is the one thing needed to read every other measurement against the machine that produced it.
+- The debug HUD reports what the last frame cost: draw calls, triangles, shader programs, and the GPU textures and geometries currently allocated. The same figures go to `server.log` as `renderer.stats` a few seconds into every map, and again when the debug HUD is closed, so the phones and headsets nobody opens that panel on still report their numbers.
+
+### Changed
+- Shot, impact, explosion and jump-jet lights are as bright as BZFlag's. Every one of them derives from upstream's shared attenuation and its own colour scale, so a shot lights a wall it passes out to tens of units instead of fading out inside three, and the ground receiver stays in the same proportion to the real light that upstream has it in.
+- The ground is drawn with the same diffuse material as every other surface, rather than the only metalness/roughness shader in the scene, and only its front faces are drawn. It is the largest thing on screen, so it was the most expensive shader over the most fragments; upstream lights it diffuse-only.
+- The projected shadow darkening pass covers the ground a shadow can actually reach -- the world border plus the longest shadow the lowest accepted light can cast -- instead of the full ground, which reaches ten times the world in every direction. It is also frustum culled now that it is bounded.
+- Obstacle, wall, and base textures share one GPU upload per image instead of one per face. A map's world geometry now holds a handful of textures rather than several hundred copies of the same few pictures, and a team base tints its image once per team rather than once per face.
+- The XR HUD overlays stop repainting their canvases when no XR session is running. Outside a headset they were redrawing the chat, scoreboard, shot slot, and settings panels every frame for nothing.
+
+### Removed
+- Unreachable code: `RenderManager.updateSunLighting`, `getLabelRenderer`, `getTankModel` and `createCelestialBodies`; `getInputContext` and `hideHelpPanel`; `subscribeToXRState` along with the subscriber set and publish call sites no listener could ever reach; the `createWallTexture` and `createObstacleTexture` aliases; and two frame counters that existed only to feed commented-out logging.
+
+### Fixed
+- Sprite labels no longer leak a GPU texture every time they are relabelled. With debug geometry on, the packet motion gizmo relabels itself on every movement packet, so the leak grew for as long as the tank was driven -- a session could reach a thousand abandoned textures. A label now keeps one canvas for the life of its sprite and repaints it only when the text changes.
+- A shot impact no longer re-uploads its 512x512 explosion sheet on every frame of the effect. Walking the atlas moves the sampler, which reaches the shader as a uniform.
+- The sun and moon are visible again. They were placed at two thirds of the ground's extent -- 6.7 times the world size -- which put them beyond the far plane the mountains size, so they were clipped at every hour of the day, and would have been a few pixels across even in range. Both now sit at twice the world size and are sized by the angle they should subtend, taking those two figures from `makeCelestialLists` upstream while keeping bzo's own Minecraft-clock arc, and they draw before the world so the mountains stand in front of a low sun.
+
 ## [1.0.46] - 2026-09-01
 
 Housekeeping. Nothing in this release changes how the game plays or looks.
