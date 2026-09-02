@@ -43,10 +43,17 @@ const PRECACHE = [
 const ASSET_PATHS = /^\/(?:textures|obj|audio|vendor)\//;
 
 self.addEventListener('install', (event) => {
-  // Individually, so one missing asset does not fail the whole install.
-  event.waitUntil(caches.open(CACHE).then((cache) => Promise.all(
-    PRECACHE.map((url) => cache.add(url).catch(() => {})),
-  )));
+  event.waitUntil((async () => {
+    // Drop every other version's cache here as well as in activate. Without
+    // skipWaiting a new worker can wait indefinitely behind a page that never
+    // closes -- an installed app on a phone may not close for days -- and until
+    // it activates those older caches are still reachable.
+    const names = await caches.keys();
+    await Promise.all(names.filter((n) => n !== CACHE).map((n) => caches.delete(n)));
+    // Individually, so one missing asset does not fail the whole install.
+    const cache = await caches.open(CACHE);
+    await Promise.all(PRECACHE.map((url) => cache.add(url).catch(() => {})));
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -60,6 +67,16 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
+// Always this version's cache, never the global `caches.match()`, which searches
+// every cache present -- including one left by another version of the worker. A
+// leftover generation answering a lookup defeats the whole point of keying the
+// cache to the version, and does it silently: the served file is stale but the
+// server, the headers and a hand-run fetch all look correct.
+async function matchThisVersion(request) {
+  const cache = await caches.open(CACHE);
+  return cache.match(request);
+}
+
 async function networkFirst(request) {
   try {
     const response = await fetch(request);
@@ -69,14 +86,14 @@ async function networkFirst(request) {
     }
     return response;
   } catch (err) {
-    const cached = await caches.match(request);
+    const cached = await matchThisVersion(request);
     if (cached) return cached;
     throw err;
   }
 }
 
 async function cacheFirst(request) {
-  const cached = await caches.match(request);
+  const cached = await matchThisVersion(request);
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok) {

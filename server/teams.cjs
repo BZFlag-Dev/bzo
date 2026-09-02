@@ -226,6 +226,10 @@ function selectPlayerTeam(requestedTeam, teamMode, teamCounts = {}, teamScores =
   return candidates[Math.floor(random() * candidates.length)];
 }
 
+function isObserverTeam(team) {
+  return normalizePlayerTeam(team) === PLAYER_TEAM.OBSERVER;
+}
+
 // Team::isColorTeam upstream. Rogues and observers carry no team score: a
 // rogue kill feeds nobody's tally, and neither does dying as one.
 function isColorTeam(team) {
@@ -315,6 +319,7 @@ module.exports = {
   getPlayerTeamRadarColor,
   getInitialPlayerColor,
   isColorTeam,
+  isObserverTeam,
   getTeamScoreDeltasForKill,
   getTeamScoreDeltasForCapture,
 };

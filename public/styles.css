@@ -333,6 +333,25 @@ body.chat-active #chatInput {
   pointer-events: none;
   z-index: 9999;
   display: none;
+
+  /* The button stack has to fit a phone held in landscape, where the visible
+     viewport is only a few hundred pixels tall. A fixed 80px button on a 90px
+     pitch needs 368px for four, which pushed the top of the ladder off a Pixel
+     and left the one below it stranded near the top corner. Sizes scale with
+     the viewport instead, and every button's offset is derived from one pitch,
+     so they keep an equal margin whatever they scale to. On a desktop the
+     minimums win and the layout is unchanged. */
+  --mobile-btn-size: min(80px, 15vh);
+  --mobile-btn-gap: min(10px, 2vh);
+  /* svh, not vh: on mobile Chrome `vh` is the *large* viewport, the one with the
+     URL bar retracted, so a stack sized in vh is taller than what is actually on
+     screen. svh is the viewport with the browser UI showing, which is the height
+     that has to fit. Declared second so a browser without svh keeps the vh pair
+     above rather than dropping the size entirely. */
+  --mobile-btn-size: min(80px, 15svh);
+  --mobile-btn-gap: min(10px, 2svh);
+  --mobile-btn-pitch: calc(var(--mobile-btn-size) + var(--mobile-btn-gap));
+  --mobile-btn-base: max(2vw, env(safe-area-inset-bottom));
 }
 
 .mobile-joystick {
@@ -368,11 +387,11 @@ body.chat-active #chatInput {
 .mobile-btn {
   position: absolute;
   right: max(2vw, env(safe-area-inset-right));
-  width: 80px;
-  height: 80px;
+  width: var(--mobile-btn-size);
+  height: var(--mobile-btn-size);
   background: rgba(76,175,80,0.85);
   color: #fff;
-  font-size: 2.2em;
+  font-size: calc(var(--mobile-btn-size) * 0.45);
   border: none;
   border-radius: 50%;
   pointer-events: auto;
@@ -391,9 +410,19 @@ body.chat-active #chatInput {
   transition: filter 0.1s, transform 0.1s, opacity 0.1s;
 }
 
-#dropBtn { bottom: calc(max(2vw, env(safe-area-inset-bottom)) + 2 * (80px + 10px)); }
-#jumpBtn { bottom: calc(max(2vw, env(safe-area-inset-bottom)) + 80px + 10px); }
-#fireBtn { bottom: max(2vw, env(safe-area-inset-bottom)); background: rgba(244,67,54,0.85); }
+/* Repeated addition rather than `pitch * 2`. Chrome on Android drops a `bottom`
+   built from a number multiplied by a parenthesised length -- the rule is simply
+   discarded, and an absolutely positioned button with no offset falls to its
+   static position at the top of the overlay, which is the bug this ladder had.
+   Addition is the one form nothing argues with. */
+#identifyBtn {
+  bottom: calc(var(--mobile-btn-base) + var(--mobile-btn-pitch) + var(--mobile-btn-pitch) + var(--mobile-btn-pitch));
+}
+#dropBtn {
+  bottom: calc(var(--mobile-btn-base) + var(--mobile-btn-pitch) + var(--mobile-btn-pitch));
+}
+#jumpBtn { bottom: calc(var(--mobile-btn-base) + var(--mobile-btn-pitch)); }
+#fireBtn { bottom: var(--mobile-btn-base); background: rgba(244,67,54,0.85); }
 
 @media (min-width: 900px) {
   #controlsOverlay { display: none; }
@@ -1178,6 +1207,72 @@ canvas {
   text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
   pointer-events: none;
   user-select: none;
+}
+
+/* An observer aims at nothing and reloads nothing, so the crosshair, the mouse
+   motion box, the shot status and the altimeter all go. HUDRenderer::renderRoaming
+   draws none of them either. */
+body.observing #crosshair,
+body.observing #controlBox,
+body.observing #shotStatus,
+body.observing #altimeter {
+  display: none;
+}
+
+/* Identify picks the roaming target. It will also lock a guided missile once
+   those exist; until then it has nothing to do outside observer mode, so the
+   touch button is only offered there. Fire and Drop keep their own labels,
+   because an observer spends them on the view and on descending. */
+#identifyBtn {
+  display: none;
+}
+
+body.observing #identifyBtn {
+  display: flex;
+}
+
+/* renderRoaming() draws both of these: renderStatus() puts the roaming label at
+   the very top and renderAlerts() stacks the alert slots just under it. They are
+   separate things -- the status line persists, an alert times out -- so they
+   share a column rather than an element. Both deliberately sit over the
+   scoreboard and radar: an alert lasts a few seconds and reading it matters more
+   than what it covers. */
+#hudNotices {
+  position: fixed;
+  top: max(1vh, 12px);
+  left: 0;
+  width: 100%;
+  z-index: 200;
+  pointer-events: none;
+  text-align: center;
+}
+
+.alertHudLine,
+#roamStatus {
+  font-size: clamp(1.2rem, 3.2vmin, 2.1rem);
+  font-weight: bold;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9), 0 0 3px rgba(0, 0, 0, 0.9);
+  line-height: 1.25;
+}
+
+/* messageColor, which is what renderStatus uses for the roaming label. */
+#roamStatus {
+  color: #cfd8e6;
+  display: none;
+}
+
+body.observing #roamStatus {
+  display: block;
+}
+
+/* ScoreboardRenderer::drawRoamTarget brackets the row being watched. */
+.scoreboardEntry.selectable {
+  cursor: pointer;
+}
+
+.scoreboardEntry.roamTarget {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
 }
 
 #crosshair {

@@ -53,6 +53,7 @@ const {
   getPlayerTeamColor,
   getInitialPlayerColor,
   isColorTeam,
+  isObserverTeam,
   isColorTeamIndex,
   getTeamColorIndex,
   getTeamFromColorIndex,
@@ -4147,6 +4148,15 @@ wss.on('connection', (ws, req) => {
             ws.send(JSON.stringify({ error: `Team is full: ${requestedTeam}` }));
             break;
           }
+          // A team change takes the tank out of play, so it gives up its flag
+          // like every other such path. This is keyed on the team actually
+          // changing rather than on the join, because Player Options carries
+          // name, team, and tank together and re-sends all three -- a player
+          // changing only their tank keeps the flag. It runs before the spawn
+          // below, since dropFlag() casts its ray from the owner's position.
+          if (previousTeam && previousTeam !== assignedTeam) {
+            dropPlayerFlag(player.id);
+          }
           player.name = joinName;
           player.tankModel = isAllowedTankModel(requestedTankModel)
             ? requestedTankModel
@@ -4164,12 +4174,23 @@ wss.on('connection', (ws, req) => {
           player.voiceMicEnabled = false;
           player.joined = true;
           player.voiceRosterSignature = '';
-          player.health = 100;
+          // An observer never comes alive. health 0 is the state the join flow
+          // already renders as a scoreboard entry with an invisible tank, which
+          // is exactly what an observer wants, and it leaves every path that
+          // tests health refusing on its own.
+          //
+          // It still gets a spawn position, because that is where its camera
+          // starts: an observer should arrive standing on the field facing the
+          // way a tank would, not hovering at the origin. Nothing drives the
+          // position after that -- the camera lives on the client, and an
+          // observer sends no move packets.
+          const joinAsObserver = isObserverTeam(assignedTeam);
+          player.health = joinAsObserver ? 0 : 100;
           // PlayerInfo::resetPlayer(ctf) puts every CTF spawn on the team base.
-          player.restartOnBase = CTF_ENABLED;
+          player.restartOnBase = !joinAsObserver && CTF_ENABLED;
           const spawnPos = getSpawnPosition(player);
           player.x = spawnPos.x;
-          player.y = spawnPos.y
+          player.y = spawnPos.y;
           player.z = spawnPos.z;
           player.rotation = spawnPos.rotation;
           player.verticalVelocity = 0;

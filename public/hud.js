@@ -8,7 +8,7 @@
 // hud.js - Handles HUD and debug display logic
 
 import { normalizeShotSlotCount } from './shots.mjs';
-import { PLAYER_TEAM_LABELS, getPlayerTeamColor, isColorTeam } from './teams.mjs';
+import { PLAYER_TEAM_LABELS, getPlayerTeamColor, isColorTeam, isObserverTeam } from './teams.mjs';
 
 const degreeBarRenderState = {
   canvas: null,
@@ -155,15 +155,89 @@ export function bindToggleButton(btn, {
   return refresh;
 }
 
+// HUDRenderer::setAlert and renderAlerts (HUDRenderer.cxx:398, :767). Three
+// slots, each with its own clock, drawn large and centred near the top of the
+// screen with slot 0 highest. A warning takes the warning colour. Upstream lets
+// these sit over whatever is behind them, and so does bzo: an alert is short
+// lived, and being readable matters more than what it briefly covers.
+export const MAX_HUD_ALERTS = 3;
+const HUD_ALERT_WARNING_COLOR = '#ff5a4a';
+const HUD_ALERT_COLOR = '#ffffff';
+const hudAlerts = new Array(MAX_HUD_ALERTS).fill(null);
+
+// A null or empty string clears the slot, which is what setAlert(i, NULL) does.
+export function setHudAlert(index, text, durationSeconds, warning = false) {
+  const slot = Math.max(0, Math.min(MAX_HUD_ALERTS - 1, index | 0));
+  if (!text) {
+    hudAlerts[slot] = null;
+    return;
+  }
+  hudAlerts[slot] = {
+    text: String(text),
+    warning: Boolean(warning),
+    expiresAt: performance.now() + durationSeconds * 1000,
+  };
+}
+
+// Shared by the DOM HUD and the XR panel so the two never disagree about what is
+// showing or for how long.
+export function getActiveHudAlerts(now = performance.now()) {
+  const active = [];
+  for (let i = 0; i < MAX_HUD_ALERTS; i++) {
+    const alert = hudAlerts[i];
+    if (!alert) continue;
+    if (alert.expiresAt <= now) {
+      hudAlerts[i] = null;
+      continue;
+    }
+    active.push({ text: alert.text, warning: alert.warning });
+  }
+  return active;
+}
+
+export function getHudAlertColor(warning) {
+  return warning ? HUD_ALERT_WARNING_COLOR : HUD_ALERT_COLOR;
+}
+
+let alertHudElement;
+let lastAlertHudKey = '';
+
+export function updateAlertHud(now = performance.now()) {
+  if (alertHudElement === undefined) alertHudElement = document.getElementById('alertHud');
+  if (!alertHudElement) return;
+  const active = getActiveHudAlerts(now);
+  // Rebuilding three lines every frame would thrash the DOM for text that
+  // changes a few times a minute.
+  const key = active.map((alert) => `${alert.warning ? 'w' : 'n'}:${alert.text}`).join('\n');
+  if (key === lastAlertHudKey) return;
+  lastAlertHudKey = key;
+
+  alertHudElement.replaceChildren();
+  active.forEach((alert) => {
+    const line = document.createElement('div');
+    line.className = 'alertHudLine';
+    line.textContent = alert.text;
+    line.style.color = getHudAlertColor(alert.warning);
+    alertHudElement.appendChild(line);
+  });
+}
+
 // Update HUD button states
 export function updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }) {
   setActive(mouseBtn, mouseControlEnabled, 'Disable Mouse Movement (M)', 'Enable Mouse Movement (M)');
-  setActive(debugBtn, debugEnabled, 'Hide Debug HUD (I)', 'Show Debug HUD (I)');
+  setActive(debugBtn, debugEnabled, 'Hide Debug HUD (`)', 'Show Debug HUD (`)');
   setActive(fullscreenBtn, document.fullscreenElement, 'Exit Fullscreen (F)', 'Toggle Fullscreen (F)');
   if (cameraBtn) {
+    // While roaming this arrives already spelled as a view name, because an
+    // observer's camera modes are the roaming views rather than these three.
+    const CAMERA_MODE_LABELS = {
+      'first-person': 'First Person',
+      'third-person': 'Third Person',
+      overview: 'Overview',
+    };
     let camTitle = 'Toggle Camera View (C)';
     if (typeof cameraMode !== 'undefined') {
-      camTitle = `Camera: ${cameraMode === 'first-person' ? 'First Person' : cameraMode === 'third-person' ? 'Third Person' : 'Overview'} (C)`;
+      camTitle = `Camera: ${CAMERA_MODE_LABELS[cameraMode] || cameraMode} (C)`;
     }
     cameraBtn.title = camTitle;
   }
@@ -366,12 +440,36 @@ function updateTeamScoreboard(teamScores) {
   });
 }
 
+// Observers last, as `ScoreboardRenderer::newSortedList` puts them under
+// `obsLast`: they score for nobody, so ranking them among the players says
+// something untrue. Then by (kills - deaths) descending, then kills descending,
+// then deaths ascending, then connectDate ascending (oldest first).
+//
+// Exported because roaming follows the leader when it has no explicit target,
+// and upstream reads that off the scoreboard's own order
+// (`ScoreboardRenderer::getLeader`) -- two orderings would let the tracked
+// player and the top row disagree.
+export function compareScoreboardPlayers(a, b) {
+  if (Boolean(a.isObserver) !== Boolean(b.isObserver)) return a.isObserver ? 1 : -1;
+  const aScore = (a.kills || 0) - (a.deaths || 0);
+  const bScore = (b.kills || 0) - (b.deaths || 0);
+  if (bScore !== aScore) return bScore - aScore;
+  if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
+  if ((a.deaths || 0) !== (b.deaths || 0)) return (a.deaths || 0) - (b.deaths || 0);
+  return a.connectDate - b.connectDate;
+}
+
 export function updateScoreboard({
   myPlayerId,
   myPlayerName,
   myTank,
   tanks,
   teamScores,
+  // Set while roaming: the id being watched, and the callback a row click
+  // reports a new choice to. Absent for a playing tank, which leaves the rows
+  // inert.
+  roamTargetId = null,
+  onSelectRoamTarget = null,
   // ScoreboardRenderer::drawPlayerScore puts the carried flag after the
   // callsign, in the flag's own colour. Supplied as a lookup rather than read
   // here, because the flag list belongs to client.js.
@@ -393,6 +491,7 @@ export function updateScoreboard({
       connectDate: myTank.userData.playerState.connectDate ? new Date(myTank.userData.playerState.connectDate) : new Date(0),
       color: myTank.userData.playerState.color,
       flag: getPlayerFlagLabel(myPlayerId),
+      isObserver: isObserverTeam(myTank.userData.playerState.team),
       isCurrent: true
     });
   }
@@ -408,25 +507,28 @@ export function updateScoreboard({
         connectDate: tank.userData.playerState.connectDate ? new Date(tank.userData.playerState.connectDate) : new Date(0),
         color: tank.userData.playerState.color,
         flag: getPlayerFlagLabel(id),
+        isObserver: isObserverTeam(tank.userData.playerState.team),
         isCurrent: false
       });
     }
   });
 
-  // Sort by (kills - deaths) descending, then kills descending, then deaths ascending, then connectDate ascending (oldest first)
-  playerData.sort((a, b) => {
-    const aScore = (a.kills || 0) - (a.deaths || 0);
-    const bScore = (b.kills || 0) - (b.deaths || 0);
-    if (bScore !== aScore) return bScore - aScore;
-    if ((b.kills || 0) !== (a.kills || 0)) return b.kills - a.kills;
-    if ((a.deaths || 0) !== (b.deaths || 0)) return (a.deaths || 0) - (b.deaths || 0);
-    return a.connectDate - b.connectDate;
-  });
+  playerData.sort(compareScoreboardPlayers);
 
   // Create scoreboard entries
   playerData.forEach(player => {
     const entry = document.createElement('div');
-    entry.className = 'scoreboardEntry' + (player.isCurrent ? ' current' : '');
+    // ScoreboardRenderer::drawRoamTarget marks the row the observer is watching.
+    const isRoamTarget = player.id === roamTargetId;
+    entry.className = 'scoreboardEntry'
+      + (player.isCurrent ? ' current' : '')
+      + (isRoamTarget ? ' roamTarget' : '');
+    if (onSelectRoamTarget && !player.isCurrent) {
+      // The one target gesture that works on a phone as well as a desktop.
+      // Tapping the row already being watched releases back to the leader.
+      entry.classList.add('selectable');
+      entry.addEventListener('click', () => onSelectRoamTarget(isRoamTarget ? null : player.id));
+    }
     if (player.color) {
       entry.style.color = colorToCSS(player.color);
     }

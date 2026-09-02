@@ -14,13 +14,13 @@ import { initSettingsMenu } from './settings.js';
 import { INPUT_CONTEXT, InputContextManager } from './input-context.mjs';
 
 // Shared virtual input state exposed to the game loop.
-export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
+export let virtualInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false, identify: false };
 
 // Keep each input source separate so one source cannot leave stale values in
 // the shared state when another source starts or stops reporting input.
-const touchInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
-const gamepadInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
-const xrInputState = { forward: 0, turn: 0, fire: false, jump: false, drop: false };
+const touchInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false, identify: false };
+const gamepadInput = { forward: 0, turn: 0, fire: false, jump: false, drop: false, identify: false };
+const xrInputState = { forward: 0, turn: 0, fire: false, jump: false, drop: false, identify: false };
 
 // Keyboard input state
 export const keys = {};
@@ -45,6 +45,7 @@ function resetInputValues(inputState) {
   inputState.fire = false;
   inputState.jump = false;
   inputState.drop = false;
+  inputState.identify = false;
 }
 
 function syncVirtualInput() {
@@ -58,6 +59,7 @@ function syncVirtualInput() {
   virtualInput.fire = source.fire;
   virtualInput.jump = source.jump;
   virtualInput.drop = source.drop;
+  virtualInput.identify = source.identify;
 }
 
 function resetGamepadInput() {
@@ -246,6 +248,7 @@ export function updateVirtualInputFromGamepad() {
   // Axes 1: Left stick Y (forward/backward)
   // Axes 2: Right stick X (unused)
   // Axes 3: Right stick Y (unused)
+  // Buttons 4/5: Shoulders (identify)
   // Button 0: A/X (fire)
   // Button 1: B/Circle (jump)
   // Button 2: X/Square (drop flag)
@@ -283,6 +286,10 @@ export function updateVirtualInputFromGamepad() {
   // face button rather than the primary one it uses in XR.
   const dropPressed = Boolean(buttons[2] && buttons[2].pressed);
   gamepadInput.drop = dropPressed;
+
+  // Identify: either shoulder (4/5), the only pair left once the face buttons
+  // and triggers are spent.
+  gamepadInput.identify = Boolean(buttons[4]?.pressed || buttons[5]?.pressed);
 
   // Track button state changes
   lastGamepadButtonState.fire = firePressed;
@@ -338,6 +345,7 @@ export function setupInputHandlers() {
   const fireBtn = document.getElementById('fireBtn');
   const jumpBtn = document.getElementById('jumpBtn');
   const dropBtn = document.getElementById('dropBtn');
+  const identifyBtn = document.getElementById('identifyBtn');
   let joystickActive = false;
   let joystickTouchId = null;
   let joystickCenter = { x: 0, y: 0 };
@@ -476,6 +484,19 @@ export function setupInputHandlers() {
     dropBtn.addEventListener('mouseleave', () => { touchInput.drop = false; syncVirtualInput(); setDropPressed(false); });
     dropBtn.addEventListener('touchcancel', () => { touchInput.drop = false; syncVirtualInput(); setDropPressed(false); });
   }
+  if (identifyBtn) {
+    const setIdentifyPressed = (pressed) => {
+      if (pressed) identifyBtn.classList.add('pressed');
+      else identifyBtn.classList.remove('pressed');
+    };
+    const holdIdentify = (pressed) => { touchInput.identify = pressed; syncVirtualInput(); setIdentifyPressed(pressed); };
+    identifyBtn.addEventListener('touchstart', e => { e.preventDefault(); if (!isGameplayInputActive()) return; holdIdentify(true); });
+    identifyBtn.addEventListener('touchend', e => { e.preventDefault(); holdIdentify(false); });
+    identifyBtn.addEventListener('mousedown', e => { e.preventDefault(); if (!isGameplayInputActive()) return; holdIdentify(true); });
+    identifyBtn.addEventListener('mouseup', e => { e.preventDefault(); holdIdentify(false); });
+    identifyBtn.addEventListener('mouseleave', () => holdIdentify(false));
+    identifyBtn.addEventListener('touchcancel', () => holdIdentify(false));
+  }
 
 }
 
@@ -547,11 +568,16 @@ export function updateVirtualInputFromXR() {
   // matching the keyboard, so firing is the trigger alone.
   xrInputState.fire = controllerInput.leftTrigger > 0.5 || controllerInput.rightTrigger > 0.5;
 
-  // B button OR side grip button: jump
-  xrInputState.jump = controllerInput.buttonB || controllerInput.buttonGrip;
+  // Side grip button: jump. B is identify, so grip carries this alone.
+  xrInputState.jump = controllerInput.buttonGrip;
 
   // A button: drop the carried flag
   xrInputState.drop = controllerInput.buttonA;
+
+  // B button: identify, which picks the roaming target for an observer and
+  // will lock a guided missile for a tank. Merged across both controllers by
+  // getXRControllerInput, so either hand works.
+  xrInputState.identify = controllerInput.buttonB;
   syncVirtualInput();
 }
 
@@ -566,6 +592,11 @@ export const latestOrientation = {
 
 const defaultHudContext = {
   isMobile: false,
+  // Roaming replaces the player's camera modes: a first/third/overview cycle
+  // does nothing for an observer, which has no tank to look at.
+  isObserver: () => false,
+  cycleObserverView: () => {},
+  getObserverViewLabel: () => '',
   showMessage: () => {},
   updateHudButtons: () => {},
   toggleDebugHud: () => {},
@@ -671,7 +702,7 @@ const GAMEPLAY_OWNED_KEYS = new Set([
   'BracketLeft', 'BracketRight', 'Period', 'Comma',
   'PageUp', 'PageDown', 'End',
   // View, HUD, radar, help
-  'KeyM', 'KeyC', 'KeyO', 'KeyF', 'KeyI', 'KeyB',
+  'KeyM', 'KeyC', 'KeyO', 'KeyF', 'Backquote', 'KeyB', 'KeyI',
   'Slash', 'Backslash', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract',
   // Not a binding: Firefox opens its link quick-find on an apostrophe and eats
   // the keyboard until dismissed, which from inside a tank looks like a freeze.
@@ -781,13 +812,17 @@ function refreshHudButtons() {
     debugEnabled: hudContext.getDebugEnabled(),
     fullscreenBtn: domRefs.fullscreenBtn,
     cameraBtn: domRefs.cameraBtn,
-    cameraMode: hudContext.getCameraMode(),
+    cameraMode: hudContext.isObserver() ? hudContext.getObserverViewLabel() : hudContext.getCameraMode(),
   });
   settingsMenu?.refresh();
 }
 
 function getSettingsMenuValue(id, item) {
-  if (id === 'cameraBtn') return cameraModeLabel(hudContext.getCameraMode());
+  if (id === 'cameraBtn') {
+    return hudContext.isObserver()
+      ? hudContext.getObserverViewLabel()
+      : cameraModeLabel(hudContext.getCameraMode());
+  }
   if (id === 'radarZoomBtn') {
     const match = item.button.title.match(/Radar range preset:\s*(.+)/i);
     return match?.[1] || 'Medium';
@@ -1059,6 +1094,14 @@ function cameraModeLabel(mode) {
 }
 
 function cycleCameraMode() {
+  // Upstream's `roam cycle type forward` (F8). An observer's camera modes are
+  // the roaming views, so C cycles those and leaves the player's own choice
+  // untouched underneath, ready for when they join a team.
+  if (hudContext.isObserver()) {
+    hudContext.cycleObserverView();
+    refreshHudButtons();
+    return;
+  }
   const current = hudContext.getCameraMode();
   const next = current === 'first-person' ? 'third-person' : current === 'third-person' ? 'overview' : 'first-person';
   hudContext.setCameraMode(next);
@@ -1410,7 +1453,10 @@ function bindHudElements() {
         toggleMouseMode();
       } else if (e.key === 'f' || e.key === 'F') {
         toggleFullscreen();
-      } else if (e.key === 'i' || e.key === 'I') {
+      } else if (e.code === 'Backquote') {
+        // Matched on `code`, not `key`: the console key is where a layout puts
+        // it, and on AZERTY or QWERTZ this one does not produce a backtick at
+        // all. `I` is reserved for upstream's `identify`.
         hudContext.toggleDebugHud({
           debugEnabled: hudContext.getDebugEnabled(),
           setDebugEnabled: hudContext.setDebugEnabled,

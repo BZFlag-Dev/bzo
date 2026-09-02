@@ -58,9 +58,17 @@ or deployment configuration.
   current heading, with the right stick preferred when both are active.
 - Move either thumbstick left and right; the tank should rotate without
   changing its heading from head movement, with the right stick preferred.
-- Press either trigger or either primary face button to fire.
-- Press either secondary face button or either grip button to jump.
+- Press either trigger to fire.
+- Press either grip button to jump. The secondary face button no longer jumps.
+- Press either primary face button (A) to drop a carried flag.
+- Press either secondary face button (B) to identify. As an observer this picks
+  the tank centred in the view; for a tank it does nothing yet.
+- Press either thumbstick to open Settings.
 - Release every control and confirm that no stale input continues to act.
+
+Every gameplay action must stay reachable from **one** controller alone, which is
+what the merged accessors in `getXRControllerInput()` exist for. Check each of
+the above with the other controller set down.
 
 ## XR Settings menu
 
@@ -85,6 +93,18 @@ or deployment configuration.
   are released after closing.
 - Reopen Settings, activate `Exit VR`, and confirm that the normal desktop
   render loop resumes.
+
+## Observer
+
+- Join as an Observer and confirm no tank of your own is drawn, including with
+  Debug Geometry on.
+- Fly with either thumbstick; grip climbs and the primary face button descends.
+  The view stays level as you climb.
+- Press either trigger to step the selection: the leader, each player, then the
+  next view. The notice panel names the view and who is being watched.
+- Press the secondary face button in the Free view and confirm the tank centred
+  in the view is picked, and that it answers on the notice panel in another view.
+- Confirm the notice panel shows kill and death alerts from other players.
 
 ## Session lifecycle
 
@@ -115,7 +135,10 @@ result can be reproduced.
 ## Deferred TODO: Hand Controls
 
 These are deferred options to revisit later. Do not change current physical
-controller mappings unless cross-device compatibility requires it.
+controller mappings without being asked: the set above is deliberate, and the
+one-controller rule constrains any addition to taking a binding rather than
+splitting one across hands. Jump moved to grip alone so that B could carry
+`identify`; see the Observer section of `AGENTS.md`.
 
 - Keep current controller bindings as primary where gamepad axes/buttons are
   available.

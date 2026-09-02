@@ -360,12 +360,201 @@ radar. `updateDegreeBar` takes the markers as an argument, so the flag list stay
 in `client.js`.
 
 Both scoreboards name a carried flag after the callsign, as
-`ScoreboardRenderer::drawPlayerScore` does: a team flag in full, a superflag by
-its abbreviation, in the flag's colour. The DOM one repaints on events, so a
-change of ownership has to call `callUpdateScoreboard`; the XR panel repaints
-every frame and does not.
+`ScoreboardRenderer::drawPlayerScore` does: a superflag by its abbreviation, in
+the flag's colour. A team flag is named by its colour alone -- `Red`, not
+upstream's `Red Team` -- because the label already carries that team's colour, so
+the word is redundant. `getPlayerFlagLabel` in `client.js` is the single source
+for both panels. The DOM one repaints on events, so a change of ownership has to
+call `callUpdateScoreboard`; the XR panel repaints every frame and does not.
 
 Work tracked as GitHub issue #6; reference it from flag commits.
+
+## Observer
+
+An observer has no tank. It joins, chats, and flies a
+roaming camera over the map. Work tracked as GitHub issue #33; reference it from
+observer commits.
+
+### What upstream does
+
+**An observer always roams.** `Roaming::setMode` (`Roaming.cxx:54`) refuses
+`roamViewDisabled` for `ObserverTeam`, so there is no way to leave roaming, and
+refuses every other mode for a player. There are five views (`Roaming.h:36`):
+
+| view | eye | look at |
+|---|---|---|
+| `free` | roaming camera | its own heading |
+| `track` | roaming camera | target's muzzle |
+| `follow` | 40 behind the target's forward, `6 * muzzleHeight` up | target's base |
+| `fps` | target's muzzle | target's forward |
+| `flag` | roaming camera | a **team** flag (`flagTeam != NoTeam`) |
+
+**"Track the leader" is not a view, it is the null target of one.**
+`targetManual == -1` means auto, and `buildRoamingLabel()` re-resolves it every
+frame to the rabbit, else `ScoreboardRenderer::getLeader()`, which prefixes
+`"Leader "` to the callsign. Cycling past either end returns to auto, and a
+target that leaves the game drops you back there because `changePlayer()` clears
+a target it cannot find in the scoreboard list.
+
+**The roam camera eats the tank's own two axes.** `setupRoamingCamera()`
+(`playing.cxx:6666`) reads `myTank->getSpeed()` and `getRotation()` and remaps
+which camera axis each feeds with Ctrl/Alt/Shift. Rates, with bzo's
+`TANK_SPEED: 25`: translate `4 * tankSpeed` = 100 u/s, yaw `zoom * turn` deg/s
+(60 at the default zoom, so it slows as you zoom in), vertical `4 * tankSpeed`.
+`z` is floored at muzzle height; x and y are never clamped and there is no
+collision, so the camera flies through buildings and past the world border.
+
+**Identify picks the tank centred in the sights.** `setTarget()`
+(`playing.cxx:4390`), bound to `I` and Right Mouse -- see the Keyboard section.
+
+**Defaults are narrower than the code looks.** `trackShots`, `displayLabels`
+and `slowKeyboard` are all unset in `defaultBZDB.cxx`, so upstream's defaults are
+no shot-riding camera, no tank labels, and no delta smoothing. Because the
+smoothing branch is off, `roamSmoothFollow()` never runs and its `followDist` /
+`followHeight` / `followSpeed*` knobs are dead: `follow` takes the hard rig in
+the table above. Under the rule to implement upstream's default variant and ship
+no setting, all of that is out of scope, as are `roamMouseWheelSwap` and
+`/roampos`.
+
+### How bzo does it
+
+An observer joins with `health = 0`, which is the state the Join/Entry flow
+already renders as a scoreboard entry with an invisible tank, and every path that
+tests health then refuses on its own. It still gets a **spawn position**, because
+that is where its camera starts -- an observer should arrive standing on the field
+facing the way a tank would, not at the origin, which is where upstream's
+`resetCamera()` puts it. Upstream gets away with the origin because its default
+view is `fps` and never `free`.
+
+The camera lives only on the client: `public/roam.mjs`, pure and covered by
+`scripts/test-roam.mjs`. Each frame the tank mesh is moved to the eye point,
+which is upstream's `myTank->move(virtPos, roamViewAngle)`, because the radar,
+the heading tape and the sound listener all read that transform and so follow the
+camera without knowing roaming exists. **Nothing draws that mesh** -- not the
+tank, not its server-position ghost, which hangs off `worldGroup` rather than off
+the tank and so has to be hidden separately.
+
+**An observer sends no movement packets**, so there is nothing to validate and no
+cheat surface. Do not add one. Upstream's `sendObserverHeartbeat` exists so a
+server can report observer positions, which bzo has no feature for.
+
+`gatherDriveInput()` in `client.js` is the one place the drive axes are read, so
+a tank and the camera see the same controls from every input surface. Each view
+resolves to a concrete eye and look point in `getRoamFraming()`, so `render.js`
+only applies one and the rigs stay with the game state.
+
+`compareScoreboardPlayers` is exported from `hud.js` and drives both the
+scoreboard order and the leader that roaming falls back to. Upstream reads the
+leader off the scoreboard's own order, and two orderings would let the tracked
+player and the top row disagree.
+
+| observer action | desktop | mobile | gamepad | XR |
+|---|---|---|---|---|
+| translate / yaw | WASD, arrows, mouse box | joystick | left stick | thumbstick |
+| step the selection | Enter, C, left click | `●`, Camera row | A / RT | either trigger |
+| up | Tab | `⤒` | B / LT | grip |
+| down | Space | `⚑` | X | A |
+| identify | I, right click | `◎` | shoulder | B |
+
+**The XR budget is full, and every action stays reachable from one controller.**
+Either trigger fires, and grip, A, B, and the thumbstick press -- settings -- are
+each OR'd across both hands by `getXRControllerInput()` (`webxr.js:628`). That
+invariant is why those merged accessors exist: a new XR action may only ever be
+added by taking a binding, never by splitting one across hands.
+
+### Intentional deviations
+
+- **One flattened cycle, not two.** Upstream spends two bindings here: F8 cycles
+  the view type and F6/F7 cycle the subject. bzo binds nothing to changing the
+  subject on its own, so fire, `C`, and the Settings/XR Camera row all walk the
+  same list -- within a view that takes a subject, the leader first and then
+  every player, then on to the next view. While roaming those replace the
+  first/third/overview cycle, which does nothing for an observer; the player's
+  own choice is left untouched underneath for when they join a team.
+- **The camera is level, like a tank's.** There is no pitch axis: altitude is on
+  a button and no axis is left, and the look point sits one unit ahead at the
+  eye's own height, so it travels with the camera forward, sideways and
+  vertically. Climbing raises what you are looking at rather than tilting the
+  view down. Upstream has pitch on Ctrl+forward.
+- **Vertical moves at tank speed, not upstream's `4 *`.** Upstream's vertical is
+  a proportional axis under Shift; a button has no proportional control, and
+  100 u/s off one overshoots badly.
+- **`identify` acts only in the free view.** It means "whoever is centred in my
+  sights", which is only a choice where the player aims the camera; every other
+  view is already pointed at its target, so identifying from one would re-pick
+  the tank already being watched. Upstream never meets this because it changes
+  subject with F6/F7 rather than by looking. In a following view it says so, and
+  the cycle or the scoreboard is how the subject changes there.
+- **XR keeps a level frame and no zoom.** Tilting `worldGroup` tilts the horizon,
+  which is the nausea case, and the head already looks around; the runtime owns
+  the stereo projection, so zoom is not offered there at all.
+- **Roam zoom ships unbound everywhere.** Every key that would carry it is spent,
+  `=`/`-`/`\` on radar range in particular. `ROAM_ZOOM_DEFAULT` equals bzo's
+  `BZFlag_DEFAULT_HORIZONTAL_FOV`, so a roaming view is exactly as wide as a
+  playing one, and the yaw rate still scales with it.
+- **A click over the click-through chat panel steps the selection**, because the
+  left button fires and fire steps. Accepted rather than special-cased.
+
+### TODO
+
+- **Switching teams on the live connection.** Any team to any team, including in
+  and out of observer and rogue, without reconnecting. Stock BZFlag has no team
+  switch at all -- `JoinMenu` runs before the connection exists -- but a page
+  reload is a much worse price than a menu.
+
+  Most of it exists: `joinGame` handles a second arrival on the same connection,
+  reading `previousTeam`, resetting and retiring team flags either side of the
+  move, resetting the score, and refreshing the voice roster.
+  `applyXRJoinSelection()` already re-sends it, so the XR Player Options screen
+  is wired for it today. What is missing is the 2D path, which never re-sends:
+  `maybeSendPendingJoinRequest()` returns early once `gameplayJoinConfirmed` is
+  set.
+
+  **A join always respawns and zeroes the score, even onto the same team.** That
+  matches a rejoin upstream, but Player Options carries name, team and tank on
+  one screen and re-sends all three, so a *tank-only* change costs the player
+  their position and score. The carried flag already survives it, because the
+  flag drop keys off `previousTeam !== assignedTeam` rather than off the join.
+  The fix is for Player Options to route an unchanged team through
+  `setTankModel`, which touches neither flags nor position.
+
+  Also unsettled: switching to observer while alive must not become a way to
+  dodge an incoming shot. Upstream's answer is the rejoin wait, which bzo has no
+  equivalent of; losing the score may be disincentive enough.
+- Observers keep upstream's scoreboard order (`obsLast`) but the XR menu panel
+  has no target list, so in XR the cycle and `identify` are the only pickers.
+- `follow` does not reuse the death camera rig (`render.js`), which is the same
+  look-at-a-moving-target shape.
+- `XR_HELP_ITEMS` is one flat frozen list, so it cannot show the observer
+  meanings of grip and A. That wants observer-conditional rows, which is what
+  issue #27 is for.
+- Whether continuous stick yaw is comfortable in XR roam. It matches what bzo
+  already ships when driving; a comfort option is a measurement, not a guess.
+
+## HUD alerts and the status line
+
+`renderRoaming()` draws **both**, and so does every other mode: `renderStatus()`
+puts a persistent line at the very top and `renderAlerts()` stacks up to three
+timed slots just under it. They share the `#hudNotices` column in bzo, and one XR
+panel draws the same column so an immersive session sees it too.
+
+`HUDRenderer::setAlert` / `renderAlerts` (`HUDRenderer.cxx:398`, `:767`): three
+slots, each with its own clock, large and centred with slot 0 highest, a warning
+in the warning colour. `gotBlowedUp()` puts the death notice there for four
+seconds as a warning (`playing.cxx:4028`), worded from `blowedUpMessage[]` --
+"Got shot by <callsign>", "Tank Self Destructed". bzo keeps the slots, the
+timing and the wording, and adds a kill notice upstream has no equivalent of:
+upstream only ever warns you about your own death, but the two read as a pair.
+
+Alerts deliberately sit over the scoreboard and radar. They last seconds, and
+reading them matters more than what they briefly cover. An observer cannot die or
+score, so the kill and death notices never fire for one, but server and game
+alerts do.
+
+The roaming label is the status line, not an alert -- it persists. It reads
+`Leader <callsign>` for the automatic target, from
+`ScoreboardRenderer::getLeader`'s own prefix, so watching whoever is winning is
+distinguishable from having picked that same player by hand.
 
 ## Shot timing
 
@@ -425,18 +614,35 @@ Nothing carrying Ctrl, Meta, or Alt is ours, whatever key it is built on:
 Ctrl+W, Cmd+Q and Alt+Left pass straight through. Escape is deliberately left
 alone -- a browser will not let go of it, and it also leaves pointer lock.
 
-Two upstream bindings collide with keys bzo already spends, and both matter for
-features that are still to come (`ActionBinding.cxx:91-98`):
+bzo matches upstream on every binding it has taken so far
+(`ActionBinding.cxx:91-98`):
 
 | upstream | key | in bzo |
 |---|---|---|
 | `fire` | Enter, Left Mouse | matches |
 | `drop` (drop flag) | Space | matches |
-| `identify` (guided missile lock) | I | taken by the debug HUD |
+| `identify` | I, Right Mouse | matches |
 
-Guided missiles still have to displace the debug HUD from `I`, or diverge from
-every other BZFlag client. `B` is the intended home for `identify` when that
-lands; pick then, not before.
+**`I` and Right Mouse carry `identify`. Do not spend either on anything else.**
+The debug HUD sits on the backtick instead, which is unbound in upstream BZFlag and
+is the console key by convention everywhere else. It is matched on
+`event.code === 'Backquote'` rather than `event.key`, because AZERTY and QWERTZ
+do not produce a backtick from that physical key -- the rest of the dispatch in
+`input.js` matches on `key`, and this is the one binding where the two diverge.
+
+Upstream binds `I` and Right Mouse to **both** `identify` and `restart`, gated on
+whether the tank is alive: `cmdIdentify` acts only when alive, `cmdRestart` only
+when dead. bzo rejoins without waiting for a click, so the `restart` half has
+nothing to do here and the binding is purely `identify`.
+
+`identify` targets the tank centred in the sights -- nearest player within
+`_targetingAngle` 0.3, about 17.5 degrees, anything behind ignored -- and sets
+nemesis as a side effect (`setTarget`, `playing.cxx:4390`). It is one action with
+two meanings, not two bindings: the roam target picker in observer mode, and the
+guided-missile lock once those land. `pickTargetInSights` in `public/roam.mjs`
+holds the cone, so the missile path reuses it rather than growing a second copy.
+It also rides `virtualInput.identify`, which is where the touch button, the
+gamepad shoulders, and the XR B button arrive. See the Observer section.
 
 ## Mouse steering is the targeting box
 

@@ -236,13 +236,28 @@ If you want automatic container updates, use your preferred container update man
 - `C` — cycle camera mode
 - `O` — toggle operator panel
 - `F` — toggle fullscreen
-- `I` — toggle debug HUD
+- `` ` `` — toggle debug HUD
 - `=` or `+` or `Numpad +` — zoom radar out (increase range)
 - `-` or `Numpad -` — zoom radar in (decrease range)
 - `\` — reset radar zoom to the default medium range (0.5x shot-distance)
 - `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets
 - `B` — toggle nearby voice microphone
 - `/` or `?` — show/hide help panel
+
+- `I` or right-click — identify the tank in your sights
+
+### Observer
+
+As an Observer you have no tank. Drive and turn fly the camera instead, `Tab`
+climbs and `Space` descends, and the camera rests at the eye height of a tank on
+the ground. Pausing and self-destruct do nothing.
+
+- `Enter` or `C` — step through everything: in each view, the leader first, then
+  every player, then on to the next view. The views are Free, Track, Follow,
+  Driving with, and Flag where a map has team flags
+- `I` or right-click — in the Free view, watch the tank in your sights
+- Click a scoreboard row to watch that player; click the marked row again to go
+  back to following the leader
 
 ## WebXR
 

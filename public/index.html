@@ -206,7 +206,7 @@
       <h2>HUD Buttons</h2>
       <ul>
         <li><strong>F</strong> — <b>Fullscreen</b> (or click the Fullscreen button)</li>
-        <li><strong>I</strong> — <b>Debug HUD</b> (or click the Debug button)</li>
+        <li><strong>`</strong> — <b>Debug HUD</b> (or click the Debug button)</li>
         <li><strong>M</strong> — <b>Mouse Movement</b> (or click the Mouse Mode button)</li>
         <li><strong>-</strong>/<strong>=</strong> or <strong>Numpad -/+</strong> — <b>Radar Zoom</b></li>
         <li><strong>\</strong> — <b>Radar Zoom Reset (Medium)</b></li>
@@ -261,6 +261,17 @@
         <li><strong>Click Player Name</strong> — Open Settings</li>
       </ul>
 
+      <h2>Observer</h2>
+      <ul>
+        <li><strong>Drive / Turn</strong> — Fly the camera; an Observer has no tank</li>
+        <li><strong>Tab</strong> / <strong>Space</strong> — Climb / Descend</li>
+        <li><strong>Enter</strong> or <strong>C</strong> — Step through views and players: leader, each player, next view</li>
+        <li>Views: Free, Track, Follow, Driving with, Flag</li>
+        <li><strong>I</strong> or <strong>Right Click</strong> — In the Free view, watch the tank in your sights</li>
+        <li><strong>Click a scoreboard row</strong> — Watch that player; click it again for the leader</li>
+        <li>The camera rests at the eye height of a tank on the ground.</li>
+      </ul>
+
       <h2>Nearby Voice</h2>
       <ul>
         <li><strong>B</strong> — <b>Toggle Microphone</b></li>
@@ -291,6 +302,10 @@
     <span class="voiceChannelHudLabel">Nearby</span>
     <span id="voiceChannelHudStatus" class="voiceChannelHudStatus">Microphone off</span>
   </div>
+  <div id="hudNotices">
+    <div id="roamStatus" role="status" aria-live="polite"></div>
+    <div id="alertHud" role="status" aria-live="assertive"></div>
+  </div>
   <div id="crosshair">
     <div class="center"></div>
   </div>
@@ -311,6 +326,7 @@
   <div class="mobile-joystick" id="joystick">
     <div class="joystick-knob" id="joystickKnob"></div>
   </div>
+  <button class="mobile-btn" id="identifyBtn" title="Identify the tank in your sights">◎</button>
   <button class="mobile-btn" id="dropBtn" title="Drop flag">⚑</button>
   <button class="mobile-btn" id="jumpBtn">⤒</button>
   <button class="mobile-btn" id="fireBtn">●</button>

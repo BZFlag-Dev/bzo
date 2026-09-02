@@ -43,7 +43,9 @@ import {
 } from './texture.js';
 
 const DEFAULT_MUZZLE_FORWARD = 3.0;
-const DEFAULT_MUZZLE_HEIGHT = 1.57;
+// BZDB_MUZZLEHEIGHT. Also the floor the roaming camera rests on, so an observer
+// sits at the eye height of a tank on the ground.
+export const DEFAULT_MUZZLE_HEIGHT = 1.57;
 const MUZZLE_TIP_EPSILON = 0.03;
 const BZFlag_DEFAULT_HORIZONTAL_FOV = 60;
 const TANK_PART_ALIASES = {
@@ -207,6 +209,7 @@ const GROUND_CENTER_SIZE = 128; // upstream centerSize
 const GROUND_TEX_REPEAT = 0.05; // upstream groundHighResTexRepeat (defaultBZDB.cxx:82)
 // Upstream's five triangle strips over the four outer and four centre corners.
 const GROUND_EYE_SCRATCH = new THREE.Vector3();
+const ROAM_FORWARD_SCRATCH = new THREE.Vector3();
 const GROUND_STRIPS = [
   [4, 5, 7, 6],
   [0, 1, 4, 5],
@@ -4572,8 +4575,32 @@ class RenderManager {
     });
   }
 
-  updateCamera({ cameraMode, myTank, playerRotation, deathFollowTarget }) {
+  updateCamera({ cameraMode, myTank, playerRotation, deathFollowTarget, roamFraming }) {
     if (!this.camera) return;
+    // Every roaming view resolves to an eye and a look point in client.js, so
+    // the rigs stay with the game state and this only has to apply one.
+    if (cameraMode === 'roam') {
+      if (!roamFraming) return;
+      const { eye, look } = roamFraming;
+      if (xrState.enabled) {
+        // In XR the world moves and the camera does not, as in first person.
+        // Only the heading is taken: tilting worldGroup tilts the horizon, which
+        // is the nausea case, and the head already looks around.
+        const heading = Math.atan2(-(look.x - eye.x), -(look.z - eye.z));
+        const q = new THREE.Quaternion();
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -heading);
+        this.worldGroup.quaternion.copy(q);
+        const eyeRotated = ROAM_FORWARD_SCRATCH.set(eye.x, 0, eye.z).applyQuaternion(q);
+        this.worldGroup.position.set(-eyeRotated.x, -eye.y, -eyeRotated.z);
+        return;
+      }
+      this.worldGroup.position.set(0, 0, 0);
+      this.worldGroup.quaternion.identity();
+      this.camera.position.set(eye.x, eye.y, eye.z);
+      this.camera.up.set(0, 1, 0);
+      this.camera.lookAt(look.x, look.y, look.z);
+      return;
+    }
     if (cameraMode === 'overview') {
       const target = deathFollowTarget || this.deathFollowTarget;
       const focusPoint = target && target.parent

@@ -98,6 +98,11 @@ import {
   updateHudButtons,
   toggleDebugHud,
   toggleDebugLabels,
+  compareScoreboardPlayers,
+  getActiveHudAlerts,
+  getHudAlertColor,
+  setHudAlert,
+  updateAlertHud,
   updateScoreboard,
   updateAltimeter,
   updateDegreeBar,
@@ -106,7 +111,7 @@ import {
   readStoredFlag,
   bindToggleButton
 } from './hud.js';
-import { renderManager } from './render.js';
+import { renderManager, DEFAULT_MUZZLE_HEIGHT } from './render.js';
 import { describeMeasurements, describeRenderCapabilities } from './capabilities.mjs';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -123,6 +128,17 @@ import {
   isXREnabled,
 } from './webxr.js';
 import { INPUT_CONTEXT } from './input-context.mjs';
+import {
+  ROAM_FOLLOW_DISTANCE,
+  ROAM_FOLLOW_HEIGHT_FACTOR,
+  ROAM_VIEW,
+  advanceRoamSelection,
+  createRoamCamera,
+  getRoamForward,
+  pickTargetInSights,
+  roamViewNeedsTarget,
+  updateRoamCamera,
+} from './roam.mjs';
 import {
   PLAYER_TEAM,
   PLAYER_TEAMS,
@@ -148,6 +164,7 @@ import {
   getFlagFlightState,
   getFlagTeamIndex,
   getFlagType,
+  isTeamFlag,
 } from './flags.mjs';
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
@@ -269,13 +286,22 @@ const xrRadarPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, p
 const xrChatPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
 const xrShotStatusPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
 const xrScoreboardPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
-const XR_HUD_PANELS = [xrRadarPanel, xrChatPanel, xrShotStatusPanel, xrScoreboardPanel];
+const xrAlertPanel = { canvas: null, texture: null, mesh: null, planeWidth: 0, planeHeight: 0 };
+const XR_HUD_PANELS = [xrRadarPanel, xrChatPanel, xrShotStatusPanel, xrScoreboardPanel, xrAlertPanel];
 const XR_HUD_PLANE_Z = -0.85;
+// messageColor, matching #roamStatus in the DOM column.
+const XR_ROAM_STATUS_COLOR = '#cfd8e6';
 const XR_RADAR_PLANE_SIZE = 0.45;
 const XR_CHAT_PLANE_WIDTH = 0.9;
 // BZFlag fires with Enter or the left mouse button and keeps the space bar for
 // dropping a flag (ActionBinding.cxx:92-95).
 const FIRE_KEY = 'Enter';
+// playing.cxx:4028 shows the death notice for four seconds as a warning. The
+// kill notice is bzo's own and matches it, so the two read as a pair.
+const DEATH_ALERT_SECONDS = 4;
+const KILL_ALERT_SECONDS = 4;
+// setTarget()'s own two seconds, on its own slot so it never displaces a death.
+const IDENTIFY_ALERT_SECONDS = 2;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 // BZFlag's displayRadarRange default (defaultBZDB.cxx). The level is deliberately
@@ -1312,6 +1338,20 @@ function motionBoxAxisInput(offsetPx) {
   return Math.sign(offsetPx) * Math.min(1, beyondDeadZone / span);
 }
 
+// The crosshair, motion box, shot status and altimeter are hidden by CSS off
+// this one class, rather than by four inline styles.
+function updateObserverHudVisibility() {
+  const observing = isObserver();
+  document.body.classList.toggle('observing', observing);
+  // HUDRenderer::renderStatus (HUDRenderer.cxx:1026) prints the roaming label
+  // where a playing tank's status would go.
+  const status = document.getElementById('roamStatus');
+  if (status) {
+    const label = observing ? getRoamLabel() : '';
+    if (status.textContent !== label) status.textContent = label;
+  }
+}
+
 function updateDeathCameraHudVisibility() {
   const controlBox = document.getElementById('controlBox');
   if (!controlBox) return;
@@ -1639,6 +1679,16 @@ window.addEventListener('resize', () => {
 let playerX = 0;
 let playerY = 0; // Y is vertical position
 let playerZ = 0;
+// The observer's roaming camera, held only while observing. See roam.mjs.
+let roamCamera = null;
+let roamView = ROAM_VIEW.FREE;
+// null is upstream's `targetManual == -1`: follow whoever is leading.
+let roamTargetId = null;
+let roamTargetFlagIndex = null;
+// Fire cycles the view and identify picks a target, so both are edges rather
+// than held states.
+let roamFireWasHeld = false;
+let roamIdentifyWasHeld = false;
 let playerRotation = 0;
 
 // Dead reckoning state - track last sent velocities (not positions, since positions are extrapolated)
@@ -2286,8 +2336,10 @@ function getDebugState() {
 // Keys the game acts on. Holding the browser off them is the keydown
 // listener's job in input.js, which claims the whole set before this runs.
 function handleGameplayKeydown(event) {
+  // An observer has no tank to pause or destroy, and the server drops both
+  // messages from one. The keys stay consumed so nothing else reacts to them.
   if (event.code === 'KeyP') {
-    sendToServer({ type: 'pause' });
+    if (!isObserver()) sendToServer({ type: 'pause' });
     return true;
   }
 
@@ -2354,7 +2406,13 @@ function handleGameplayKeydown(event) {
     return true;
   }
   if (event.code === 'KeyQ' && ws && ws.readyState === WebSocket.OPEN) {
-    sendToServer({ type: 'selfDestruct' });
+    if (!isObserver()) sendToServer({ type: 'selfDestruct' });
+    return true;
+  }
+  // Upstream's `identify` key (ActionBinding.cxx:98). It picks the roaming
+  // target for an observer; a tank will lock a guided missile with it.
+  if (event.code === 'KeyI' && !event.repeat) {
+    if (isObserver()) identifyRoamTarget();
     return true;
   }
   // Upstream's drop-flag key. It stays claimed even with no flag in hand, so a
@@ -2387,6 +2445,9 @@ initHudControls({
     updateDebugLabelsButton();
   },
   getDebugState,
+  isObserver: () => isObserver(),
+  cycleObserverView: () => cycleRoamView(),
+  getObserverViewLabel: () => getRoamLabel(),
   getCameraMode: () => cameraMode,
   setCameraMode: (mode) => { cameraMode = mode; },
   getMouseControlEnabled: () => mouseControlEnabled,
@@ -2802,7 +2863,7 @@ function init() {
     toggleDebugHud({
       debugEnabled,
       setDebugEnabled: setDebugEnabledState,
-      updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode }),
+      updateHudButtons: () => updateHudButtons({ mouseBtn, mouseControlEnabled, debugBtn, debugEnabled, fullscreenBtn, cameraBtn, cameraMode: isObserver() ? getRoamLabel() : cameraMode }),
       showMessage,
       updateDebugDisplay,
       getDebugState
@@ -2905,6 +2966,9 @@ function init() {
       }
       setGameplayKeyState(FIRE_KEY, true);
     }
+    // Upstream's other `identify` binding (ActionBinding.cxx:97). Unclaimed in
+    // bzo, so it costs nothing from the key budget.
+    if (e.button === 2 && isObserver()) identifyRoamTarget();
   });
 
   document.addEventListener('mouseup', (e) => {
@@ -3800,11 +3864,15 @@ function handlePlayerHit(message) {
   }
 
   if (message.victimId === myPlayerId) {
-    // Local player was killed
+    // Local player was killed. gotBlowedUp() puts this on the alert HUD for four
+    // seconds as a warning (playing.cxx:4028), which is where the eye is.
     if (isCapture) {
       showMessage('Your team flag was captured!', 'death');
+      setHudAlert(0, 'Your team flag was captured!', DEATH_ALERT_SECONDS, true);
     } else {
+      const notice = isSelfDestruct ? 'Tank Self Destructed' : `Got shot by ${shooterName}`;
       showMessage(isSelfDestruct ? 'You self-destructed!' : `${shooterName} killed you!`, 'death');
+      setHudAlert(0, notice, DEATH_ALERT_SECONDS, true);
     }
     // Switch to overview mode and hide crosshair
     lastCameraMode = cameraMode;
@@ -3825,9 +3893,11 @@ function handlePlayerHit(message) {
   } else if (isCapture) {
     // Nothing to say: the capture itself was already announced.
   } else if (message.shooterId === myPlayerId) {
-    // Local player got a kill
+    // Local player got a kill. Upstream has no alert for this -- it only warns
+    // you about your own death -- but the two belong together on screen.
     if (!isSelfDestruct) {
       showMessage(`You killed ${victimName}!`, 'kill');
+      setHudAlert(0, `You killed ${victimName}`, KILL_ALERT_SECONDS, false);
     }
   } else {
     // Show to all other players
@@ -3927,7 +3997,20 @@ function handlePlayerRespawn(message) {
 }
 // Helper to call updateScoreboard with all required parameters
 function callUpdateScoreboard() {
-  updateScoreboard({ myPlayerId, myPlayerName, myTank, tanks, teamScores, getPlayerFlagLabel });
+  const observing = isObserver();
+  updateScoreboard({
+    myPlayerId,
+    myPlayerName,
+    myTank,
+    tanks,
+    teamScores,
+    getPlayerFlagLabel,
+    // Only an observer can pick a roam target, and only an explicit one is
+    // marked: with no target the view follows the leader, and marking the top
+    // row would claim a choice the player did not make.
+    roamTargetId: observing ? roamTargetId : null,
+    onSelectRoamTarget: observing ? selectRoamTarget : null,
+  });
 }
 
 function handleMapsList(message) {
@@ -5114,6 +5197,333 @@ function predictLocalPlayerTeleport(startState, endState, nowMs) {
   };
 }
 
+// The fire key or button, from whichever surface the player is using. A tank
+// shoots with it; an observer cycles the roaming view with it, which is the
+// whole reason it is shared rather than inlined.
+function isFireHeld() {
+  return (!isMobile && keys[FIRE_KEY])
+    || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
+}
+
+// Every tank that can be roamed to: alive, joined, and not an observer, which is
+// the same set `ScoreboardRenderer::getPlayerList` walks.
+function getRoamCandidates() {
+  const candidates = [];
+  tanks.forEach((tank, id) => {
+    const state = tank.userData.playerState;
+    if (!state || id === myPlayerId) return;
+    if (isObserverTeam(state.team) || !(state.health > 0)) return;
+    candidates.push({
+      id,
+      x: tank.position.x,
+      z: tank.position.z,
+      kills: state.kills || 0,
+      deaths: state.deaths || 0,
+      connectDate: state.connectDate ? new Date(state.connectDate) : new Date(0),
+      isObserver: false,
+    });
+  });
+  return candidates;
+}
+
+// buildRoamingLabel() resolves a null target to the leader every frame rather
+// than pinning one, so the view follows whoever is winning.
+function getRoamTargetId() {
+  const candidates = getRoamCandidates();
+  if (roamTargetId !== null && candidates.some((candidate) => candidate.id === roamTargetId)) {
+    return roamTargetId;
+  }
+  // A target that left the game drops us back to the leader, as changePlayer does.
+  roamTargetId = null;
+  if (candidates.length === 0) return null;
+  return candidates.sort(compareScoreboardPlayers)[0].id;
+}
+
+function getRoamTargetTank() {
+  const id = getRoamTargetId();
+  return id === null ? null : tanks.get(id) || null;
+}
+
+// Only team flags are trackable, which is upstream's `flagTeam != NoTeam` test.
+function getRoamTrackableFlags() {
+  return Array.from(flags.values()).filter((flag) => flag.type && isTeamFlag(flag.type));
+}
+
+function getRoamTargetFlag() {
+  const trackable = getRoamTrackableFlags();
+  if (trackable.length === 0) return null;
+  return trackable.find((flag) => flag.index === roamTargetFlagIndex) || trackable[0];
+}
+
+// Selecting a target by hand leaves the view alone unless it cannot show one.
+function adoptRoamTarget(id) {
+  roamTargetId = id;
+  if (id !== null && !roamViewNeedsTarget(roamView)) roamView = ROAM_VIEW.TRACK;
+  callUpdateScoreboard();
+}
+
+// A row click sets an explicit target; clicking the marked row releases back to
+// the leader, which is upstream's targetManual == -1.
+function selectRoamTarget(id) {
+  adoptRoamTarget(id);
+}
+
+// One sequence walks the whole space: the leader, then each player, then the next
+// view. Upstream splits this across F8 (view type) and F6/F7 (subject), but bzo
+// binds nothing to changing the subject on its own, so fire, `C`, and the
+// Settings Camera row all step through the same list rather than offering a view
+// cycle that skips past the players. See advanceRoamSelection in roam.mjs.
+function cycleRoamView() {
+  const flagIndexes = getRoamTrackableFlags().map((flag) => flag.index);
+  const next = advanceRoamSelection(
+    { view: roamView, targetId: roamTargetId, flagIndex: roamTargetFlagIndex },
+    {
+      playerIds: getRoamCandidates().sort(compareScoreboardPlayers).map((candidate) => candidate.id),
+      flagIndexes,
+      allowFlag: flagIndexes.length > 0,
+    },
+  );
+  roamView = next.view;
+  roamTargetId = next.targetId;
+  roamTargetFlagIndex = next.flagIndex;
+  callUpdateScoreboard();
+}
+
+// setTarget() (playing.cxx:4390): whoever is centred in the sights.
+//
+// That only means something in the free view, where the player aims the camera.
+// Every other view is already pointed at its target, so identifying from it
+// would just re-pick the tank being watched. Upstream never hits this because it
+// changes subject with F6/F7 rather than by looking.
+function identifyRoamTarget() {
+  // setTarget() answers on alert slot 1 for two seconds (playing.cxx:4471), so
+  // the reply to a button press lands where the eye is rather than in a chat tab.
+  if (roamViewNeedsTarget(roamView)) {
+    setHudAlert(1, 'Already following someone', IDENTIFY_ALERT_SECONDS, false);
+    return;
+  }
+  const framing = getRoamFraming();
+  if (!framing) return;
+  const forward = {
+    x: framing.look.x - framing.eye.x,
+    z: framing.look.z - framing.eye.z,
+  };
+  const picked = pickTargetInSights(framing.eye, forward, getRoamCandidates());
+  if (picked === null) {
+    setHudAlert(1, 'Looking at nothing', IDENTIFY_ALERT_SECONDS, false);
+    return;
+  }
+  nemesisPlayerId = picked;
+  adoptRoamTarget(picked);
+  const name = tanks.get(picked)?.userData?.playerState?.name || 'a tank';
+  setHudAlert(1, `Looking at ${name}`, IDENTIFY_ALERT_SECONDS, false);
+}
+
+function getTankEyeHeight(tank) {
+  return Number.isFinite(tank?.userData?.cameraHeight)
+    ? tank.userData.cameraHeight
+    : DEFAULT_MUZZLE_HEIGHT;
+}
+
+// Each view resolved to a concrete eye and look point, so render.js only has to
+// apply one. The rigs are upstream's from `playing.cxx:6001`.
+function getRoamFraming() {
+  if (!roamCamera) return null;
+  const eye = { x: roamCamera.x, y: roamCamera.y, z: roamCamera.z };
+
+  if (roamViewNeedsTarget(roamView)) {
+    const target = getRoamTargetTank();
+    if (target) {
+      const targetEye = getTankEyeHeight(target);
+      const forward = {
+        x: -Math.sin(target.rotation.y),
+        z: -Math.cos(target.rotation.y),
+      };
+      if (roamView === ROAM_VIEW.FPS) {
+        const fpsEye = {
+          x: target.position.x,
+          y: target.position.y + targetEye,
+          z: target.position.z,
+        };
+        return {
+          eye: fpsEye,
+          look: { x: fpsEye.x + forward.x, y: fpsEye.y, z: fpsEye.z + forward.z },
+        };
+      }
+      if (roamView === ROAM_VIEW.FOLLOW) {
+        return {
+          eye: {
+            x: target.position.x - forward.x * ROAM_FOLLOW_DISTANCE,
+            y: target.position.y + targetEye * ROAM_FOLLOW_HEIGHT_FACTOR,
+            z: target.position.z - forward.z * ROAM_FOLLOW_DISTANCE,
+          },
+          look: { x: target.position.x, y: target.position.y, z: target.position.z },
+        };
+      }
+      // Track: the camera stays put and turns to keep the target in view.
+      return {
+        eye,
+        look: {
+          x: target.position.x,
+          y: target.position.y + targetEye,
+          z: target.position.z,
+        },
+      };
+    }
+  } else if (roamView === ROAM_VIEW.FLAG) {
+    const flag = getRoamTargetFlag();
+    if (flag) {
+      return {
+        eye,
+        look: { x: flag.position.x, y: flag.position.y, z: flag.position.z },
+      };
+    }
+  }
+
+  // Free roam, and the fallback whenever a view has nothing to point at, which
+  // is what `Roaming::changeTarget` does when it finds no target. The look point
+  // is one unit ahead at the eye's own height, so it travels with the camera --
+  // forward, sideways and vertically -- exactly as a driving tank's does.
+  const heading = getRoamForward(roamCamera.theta);
+  return {
+    eye,
+    look: { x: eye.x + heading.x, y: eye.y, z: eye.z + heading.z },
+  };
+}
+
+// getRoamingLabel() (Roaming.cxx:325). ScoreboardRenderer::getLeader prefixes
+// "Leader " when the target is the automatic one, so watching whoever is winning
+// reads differently from having picked that same player by hand.
+function getRoamLabel() {
+  const target = getRoamTargetTank();
+  const callsign = target?.userData?.playerState?.name || 'nobody';
+  const name = roamTargetId === null && target ? `Leader ${callsign}` : callsign;
+  if (roamView === ROAM_VIEW.TRACK && target) return `Tracking ${name}`;
+  if (roamView === ROAM_VIEW.FOLLOW && target) return `Following ${name}`;
+  if (roamView === ROAM_VIEW.FPS && target) return `Driving with ${name}`;
+  if (roamView === ROAM_VIEW.FLAG) {
+    const flag = getRoamTargetFlag();
+    if (flag) return `Tracking ${describeFlag(flag)}`;
+  }
+  return 'Roaming';
+}
+
+// Upstream moves the observer's own tank to the eye point every frame --
+// `myTank->move(virtPos, roamViewAngle)` in `playing.cxx:6110` -- so the radar,
+// the heading tape, and the sound listener all read the camera without knowing
+// about roaming. bzo does the same: the mesh is invisible at health 0, and no
+// move packet is ever sent for it.
+function handleRoamMotion(deltaTime) {
+  if (!isObserver()) {
+    roamCamera = null;
+    roamView = ROAM_VIEW.FREE;
+    roamTargetId = null;
+    roamFireWasHeld = false;
+    roamIdentifyWasHeld = false;
+    return;
+  }
+  if (!myTank || !gameConfig) return;
+
+  // Both are events, not held states, and every non-keyboard source reports a
+  // held button -- the same shape the drop key already has.
+  const inputActive = isGameplayInputActive();
+  const fireHeld = inputActive && isFireHeld();
+  if (fireHeld && !roamFireWasHeld) cycleRoamView();
+  roamFireWasHeld = fireHeld;
+
+  const identifyHeld = inputActive && virtualInput.identify;
+  if (identifyHeld && !roamIdentifyWasHeld) identifyRoamTarget();
+  roamIdentifyWasHeld = identifyHeld;
+
+  // The camera rides at a tank's eye height, so roamCamera.y is an eye and the
+  // mesh below it stands on the ground -- the same relation first person has
+  // between myTank.position.y and cameraHeight.
+  const eyeHeight = Number.isFinite(myTank.userData?.cameraHeight)
+    ? myTank.userData.cameraHeight
+    : DEFAULT_MUZZLE_HEIGHT;
+  if (!roamCamera) {
+    // Upstream's resetCamera() starts at the origin, which it gets away with
+    // because its default view is fps and never free. Starting there here drops
+    // the observer in the middle of the map looking at nothing, so the camera
+    // begins at the spawn the server handed us, facing the way it faces.
+    roamCamera = {
+      ...createRoamCamera(eyeHeight),
+      x: myTank.position.x,
+      y: Math.max(eyeHeight, myTank.position.y + eyeHeight),
+      z: myTank.position.z,
+      theta: playerRotation,
+    };
+  }
+
+  // A dialog or the chat input owning the keyboard must not also fly the camera.
+  const input = isGameplayInputActive()
+    ? gatherDriveInput()
+    : { forward: 0, turn: 0, up: false, down: false };
+
+  roamCamera = updateRoamCamera(roamCamera, input, deltaTime, {
+    tankSpeed: gameConfig.TANK_SPEED,
+    floorY: eyeHeight,
+  });
+
+  // An observer has no tank to show. The mesh is still moved, because the radar,
+  // the heading tape and the sound listener all read its transform -- that is
+  // upstream's virtual tank -- but nothing draws it: not the tank, not its
+  // server-position ghost, which hangs off worldGroup rather than off the tank
+  // and so does not inherit this.
+  myTank.visible = false;
+  if (myTank.userData.ghostMesh) myTank.userData.ghostMesh.visible = false;
+  if (myTank.userData.jumpPredictionDebug) myTank.userData.jumpPredictionDebug.visible = false;
+
+  // The virtual tank stands under the eye rather than at it, so it sits where a
+  // driver's tank would relative to the camera.
+  playerX = roamCamera.x;
+  playerY = roamCamera.y - eyeHeight;
+  playerZ = roamCamera.z;
+  playerRotation = roamCamera.theta;
+  myTank.position.set(playerX, playerY, playerZ);
+  myTank.rotation.y = roamCamera.theta;
+}
+
+// The drive axes every input surface funnels into, gathered in one place so a
+// tank and an observer's camera read the same controls. Callers apply their own
+// limits: a tank caps reverse and treats `up` as a jump, while the roaming
+// camera spends `up` and `down` on altitude, which is the whole reason those two
+// come back raw.
+function gatherDriveInput() {
+  let forward = 0;
+  let turn = 0;
+  let up = false;
+  let down = false;
+
+  // Use virtual input if gamepad connected, XR enabled, or virtual controls enabled
+  if (isGamepadConnected() || virtualControlsEnabled || isXREnabled()) {
+    forward = virtualInput.forward;
+    turn = virtualInput.turn;
+    up = virtualInput.jump;
+    down = virtualInput.drop;
+  }
+  const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+  let wasdPressed = false;
+  for (const code of wasdKeys) {
+    if (keys[code]) {
+      forward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
+      turn += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
+      wasdPressed = true;
+    }
+  }
+  if (wasdPressed && mouseControlEnabled) {
+    toggleMouseMode();
+  }
+  if (keys['Tab']) up = true;
+  if (keys['Space']) down = true;
+  if (mouseControlEnabled) {
+    if (typeof mouseY !== 'undefined') forward = -mouseY;
+    if (typeof mouseX !== 'undefined') turn = -mouseX;
+  }
+
+  return { forward, turn, up, down };
+}
+
 function handleInputEvents() {
   // Reset intended input each frame
   intendedForward = 0;
@@ -5167,34 +5577,12 @@ function handleInputEvents() {
     intendedForward = myTank.userData.jumpForwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
   } else {
-    // Use virtual input if gamepad connected, XR enabled, or virtual controls enabled
-    if (isGamepadConnected() || virtualControlsEnabled || isXREnabled()) {
-      intendedForward = virtualInput.forward;
-      intendedRotation = virtualInput.turn;
-      if (jumpDirection === null && virtualInput.jump) {
-        intendedY = 1;
-        jumpTriggered = true;
-      }
-    }
-    const wasdKeys = ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
-    let wasdPressed = false;
-    for (const code of wasdKeys) {
-      if (keys[code]) {
-        intendedForward += (code === 'KeyW' || code === 'ArrowUp') ? 1 : (code === 'KeyS' || code === 'ArrowDown') ? -1 : 0;
-        intendedRotation += (code === 'KeyA' || code === 'ArrowLeft') ? 1 : (code === 'KeyD' || code === 'ArrowRight') ? -1 : 0;
-        wasdPressed = true;
-      }
-    }
-    if (wasdPressed && mouseControlEnabled) {
-      toggleMouseMode();
-    }
-    if ((keys['Tab']) && jumpDirection === null) {
+    const drive = gatherDriveInput();
+    intendedForward = drive.forward;
+    intendedRotation = drive.turn;
+    if (jumpDirection === null && drive.up) {
       intendedY = 1;
       jumpTriggered = true;
-    }
-    if (mouseControlEnabled) {
-      if (typeof mouseY !== 'undefined') intendedForward = -mouseY;
-      if (typeof mouseX !== 'undefined') intendedRotation = -mouseX;
     }
   }
   const reverseSpeedRatio = Number.isFinite(gameConfig?.REVERSE_SPEED_RATIO)
@@ -5692,7 +6080,7 @@ function handleMotion(deltaTime) {
 
   // Fire: the keyboard fire key or the left mouse button, and on mobile, XR or
   // a gamepad, virtualInput.fire.
-  const firePressed = (!isMobile && keys[FIRE_KEY]) || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
+  const firePressed = isFireHeld();
   const fireNow = performance.now();
   if (firePressed && fireNow >= nextAllowedShotAt) {
     const maxActiveShots = normalizeShotSlotCount(gameConfig?.SHOT_MAX_ACTIVE);
@@ -6040,15 +6428,18 @@ function getMyFlag() {
   return getPlayerFlag(myPlayerId);
 }
 
-// ScoreboardRenderer::drawPlayerScore spells a team flag out in full and a
-// superflag by its abbreviation, in the flag's own colour. A flag whose identity
-// is still hidden cannot be on a tank, so there is nothing to fall back to.
+// ScoreboardRenderer::drawPlayerScore names a team flag after the callsign and a
+// superflag by its abbreviation, both in the flag's own colour. bzo names the
+// team flag by its colour alone, dropping the "Team" upstream spells out: the
+// label is already drawn in that team's colour, so the word is redundant. A flag
+// whose identity is still hidden cannot be on a tank, so there is nothing to
+// fall back to.
 function getPlayerFlagLabel(playerId) {
   const flag = getPlayerFlag(playerId);
   const type = getFlagType(flag?.type);
   if (!type) return null;
   return {
-    label: type.team ? type.name : type.abbreviation,
+    label: type.team ? type.name.replace(/ Team$/, '') : type.abbreviation,
     color: getFlagColor(flag.type),
   };
 }
@@ -6479,7 +6870,51 @@ function updateXRHudOverlays() {
   ensureXRShotStatusOverlay();
   ensureXRChatOverlay();
   ensureXRScoreboardOverlay();
+  ensureXRNoticeOverlay();
   ensureXRSettingsMenu();
+}
+
+// The same column the DOM HUD shows -- the roaming status line, then the alert
+// slots -- on the one surface an immersive session has. Nothing is drawn when
+// there is nothing to say, so a quiet session pays only the visibility flag.
+function ensureXRNoticeOverlay() {
+  const alerts = getActiveHudAlerts();
+  const status = isObserver() ? getRoamLabel() : '';
+  const lines = [];
+  if (status) lines.push({ text: status, color: XR_ROAM_STATUS_COLOR });
+  alerts.forEach((alert) => lines.push({ text: alert.text, color: getHudAlertColor(alert.warning) }));
+  if (lines.length === 0) {
+    if (xrAlertPanel.mesh) xrAlertPanel.mesh.visible = false;
+    return;
+  }
+  if (!ensureXRHudPanel(xrAlertPanel, { canvasWidth: 1024, canvasHeight: 210 })) return;
+
+  const canvas = xrAlertPanel.canvas;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    xrAlertPanel.mesh.visible = false;
+    return;
+  }
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 40px sans-serif';
+  const lineHeight = 46;
+  lines.forEach((line, index) => {
+    const y = 52 + index * lineHeight;
+    // A dark stroke stands in for the DOM text-shadow: the panel is transparent,
+    // so the world behind it is whatever the player happens to be looking at.
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeText(line.text, w / 2, y);
+    ctx.fillStyle = line.color;
+    ctx.fillText(line.text, w / 2, y);
+  });
+
+  placeXRHudPanel(xrAlertPanel, { width: 0.86, height: 0.176, x: 0, y: 0.3 });
+  xrAlertPanel.texture.needsUpdate = true;
 }
 
 function ensureXRRadarTexture() {
@@ -7338,8 +7773,9 @@ const XR_HELP_ITEMS = Object.freeze([
   { id: 'helpMove', label: 'Move', value: 'Either stick Up / Down', disabled: true },
   { id: 'helpTurn', label: 'Turn', value: 'Either stick Left / Right', disabled: true },
   { id: 'helpFire', label: 'Fire', value: 'Either trigger', disabled: true },
-  { id: 'helpJump', label: 'Jump', value: 'Either grip / secondary', disabled: true },
+  { id: 'helpJump', label: 'Jump', value: 'Either grip', disabled: true },
   { id: 'helpDrop', label: 'Drop Flag', value: 'Either primary (A)', disabled: true },
+  { id: 'helpIdentify', label: 'Identify', value: 'Either secondary (B)', disabled: true },
   { id: 'helpMenu', label: 'Open Menu', value: 'Press either stick', disabled: true },
   { id: 'helpNavigate', label: 'Navigate', value: 'Either stick', disabled: true },
   { id: 'helpActivate', label: 'Activate', value: 'Trigger / primary', disabled: true },
@@ -7812,6 +8248,7 @@ function animate(frameTime) {
 
   handleInputEvents();
   handleMotion(deltaTime);
+  handleRoamMotion(deltaTime);
   markFramePhase('input');
 
   const visibleTanks = [];
@@ -7901,8 +8338,19 @@ function animate(frameTime) {
     deathFollowTarget = null;
     renderManager.deathFollowTarget = null;
   }
+  updateAlertHud();
   updateDeathCameraHudVisibility();
-  renderManager.updateCamera({ cameraMode, myTank, playerRotation, deathFollowTarget });
+  updateObserverHudVisibility();
+  // An observer cannot leave roaming, which is upstream's rule: Roaming::setMode
+  // refuses roamViewDisabled for ObserverTeam. The player's own camera choice is
+  // left untouched underneath, so it comes back on switching to a playing team.
+  renderManager.updateCamera({
+    cameraMode: isObserver() ? 'roam' : cameraMode,
+    myTank,
+    playerRotation,
+    deathFollowTarget,
+    roamFraming: isObserver() ? getRoamFraming() : null,
+  });
   markFramePhase('sim');
   updateRadar();
   markFramePhase('radar');
