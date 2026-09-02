@@ -6,6 +6,28 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.50] - 2026-09-02
+
+Closes #33.
+
+### Added
+- Kill and death notices on the HUD, in BZFlag's shape: large centred text at the top of the screen for a few seconds, red when it is about you. "Got shot by <player>" and "Tank Self Destructed" are upstream's own wording; the matching "You killed <player>" is new here. It shows in VR as well as on the desktop HUD, and deliberately sits over the scoreboard and radar -- it is gone in four seconds and reading it matters more.
+- Observer mode. Joining as an Observer no longer parks an invulnerable, immobile tank on the field: an observer now has no tank at all and flies the map instead, starting from a spawn point facing the way a tank would. Drive and turn work exactly as they do in a tank, from the keyboard, the touch stick, a gamepad, or either VR controller, with Jump and Drop Flag climbing and descending. The camera rests at the eye height of a tank on the ground and never goes below it, and it looks level, like a tank does -- climbing carries what you are looking at up with you. Observers can already chat, and the radar follows the camera. Nothing draws the observer's own tank -- not the mesh, not its debug ghost.
+- Observer views: Free, Track (the camera holds still and turns to keep a tank in frame), Follow (a chase camera behind it), Driving with (through its own eyes), and Flag, which watches a team flag where the map has them. Fire, `C`, the Camera button and the Settings row all walk the same list -- in each view the leader first, then every player, then on to the next view -- replacing the first/third/overview modes that do nothing for an Observer. A status line at the top names the view and who is being watched, on the desktop HUD and in VR alike.
+- `identify`, on `I`, right-click, either VR B button, either gamepad shoulder, and a new touch button. It picks out whichever tank is centred in your sights -- BZFlag's targeting cone, about 17.5 degrees -- and in the Free view an Observer starts watching it, answering "Looking at <player>" on the HUD as BZFlag does. The other views are already pointed at someone, so it says so there instead. It also sets your nemesis, so `,` messages the player you just looked at; previously only a kill could set that. It will lock a guided missile once those exist.
+- Click a scoreboard row to watch that player, and click the marked row again to go back to following the leader. A status line names the view and who is being watched.
+
+### Fixed
+- The service worker no longer serves files from another version's cache. Both lookups used the global `caches.match()`, which searches every cache present on the device -- including one left behind by a previous worker -- so a stale copy could be served even though the server, the response headers and a hand-run fetch all looked correct. Lookups are now scoped to the running version's own cache, and older caches are dropped when a new worker installs rather than only when it activates, since without `skipWaiting` a worker can wait indefinitely behind an installed app that never closes.
+- The touch control buttons no longer run off the top of the screen. They were laid out on a fixed 80px button and a 90px pitch, which needs more height than a phone held in landscape has, so the Drop Flag button sat stranded near the top corner and anything above it was off-screen entirely. Button size and spacing now scale with the viewport, and every button's position derives from one pitch so the margins stay equal.
+
+### Changed
+- Observers now sort last on the scoreboard, as they do in BZFlag: they score for nobody, so ranking them among the players said something untrue.
+- In VR, Jump is the grip alone and the B button is now `identify`. The thumbstick press still opens the menu on either controller, so every action is still reachable one-handed.
+- The debug HUD moved from `I` to the backtick, which is unbound in upstream BZFlag and is the console key by convention elsewhere. `I` and Right Mouse now carry BZFlag's `identify`, as they do upstream.
+- Switching teams now drops a carried flag, as every other way of leaving play already did. It keys off the team actually changing, so changing only your tank keeps the flag.
+- A carried team flag is named on both scoreboards by its colour alone -- `Red` rather than `Red Team`. The label already carries that team's colour, so the word said nothing.
+
 ## [1.0.49] - 2026-09-01
 
 Part of #6.
