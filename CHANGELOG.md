@@ -6,6 +6,23 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.54] - 2026-09-03
+
+Part of #6.
+
+### Added
+- A jumping switch, BZFlag's `-j`. `jumping` in `server.json` and `-j` in a map's `options` block both reach it, and it defaults to on, because every bzo tank could jump before there was a switch. A map's `-j` can still turn it back on where the config turned it off, which is how a bzfs switch behaves -- it never turns anything off. It reaches the client in the `init` config.
+- The Jumping flag, `JP`. On a world where jumping is off it is the only way an ordinary tank leaves the ground; on one where it is on, the server forbids it outright and says so in the log, as `CmdLineOptions.cxx` does -- a flag that grants what every tank already has looks like it does something and does not.
+- The Wings flag, `WG`. It takes off whatever the world says about jumping, and it is the one flag that drives and steers in the air: every other tank keeps the velocity it took off with.
+- Wings' four BZDB variables, as `wingsJumpCount`, `wingsJumpVelocity`, `wingsGravity` and `wingsSlideTime` in `server.json`. All four are `Locked` upstream -- the server sets them and the client obeys -- so they travel in the `init` config with the rest of the world's physics, and bzo reads them from its config the way it already reads `tankSpeed` and `gravity`. The count is what decides whether Wings flies or only steers: a surface refills it every tick and the take-off spends one, so at BZFlag's stock 1 there is one jump and no flaps left. Leave `wingsJumpVelocity` and `wingsGravity` out to get a wings jump identical to an ordinary one, which is what upstream's aliased defaults give you; `wingsSlideTime` above zero puts momentum in the air.
+- The server re-asks whether a tank may jump on every jump it sees, and logs a refusal as `[ANTICHEAT:...] JUMP REJECTED`. bzfs does not check jumping at all; without this a modified client would simply fly on a world that forbids it.
+- A flap is BZFlag's `SFX_FLAP` rather than `SFX_JUMP`, with upstream's own `flap.wav`. Upstream announces it to the other clients through `PlayerState::WingsSound`; bzo already knows who is carrying what, so the flag answers and nothing is added to the packet.
+- The altitude tape follows BZFlag's own rule and is up only where there is altitude to read: a world that allows jumping, or `JP` in hand.
+
+### Changed
+- The jump control is one press, one jump. BZFlag re-sets its jump request at the operating system's key-repeat rate, which with `_wingsJumpCount` above 1 dumps every flap in a fraction of a second; bzo has no key-repeat event and samples a held boolean once a frame, so it takes the rising edge instead. A coasting tank does not sample the sticks, so landing re-arms the control and holding jump still bounces a tank down a building.
+- Flag messages use BZFlag's own names in both directions. `MsgGrabFlag` is one message upstream, sent by the client to ask and by the server to say what it decided, so bzo's `flagGrabbed`, `flagDropped` and `flagCaptured` are now `grabFlag`, `dropFlag` and `captureFlag` -- the name upstream's minus the redundant `Msg`, and the direction says which copy is which.
+
 ## [1.0.53] - 2026-09-03
 
 ### Fixed
