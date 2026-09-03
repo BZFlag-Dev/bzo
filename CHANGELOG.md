@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.53] - 2026-09-03
+
 ### Fixed
 - The voice volume test assigned to `globalThis.navigator`, which Node 21 turned into a getter with no setter. It worked on the pinned Node 18 and threw on 24, and since CI's main lint job runs on 24, it failed the whole v1.0.52 release. It now installs the stub with `Object.defineProperty`, which works whichever Node owns the name.
 - `scripts/test-server-name.mjs` no longer names real deployment hosts. It is testing how a hostname is shortened, not a particular site, and it runs on whatever machine somebody checked the repo out on, so it uses reserved example names instead.
