@@ -633,14 +633,14 @@ const domRefs = {
   playerOptionsBtn: null,
   settingsBtn: null,
   settingsHud: null,
-  voiceBtn: null,
-  voiceOverlay: null,
+  audioBtn: null,
+  audioOverlay: null,
   helpPanel: null,
   closeSettingsBtn: null,
   closeHelpBtn: null,
   operatorBtn: null,
   closeOperatorBtn: null,
-  closeVoiceBtn: null,
+  closeAudioBtn: null,
   wireframeBtn: null,
   playerNameEl: null,
   voicePermissionBtn: null,
@@ -935,27 +935,27 @@ function hideSettingsHudSilently() {
   }
 }
 
-function updateVoiceBtn() {
-  if (!domRefs.voiceBtn || !domRefs.voiceOverlay) return;
-  const visible = domRefs.voiceOverlay.style.display === 'block';
-  domRefs.voiceBtn.classList.toggle('active', visible);
-  domRefs.voiceBtn.title = visible ? 'Hide Voice Settings' : 'Open Voice Settings';
+function updateAudioBtn() {
+  if (!domRefs.audioBtn || !domRefs.audioOverlay) return;
+  const visible = domRefs.audioOverlay.style.display === 'block';
+  domRefs.audioBtn.classList.toggle('active', visible);
+  domRefs.audioBtn.title = visible ? 'Hide Audio Settings' : 'Open Audio Settings';
 }
 
-function toggleVoiceOverlay() {
-  if (!domRefs.voiceOverlay) return;
-  const visible = domRefs.voiceOverlay.style.display === 'block';
+function toggleAudioOverlay() {
+  if (!domRefs.audioOverlay) return;
+  const visible = domRefs.audioOverlay.style.display === 'block';
   if (visible) {
-    hideDialog(domRefs.voiceOverlay);
+    hideDialog(domRefs.audioOverlay);
     syncInputContextFromUi();
-    hudContext.showMessage('Voice Settings: Hidden');
+    hudContext.showMessage('Audio Settings: Hidden');
   } else {
     hideSettingsHudSilently();
     setInputContext(INPUT_CONTEXT.DIALOG);
-    showDialog(domRefs.voiceOverlay);
-    hudContext.showMessage('Voice Settings: Shown');
+    showDialog(domRefs.audioOverlay);
+    hudContext.showMessage('Audio Settings: Shown');
   }
-  updateVoiceBtn();
+  updateAudioBtn();
 }
 
 function updateHelpBtn() {
@@ -1213,8 +1213,8 @@ function dismissVisibleDialog(dialogId) {
     toggleSettingsHud();
     return true;
   }
-  if (dialogId === 'voiceOverlay') {
-    toggleVoiceOverlay();
+  if (dialogId === 'audioOverlay') {
+    toggleAudioOverlay();
     return true;
   }
   if (dialogId === 'helpPanel') {
@@ -1246,14 +1246,14 @@ function bindHudElements() {
   domRefs.playerOptionsBtn = document.getElementById('playerOptionsBtn');
   domRefs.settingsBtn = document.getElementById('settingsBtn');
   domRefs.settingsHud = document.getElementById('settingsHud');
-  domRefs.voiceBtn = document.getElementById('voiceBtn');
-  domRefs.voiceOverlay = document.getElementById('voiceOverlay');
+  domRefs.audioBtn = document.getElementById('audioBtn');
+  domRefs.audioOverlay = document.getElementById('audioOverlay');
   domRefs.helpPanel = document.getElementById('helpPanel');
   domRefs.closeSettingsBtn = document.getElementById('closeSettingsHud');
   domRefs.closeHelpBtn = document.getElementById('closeHelpBtn');
   domRefs.operatorBtn = document.getElementById('operatorBtn');
   domRefs.closeOperatorBtn = document.getElementById('closeOperatorBtn');
-  domRefs.closeVoiceBtn = document.getElementById('closeVoiceBtn');
+  domRefs.closeAudioBtn = document.getElementById('closeAudioBtn');
   domRefs.wireframeBtn = document.getElementById('wireframeBtn');
   domRefs.playerNameEl = document.getElementById('playerName');
   domRefs.voicePermissionBtn = document.getElementById('voicePermissionBtn') ||
@@ -1268,7 +1268,7 @@ function bindHudElements() {
   // Settings controls include native selects and checkboxes. Stop gameplay
   // input from escaping the panel without cancelling their default behavior.
   stopPropagationForHud(['settingsHud'], false);
-  stopPropagationForHud(['voiceOverlay'], false);
+  stopPropagationForHud(['audioOverlay'], false);
   stopPropagationForHud(['operatorOverlay'], false);
 
   if (domRefs.wireframeBtn) {
@@ -1351,11 +1351,11 @@ function bindHudElements() {
     });
   }
 
-  if (domRefs.voiceBtn) {
-    domRefs.voiceBtn.addEventListener('click', (e) => {
+  if (domRefs.audioBtn) {
+    domRefs.audioBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      toggleVoiceOverlay();
+      toggleAudioOverlay();
     });
   }
 
@@ -1375,11 +1375,11 @@ function bindHudElements() {
     });
   }
 
-  if (domRefs.closeVoiceBtn) {
-    domRefs.closeVoiceBtn.addEventListener('click', (e) => {
+  if (domRefs.closeAudioBtn) {
+    domRefs.closeAudioBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      toggleVoiceOverlay();
+      toggleAudioOverlay();
     });
   }
 

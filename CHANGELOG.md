@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+### Added
+- Game, voice, and microphone levels in Settings, on the renamed Audio Settings screen. Each is a slider from Off to 100%, usable with the mouse, with Left/Right on a focused row, and with an XR controller thumbstick on the XR Audio screen, and each is remembered between sessions. The scale is BZFlag's: an integer 0..10 with upstream's squared curve, `volumeAtten = 0.02 * level * level` in `src/bzflag/sound.cxx`, scaled so the top of the range is unity rather than upstream's 2.0, because Web Audio has no mixer stage to clip into.
+- Microphone level is a gain node between capture and the track sent to peers, since `getUserMedia` has no volume control of its own. It runs in the renderer's existing AudioContext rather than opening a second one.
+- Three voice channels, chosen in Audio Settings and on the XR Audio screen and remembered between sessions. **All** is every player on the server, however far away. **Nearby** is only players within earshot, whatever team they are on. **Team** is your own team, however far away -- and rogue and observer count as teams, which is what upstream does, since bzfs's team message dispatch sends to every player whose `isTeam` matches with no exception for either. A channel is a room: two players are peers only when they are in the same one, so the rule reads the same from both ends of a connection. It lives in the `voice-channels` client/server pair, and the server is what enforces it -- withholding the roster and the signalling is the only lever there is, because the media never passes through the server.
+- WebRTC peer activity is visible at last. The voice manager always tracked its peers and always offered them through callbacks; nothing listened, so a voice link that never came up, or quietly died, left no trace. Roster joins and departures, connection and ICE state changes, and remote audio attaching now reach the console, and the debug chat tab and server log when the debug HUD is on. The debug HUD also carries a row per peer: connection state, ICE state, and whether audio is flowing.
+
+### Changed
+- The Voice dialog is now Audio Settings, and holds the three levels above the existing voice channel, microphone input, and browser audio-processing controls. The XR Voice screen is likewise XR Audio.
+- Observers report where they are. The roaming camera sends a position and a heading every five seconds -- the same `MAX_UPDATE_INTERVAL` heartbeat a driving tank already uses -- with every velocity zero, so there is nothing for either end to dead reckon and no prediction to correct. Upstream has the same idea in `sendObserverHeartbeat`, at a default of 30 seconds, which is coarse enough to list an observer and too coarse to place its voice. The server takes the position as sent: an observer has no collision, no shots and no score, so there is no state a lie could corrupt. It is relayed to the other clients as an ordinary `pm`, because voice is peer to peer -- each client decides for itself how loud a peer is and where it stands, so it has to be able to locate an observer too.
+- Observers use nearby voice on the same terms as everybody else. They could already text chat, so the microphone ban was the odd one out. Whether an observer may chat at all belongs in a server option alongside the text-chat equivalent, not in a rule the client and server each hardcode.
+
 ## [1.0.51] - 2026-09-03
 
 Part of #6.

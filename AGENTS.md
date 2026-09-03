@@ -191,7 +191,10 @@ version appears.
 | `public/webxr.js` | XR session lifecycle and controller input |
 | `public/capabilities.mjs` | What the WebGL context supports; gates features and their UI |
 | `public/voice.js` | WebRTC nearby-voice manager |
-| `public/audio.js` | Procedurally generated audio buffers |
+| `public/audio.js` | Gameplay sound manifest, attenuation, and buffer loading |
+| `public/volume.mjs` | The 0..10 audio level model shared by the Audio dialog, XR, renderer, and voice |
+| `public/voice-channels.mjs` | Which players hear each other: All, Nearby, Team |
+| `public/package.json` | `{"type":"module"}` only, so Node can import `public/*.js` in tests |
 | `public/sw.js` | Service worker: install support and asset caching |
 | `public/icons/` | Installed-app icons; see `docs/icons.md` |
 | `public/*.mjs` | Client-side copies of logic shared with the server |
@@ -204,7 +207,7 @@ version appears.
 Because the client is unbundled ESM and the server is CommonJS, logic needed on
 both sides is kept as a **hand-maintained pair**: `public/<name>.mjs` and
 `server/<name>.cjs`. Current pairs are `shots`, `teams`, `collision`,
-`motion`, `headset` and `flags`. `npm run check:shared-pairs` enforces them: the two mirrored
+`motion`, `headset`, `flags` and `voice-channels`. `npm run check:shared-pairs` enforces them: the two mirrored
 pairs must match line for line, and any name a hand-written pair exports on
 both sides must agree in type and arity. A pair that drifts does not throw --
 the client and server just quietly disagree about geometry, which surfaces as
@@ -447,9 +450,33 @@ camera without knowing roaming exists. **Nothing draws that mesh** -- not the
 tank, not its server-position ghost, which hangs off `worldGroup` rather than off
 the tank and so has to be hidden separately.
 
-**An observer sends no movement packets**, so there is nothing to validate and no
-cheat surface. Do not add one. Upstream's `sendObserverHeartbeat` exists so a
-server can report observer positions, which bzo has no feature for.
+**An observer sends a heartbeat and nothing else.** Upstream does the same:
+`sendObserverHeartbeat` (`playing.cxx:7415`) gates a normal player update behind
+`observerHeartbeat`, default 30 seconds. bzo sends one every
+`MAX_UPDATE_INTERVAL`, the same 5 seconds a driving tank uses as its own
+heartbeat, because the nearby voice roster reads the position and 30 seconds is
+too coarse to place a voice.
+
+The packet carries a position and a heading. **Every velocity is zero**, so
+neither end dead reckons a camera -- there is no prediction to run and none to
+correct, and the position is five seconds stale at worst. The server takes it as
+sent: `applyObserverHeartbeat` checks only that the numbers are numbers, since a
+NaN would poison the distance maths. That is parsing, not validation, and no
+validation belongs there. An observer has no collision, no shots and no score,
+so there is no state a lie could corrupt -- only being heard from somewhere you
+are not, which is small beside what an observer may already watch.
+
+**It goes out to every client as an ordinary `pm`.** The server's own roster is
+not the only thing that needs it: voice is peer to peer, so each client decides
+for itself how loud a peer is and where it stands, and it cannot do that for an
+observer it cannot locate. Reusing `pm` means no client-side special case -- the
+mesh it moves is the invisible one every observer already has at health 0, and
+the zero velocities give the receiving end nothing to extrapolate.
+
+**An observer uses voice on the same terms as everybody else.** It could
+always text chat, so the microphone ban was the odd rule out, and it lived
+hardcoded in three places at once. Whether an observer may chat at all belongs
+in a server option covering text and voice together; that is not built yet.
 
 `gatherDriveInput()` in `client.js` is the one place the drive axes are read, so
 a tank and the camera see the same controls from every input surface. Each view
@@ -882,6 +909,9 @@ That runs, in order:
 | `npm run lint` | ESLint across server, `public/`, and `scripts/` |
 | `npm run check:controls-docs` | README controls section matches the in-game help panel |
 | `npm run check:shared-pairs` | Each `public/<name>.mjs` and `server/<name>.cjs` still agree |
+| `npm run test:volume` | Audio level clamping, curve, formatting, and persistence |
+| `npm run test:voice-volume` | Remote playback gain and the microphone gain stage |
+| `npm run test:voice-channels` | Which players each channel pairs, both directions |
 | `npm run test:input-context` | `InputContextManager` ownership rules |
 | `npm run test:teams` | Team normalization, plus client/server parity |
 | `npm run test:team-mode` | Server team-mode config and BZW `options` parsing |
@@ -899,6 +929,44 @@ compatibility matrix.
 There is no automated browser or gameplay test. Manual play sessions remain the
 regression check for rendering, prediction, and XR. Use
 `docs/webxr-validation.md` for XR changes.
+
+### Test against the running server
+
+**A dev server is already running on port 3000. Use it.** Do not start a private
+instance on another port to keep a test tidy. The point of the shared one is that
+the user, a phone, and a headset are watching the same game: a scripted client
+that joins it can be *seen*, which is most of the value of running it at all. A
+private instance proves the code compiles and nothing more.
+
+Test players appearing briefly on the scoreboard are expected and are not a
+reason to move off it. Name them so they are obviously yours, and disconnect them
+when the check is done.
+
+**To put a test player somewhere specific, use `testSpawn`.** `getTestSpawn` in
+`server.js` matches one player by name and hands it a fixed `x`, `y`, `z` and
+`rotation` instead of a random spawn:
+
+```json
+"testSpawn": { "name": "TestRogue", "x": 0, "y": 0, "z": 0, "rotation": 0 }
+```
+
+It is absent from `example-server.json`, so a real server never has one. Do not
+instead fake movement packets to walk a test player into place -- a live player's
+moves are validated, so the server will reject the jump and correct it, and the
+test then measures the anticheat rather than whatever it was written for. A test
+that appears to pass because a random spawn happened to land nearby is worse than
+one that fails.
+
+An observer is the exception, and often the easier probe: its heartbeat is
+unvalidated by design, so a scripted observer can be flown anywhere without a
+`testSpawn` at all. Where a test needs a *tank* at a known spot relative to
+something, it is usually simpler to read the tank's spawn out of the join
+response and fly the observer to it.
+
+`server.js` watches itself, `public/` and the loaded map, and restarts or reloads
+clients on a change -- so it is already serving the working tree. It does **not**
+watch `server.json`, so a new `testSpawn` needs the server restarted by hand, and
+that interrupts whoever is playing. Undo the `testSpawn` afterwards.
 
 ## Committing
 

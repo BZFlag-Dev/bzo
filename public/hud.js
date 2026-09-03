@@ -303,7 +303,8 @@ export function updateDebugDisplay({
   gamepadConnected,
   gamepadInfo,
   renderStats,
-  framePhases
+  framePhases,
+  voice
 }) {
   const debugContent = document.getElementById('debugContent');
   if (!debugContent) return;
@@ -340,6 +341,19 @@ export function updateDebugDisplay({
   }
   if (typeof worldTime !== 'undefined') {
     html += `<div><span class="label">World Time:</span><span class="value">${worldTime.toFixed(1)} (${formatWorldTime(worldTime)})</span></div>`;
+  }
+
+  // Voice is peer to peer, so a link can fail for one player and nobody else.
+  // The per-peer row is the only place that shows up.
+  if (voice) {
+    const peers = voice.peers || [];
+    const connected = peers.filter((peer) => peer.connection === 'connected').length;
+    html += `<div><span class="label">Voice:</span><span class="value">${voice.channel}, mic ${voice.transmitting ? 'on' : 'off'}</span></div>`;
+    html += `<div><span class="label">Voice Peers:</span><span class="value">${connected}/${peers.length} connected</span></div>`;
+    peers.forEach((peer) => {
+      const audio = peer.audio ? 'audio' : 'no audio';
+      html += `<div><span class="label">&nbsp;&nbsp;${peer.label}:</span><span class="value">${peer.connection}/${peer.ice}, ${audio}</span></div>`;
+    });
   }
 
   if (latestOrientation && latestOrientation.status) {

@@ -62,7 +62,7 @@ html, body {
   white-space: nowrap;
   position: absolute;
 }
-#operatorOverlay, #operatorOverlay *, #voiceOverlay, #voiceOverlay *, #helpPanel, #helpPanel * {
+#operatorOverlay, #operatorOverlay *, #audioOverlay, #audioOverlay *, #helpPanel, #helpPanel * {
   pointer-events: auto !important;
 }
 
@@ -723,7 +723,7 @@ body {
   display: none;
 }
 
-#voiceOverlay {
+#audioOverlay {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -732,13 +732,13 @@ body {
   display: none;
 }
 
-#voiceOverlay .dialogTitle {
+#audioOverlay .dialogTitle {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-#voiceOverlay .dialogContent {
+#audioOverlay .dialogContent {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -826,9 +826,9 @@ body {
 #settingsHud button:focus-visible,
 #settingsHud input:focus-visible,
 #settingsHud select:focus-visible,
-#voiceOverlay button:focus-visible,
-#voiceOverlay input:focus-visible,
-#voiceOverlay select:focus-visible,
+#audioOverlay button:focus-visible,
+#audioOverlay input:focus-visible,
+#audioOverlay select:focus-visible,
 #helpPanel button:focus-visible,
 #helpPanel input:focus-visible,
 #helpPanel select:focus-visible,
@@ -1453,7 +1453,7 @@ body.observing #roamStatus {
 
 #settingsHud,
 #helpPanel,
-#voiceOverlay,
+#audioOverlay,
 #operatorOverlay,
 #entryDialog {
   width: min(820px, calc(100vw - 32px));
@@ -1482,7 +1482,7 @@ body.observing #roamStatus {
 
 #settingsHud .dialogTitle,
 #helpPanel .dialogTitle,
-#voiceOverlay .dialogTitle,
+#audioOverlay .dialogTitle,
 #operatorOverlay .dialogTitle,
 #entryDialog h2 {
   margin: 0 0 18px;
@@ -1564,7 +1564,7 @@ body.observing #roamStatus {
 @media (max-width: 600px) {
   #settingsHud,
   #helpPanel,
-  #voiceOverlay,
+  #audioOverlay,
   #operatorOverlay,
   #entryDialog {
     width: calc(100vw - 16px);
@@ -1586,7 +1586,7 @@ body.observing #roamStatus {
   }
 }
 
-.voiceSettings {
+.audioSettings {
   flex: 1 1 100%;
   width: 100%;
   max-width: 760px;
@@ -1599,25 +1599,25 @@ body.observing #roamStatus {
   text-align: left;
 }
 
-.voiceSettings h2 {
+.audioSettings h2 {
   margin: 0 0 0.5rem;
   color: var(--color-accent-light);
   font-size: 1.25rem;
 }
 
-.voiceSettingsDescription,
-.voiceSettingHint,
+.audioSettingsDescription,
+.audioSettingHint,
 .voicePermissionStatus {
   color: rgba(255, 255, 255, 0.75);
   font-size: 1em;
   line-height: 1.5;
 }
 
-.voiceSettingsDescription {
+.audioSettingsDescription {
   margin: 0 0 1rem;
 }
 
-.voiceSettingRow {
+.audioSettingRow {
   display: grid;
   grid-template-columns: minmax(8rem, 0.45fr) minmax(11rem, 1fr);
   gap: 0.35rem 0.75rem;
@@ -1625,13 +1625,13 @@ body.observing #roamStatus {
   margin: 0 0 0.85rem;
 }
 
-.voiceSettingRow > label,
-.voiceSettingLabel {
+.audioSettingRow > label,
+.audioSettingLabel {
   color: var(--color-fg);
   font-weight: bold;
 }
 
-.voiceSettingRow select {
+.audioSettingRow select {
   width: 100%;
   min-height: 2.25rem;
   padding: 0.35rem 0.5rem;
@@ -1643,34 +1643,62 @@ body.observing #roamStatus {
   box-sizing: border-box;
 }
 
-.voiceSettingRow select:disabled {
+.volumeControl {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.volumeSlider {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 2.25rem;
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  /* The dialog owns Left/Right on a focused row, so the browser must not also
+     scroll the page or pan the canvas when a finger drags the thumb. */
+  touch-action: none;
+}
+
+.volumeValue {
+  flex: 0 0 3.5rem;
+  color: var(--color-accent-light);
+  font-weight: bold;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.audioSettingRow select:disabled {
   opacity: 0.75;
   cursor: not-allowed;
 }
 
-.voiceSettingRow select:focus,
-.voiceCheckboxLabel input:focus-visible,
-.voiceSettingActions button:focus-visible {
+.audioSettingRow select:focus,
+.volumeSlider:focus-visible,
+.audioCheckboxLabel input:focus-visible,
+.audioSettingActions button:focus-visible {
   outline: 2px solid var(--color-btn-bg-focus);
   outline-offset: 2px;
 }
 
-.voiceSettingHint {
+.audioSettingHint {
   grid-column: 2;
   margin: 0;
 }
 
-.voiceProcessingOptions {
+.audioProcessingOptions {
   grid-template-columns: 1fr;
   gap: 0.45rem;
   padding-top: 0.25rem;
 }
 
-.voiceProcessingOptions .voiceSettingHint {
+.audioProcessingOptions .audioSettingHint {
   grid-column: 1;
 }
 
-.voiceCheckboxLabel {
+.audioCheckboxLabel {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1679,14 +1707,14 @@ body.observing #roamStatus {
   cursor: pointer;
 }
 
-.voiceCheckboxLabel input {
+.audioCheckboxLabel input {
   accent-color: var(--color-accent);
   inline-size: 1.3rem;
   block-size: 1.3rem;
   margin: 0;
 }
 
-.voiceSettingActions {
+.audioSettingActions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
@@ -1694,7 +1722,7 @@ body.observing #roamStatus {
   margin-top: 0.5rem;
 }
 
-.voiceSettingActions .settingsHudBtn {
+.audioSettingActions .settingsHudBtn {
   min-height: 3rem;
   padding: 0.55rem 0.9rem;
   border: 2px solid var(--color-accent);
@@ -1703,12 +1731,12 @@ body.observing #roamStatus {
   color: var(--color-fg);
 }
 
-.voiceSettingActions .settingsHudBtn:disabled {
+.audioSettingActions .settingsHudBtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.voiceSettingActions .voiceMicToggle[aria-pressed="true"] {
+.audioSettingActions .voiceMicToggle[aria-pressed="true"] {
   border-color: var(--color-accent-light);
   background: var(--color-btn-bg-active);
 }
@@ -1775,28 +1803,28 @@ body.observing #roamStatus {
 }
 
 @media (max-width: 600px) {
-  .voiceSettings {
+  .audioSettings {
     padding: 0.75rem;
   }
 
-  .voiceSettingRow {
+  .audioSettingRow {
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 0.35rem;
   }
 
-  .voiceSettingHint,
-  .voiceProcessingOptions .voiceSettingHint {
+  .audioSettingHint,
+  .audioProcessingOptions .audioSettingHint {
     align-self: stretch;
   }
 
-  .voiceSettingActions {
+  .audioSettingActions {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .voiceSettingActions .settingsHudBtn {
+  .audioSettingActions .settingsHudBtn {
     width: 100%;
     min-height: 2.75rem;
   }

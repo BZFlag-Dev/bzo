@@ -7,7 +7,7 @@
 
 const DIALOG_ROOT_IDS = [
   'settingsHud',
-  'voiceOverlay',
+  'audioOverlay',
   'helpPanel',
   'operatorOverlay',
   'entryDialog',
@@ -120,11 +120,20 @@ function moveDialogFocus(dialog, currentElement, direction) {
   return focusElement(focusables[nextIndex]);
 }
 
+function isRangeInput(element) {
+  return element?.tagName === 'INPUT' && element.type === 'range';
+}
+
 function canCycleWithArrowKeys(activeElement) {
   if (!activeElement) return false;
   if (activeElement.tagName === 'BUTTON') return true;
   if (activeElement.classList && activeElement.classList.contains('closeBtn')) return true;
   if (activeElement.getAttribute && activeElement.getAttribute('role') === 'button') return true;
+  // A slider is the one input the shared model drives itself: Left/Right adjust
+  // it through menuadjust, the same event an XR thumbstick sends, and Up/Down
+  // leave the row. Letting the browser's native range keys through instead
+  // would strand the focus on desktop and skip the row's own handler.
+  if (isRangeInput(activeElement)) return true;
   return activeElement.tabIndex >= 0 && activeElement.tagName !== 'INPUT' && activeElement.tagName !== 'TEXTAREA' && activeElement.tagName !== 'SELECT';
 }
 

@@ -19,7 +19,7 @@ export const SETTINGS_MENU_ITEMS = Object.freeze([
   { id: 'wireframeBtn', label: 'Wireframe', kind: 'toggle' },
   { id: 'dynamicLightingBtn', label: 'Dynamic Lighting', kind: 'toggle' },
   { id: 'anaglyphBtn', label: 'Anaglyph 3D', kind: 'toggle' },
-  { id: 'voiceBtn', label: 'Voice Settings', kind: 'submenu' },
+  { id: 'audioBtn', label: 'Audio Settings', kind: 'submenu' },
   { id: 'helpBtn', label: 'Help', kind: 'submenu' },
   { id: 'operatorBtn', label: 'Operator', kind: 'submenu' },
   { id: 'xrBtn', label: 'VR Mode', kind: 'action' },

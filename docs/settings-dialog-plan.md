@@ -4,11 +4,11 @@ Issue: #27
 
 ## Goal
 
-Move the current settings/help/voice/operator overlays toward one shared dialog system that is usable with mouse, keyboard, touch, attached mobile peripherals, and XR controllers.
+Move the current settings/help/audio/operator overlays toward one shared dialog system that is usable with mouse, keyboard, touch, attached mobile peripherals, and XR controllers.
 
 ## Target Shape
 
-- One shared dialog/menu system for help, entry and tank selection, voice settings, operator tools, and future team selection.
+- One shared dialog/menu system for help, entry and tank selection, audio settings, operator tools, and future team selection.
 - A common focus model so dialogs are navigable with Tab, Arrow keys, Enter, Space, and Escape on any device with a keyboard.
 - Input adapters for mouse/pointer, touch, keyboard, and XR controller thumbsticks/buttons.
 
@@ -52,7 +52,7 @@ Keyboard events have one document listener in `public/input.js`. Application com
 - Settings rows and DOM rendering now live in `public/settings.js` and reuse existing feature actions.
 - Settings use a vertical label/value layout with keyboard, pointer, touch, gamepad, and XR-controller navigation.
 - Settings labels and values align around the dialog center so related text stays visually adjacent.
-- Settings, Help, Voice, Operator, and Entry share one responsive screen footprint and a lightweight translucent background.
+- Settings, Help, Audio, Operator, and Entry share one responsive screen footprint and a lightweight translucent background.
 - Entry follows BZFlag's `Team:` choice pattern, defaulting to Automatic and offering Rogue, Observer, Red, Blue, Green, and Purple, while retaining the BZO tank selector.
 - Player tanks and related HUD effects use the selected team's BZFlag-compatible color.
 - Server team policy is configured with `teamMode.enabled`, `teamMode.autoTeam`, `teamMode.teams`, and `teamMode.limits` in `server.json`.
@@ -63,9 +63,10 @@ Keyboard events have one document listener in `public/input.js`. Application com
 - Immersive XR Settings use a CanvasTexture renderer backed by the shared Settings values and actions.
 - Pressing either controller stick opens or closes XR Settings without ending the session.
 - Player-name activation opens Settings, where `Player Options` is the first destination for name, Team, and Tank changes.
-- XR Settings place `Exit VR` first, followed by `Player Options`, Help, Voice, and Operator screens, with `Close` last.
+- XR Settings place `Exit VR` first, followed by `Player Options`, Help, Audio, and Operator screens, with `Close` last.
 - XR Player Options changes Team and Tank selections and applies team changes through an authoritative rejoin.
-- XR Voice exposes permission, microphone, input-device, and browser audio-processing controls.
+- XR Audio exposes the voice channel and the game, voice, and microphone levels as adjustable rows, then permission, microphone, input-device, and browser audio-processing controls.
+- Volume rows are `input[type=range]` in the DOM dialog and adjustable rows in XR, driven by the same `menuadjust` event: Up/Down leaves the row, Left/Right moves one step, and pointer drag works as the browser's own slider.
 - XR Operator exposes map selection/restart, shot-limit updates, server-data refresh, and read-only MOTD. Text editing and map upload remain desktop-only.
 - Either stick navigates, either trigger or primary face button activates, and either grip or secondary face button closes the menu.
 

@@ -31,6 +31,11 @@ import {
   SUPER_FLAG_COLOR,
 } from './flags.mjs';
 import {
+  DEFAULT_VOLUME_LEVEL,
+  clampVolumeLevel,
+  volumeLevelToGain,
+} from './volume.mjs';
+import {
   createBoundaryTexture,
   createBoxWallTexture,
   createBaseTopTexture,
@@ -497,6 +502,7 @@ class RenderManager {
     this.renderer = null;
     this.labelRenderer = null;
     this.audioListener = null;
+    this.gameVolumeLevel = DEFAULT_VOLUME_LEVEL;
     // Gameplay sample buffers, keyed by GAME_SOUNDS name.
     this.soundBuffers = new Map();
     this.container = null;
@@ -626,6 +632,7 @@ class RenderManager {
 
     this.audioListener = new THREE.AudioListener();
     this.camera.add(this.audioListener);
+    this._applyGameVolume();
     // Sample buffers are filled by preloadGameplayAudio() on map entry.
 
     this._initDynamicLights();
@@ -714,6 +721,29 @@ class RenderManager {
       this.camera.remove(sound);
       sound.disconnect();
     };
+  }
+
+  // Voice chat borrows this context for its microphone gain rather than opening
+  // a second one. A phone counts AudioContexts, and the renderer's is already
+  // running by the time anybody grants microphone permission.
+  getAudioContext() {
+    return this.audioListener?.context || null;
+  }
+
+  getGameVolumeLevel() {
+    return this.gameVolumeLevel;
+  }
+
+  // Every gameplay sound is a node under the AudioListener, so its master gain
+  // is the one place the level has to be applied.
+  setGameVolumeLevel(level) {
+    this.gameVolumeLevel = clampVolumeLevel(level, this.gameVolumeLevel);
+    this._applyGameVolume();
+    return this.gameVolumeLevel;
+  }
+
+  _applyGameVolume() {
+    this.audioListener?.setMasterVolume(volumeLevelToGain(this.gameVolumeLevel));
   }
 
   getRenderCapabilities() {

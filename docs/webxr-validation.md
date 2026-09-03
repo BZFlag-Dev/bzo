@@ -80,8 +80,9 @@ the above with the other controller set down.
 - Open Join, change Team and Tank with left/right, select `Apply & Rejoin`, and
   confirm that the server returns the requested model and assigned team.
 - Open Help and confirm that all control rows are readable without overlap.
-- Open Voice, cycle microphone inputs, toggle browser audio processing, and
-  confirm permission/microphone states refresh after activation.
+- Open Audio, adjust the game, voice, and microphone levels with left/right,
+  cycle microphone inputs, toggle browser audio processing, and confirm
+  permission/microphone states refresh after activation.
 - Open Operator, cycle maps and shot limits, refresh server data, and confirm
   restart/apply actions affect the selected values. Confirm MOTD and desktop-only
   controls remain readable but cannot be activated.

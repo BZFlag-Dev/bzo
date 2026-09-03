@@ -74,7 +74,7 @@ const canonicalChecks = [
   },
   {
     name: 'voice microphone toggle (B)',
-    readme: /`B`\s*—\s*toggle nearby voice microphone/i,
+    readme: /`B`\s*—\s*toggle the voice microphone/i,
     help: /<strong>B<\/strong>\s*—\s*<b>Toggle Microphone<\/b>/i,
   },
   {

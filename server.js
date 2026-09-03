@@ -64,6 +64,11 @@ const {
 const path = require('path');
 const fs = require('fs');
 const { isHeadsetBrowserUA } = require('./server/headset.cjs');
+const {
+  DEFAULT_VOICE_CHANNEL,
+  areVoicePeers,
+  normalizeVoiceChannel,
+} = require('./server/voice-channels.cjs');
 
 
 // Common log function: logs to console and to server.log
@@ -1304,6 +1309,7 @@ class Player {
     // so the answer is sent once rather than on every position update.
     this.lastIdFlag = null;
     this.voiceMicEnabled = false;
+    this.voiceChannel = DEFAULT_VOICE_CHANNEL;
     this.voiceRosterSignature = '';
 
     // Extrapolation state
@@ -1510,6 +1516,7 @@ class Player {
       tankModel: this.tankModel,
       team: this.team,
       voiceMicEnabled: this.voiceMicEnabled,
+      voiceChannel: this.voiceChannel,
       teleportCooldownUntil: this.teleportCooldownUntil,
     };
   }
@@ -2733,11 +2740,13 @@ function updateFlags(now) {
 // The server replies with voiceRoster, voiceState, voiceOffer, voiceAnswer,
 // and voiceIceCandidate. Every server-to-client voice message includes the
 // nearby channel name and signaling messages identify their sender in `from`.
-// Signaling is forwarded only to eligible nearby peers. Audio media remains on
-// the WebRTC connection, not on this socket.
-// TODO: Add team and global routing when those game modes exist; this initial
-// protocol intentionally supports the Nearby channel only.
-const VOICE_CHANNEL = 'nearby';
+// Signaling is forwarded only to eligible peers on the sender's own channel.
+// Audio media remains on the WebRTC connection, not on this socket.
+//
+// The channel rides on every message. Which players a channel puts together is
+// server/voice-channels.cjs, mirrored to public/voice-channels.mjs, and the
+// server is the side that enforces it: withholding the roster and the signalling
+// is the only lever there is, because the media never passes through here.
 const VOICE_ROSTER_REFRESH_INTERVAL = 200;
 const MAX_VOICE_SDP_LENGTH = 128 * 1024;
 const MAX_VOICE_CANDIDATE_LENGTH = 16 * 1024;
@@ -2758,19 +2767,65 @@ function normalizePlayerId(value) {
   return null;
 }
 
-function isNearbyVoicePeer(source, target) {
-  if (!source || !target || source.id === target.id) return false;
-  if (!source.joined || !target.joined) return false;
-  if (!Number.isFinite(source.x) || !Number.isFinite(source.z)
-    || !Number.isFinite(target.x) || !Number.isFinite(target.z)) {
-    return false;
-  }
-  return distance(source.x, source.z, target.x, target.z) <= GAME_CONFIG.VOICE_NEARBY_RADIUS;
+// An observer's heartbeat, sent every MAX_UPDATE_INTERVAL by the client. It has
+// no tank: nothing collides with it, nothing it does originates a shot, and the
+// only thing on the server that reads its position is the nearby voice roster.
+// So the position is taken as sent. The one test is that the numbers are
+// numbers, because a NaN would poison the distance maths -- that is parsing, not
+// validation, and there is deliberately no validation here.
+//
+// Velocities are forced to zero rather than read, so no path extrapolates a
+// camera between heartbeats. The position is simply five seconds stale at worst.
+//
+// It goes out as an ordinary `pm`, because the other clients need it too: voice
+// is peer to peer, so each client decides for itself how loud a peer is and
+// where it stands, and it can only do that for an observer it can locate. Zero
+// velocities mean the receiving end has nothing to extrapolate either, and the
+// mesh it moves is the invisible one every observer already has at health 0.
+//
+// What this allows is being heard from somewhere you are not, which is a small
+// thing beside what an observer may already watch, and smaller still beside a
+// modified client picking a channel that ignores distance.
+function applyObserverHeartbeat(player, message, ws) {
+  const x = Number(message.x);
+  const y = Number(message.y);
+  const z = Number(message.z);
+  const r = Number(message.r);
+  if (![x, y, z, r].every(Number.isFinite)) return;
+  player.x = x;
+  player.y = y;
+  player.z = z;
+  player.rotation = r;
+  player.forwardSpeed = 0;
+  player.rotationSpeed = 0;
+  player.verticalVelocity = 0;
+  broadcast({
+    type: 'pm',
+    id: player.id,
+    x, y, z, r,
+    fs: 0,
+    rs: 0,
+    vv: 0,
+    vx: 0,
+    vz: 0,
+  }, ws);
 }
 
-function getNearbyVoicePeers(player) {
+function isVoicePeer(source, target) {
+  if (!source || !target || source.id === target.id) return false;
+  if (!source.joined || !target.joined) return false;
+  // Infinity rather than 0 for a player with no position yet: out of earshot is
+  // the safe reading, and only Nearby consults it at all.
+  const planar = Number.isFinite(source.x) && Number.isFinite(source.z)
+    && Number.isFinite(target.x) && Number.isFinite(target.z)
+    ? distance(source.x, source.z, target.x, target.z)
+    : Infinity;
+  return areVoicePeers(source, target, planar, GAME_CONFIG.VOICE_NEARBY_RADIUS);
+}
+
+function getVoicePeers(player) {
   return Array.from(players.values())
-    .filter((candidate) => isNearbyVoicePeer(player, candidate))
+    .filter((candidate) => isVoicePeer(player, candidate))
     .sort((left, right) => Number(left.id) - Number(right.id));
 }
 
@@ -2779,23 +2834,26 @@ function getVoicePeerState(peer) {
     id: peer.id,
     name: peer.name,
     team: peer.team,
-    micEnabled: peer.team !== 'observer' && peer.voiceMicEnabled === true,
+    micEnabled: peer.voiceMicEnabled === true,
   };
 }
 
 function sendVoiceRoster(player, force = false) {
   if (!player.joined) return;
 
-  const peers = getNearbyVoicePeers(player);
-  const signature = peers
-    .map((peer) => `${peer.id}:${peer.team}:${peer.voiceMicEnabled === true ? 1 : 0}`)
+  const peers = getVoicePeers(player);
+  // The player's own channel is in the signature because switching channels can
+  // leave the peer set unchanged -- two teammates standing together, say -- and
+  // the roster still has to go out saying which channel they are now on.
+  const signature = [player.voiceChannel, ...peers
+    .map((peer) => `${peer.id}:${peer.team}:${peer.voiceMicEnabled === true ? 1 : 0}`)]
     .join('|');
   if (!force && player.voiceRosterSignature === signature) return;
 
   player.voiceRosterSignature = signature;
   sendToPlayer(player, {
     type: 'voiceRoster',
-    channel: VOICE_CHANNEL,
+    channel: player.voiceChannel,
     nearbyRadius: GAME_CONFIG.VOICE_NEARBY_RADIUS,
     peers: peers.map(getVoicePeerState),
   });
@@ -2805,18 +2863,18 @@ function refreshVoiceRosters(force = false) {
   players.forEach((player) => sendVoiceRoster(player, force));
 }
 
-function sendNearbyVoiceState(player) {
+function sendVoiceStateUpdate(player) {
   if (!player.joined) return;
 
   const stateMessage = {
     type: 'voiceState',
-    channel: VOICE_CHANNEL,
+    channel: player.voiceChannel,
     playerId: player.id,
     team: player.team,
-    enabled: player.team !== 'observer' && player.voiceMicEnabled === true,
+    enabled: player.voiceMicEnabled === true,
   };
   sendToPlayer(player, stateMessage);
-  getNearbyVoicePeers(player).forEach((peer) => sendToPlayer(peer, stateMessage));
+  getVoicePeers(player).forEach((peer) => sendToPlayer(peer, stateMessage));
 }
 
 function getVoiceDescription(message, expectedType) {
@@ -2859,18 +2917,17 @@ function getVoiceCandidate(message) {
 
 function forwardVoiceSignal(player, message) {
   if (!player.joined) return;
-  if (message.type === 'voiceOffer' && player.team === 'observer') return;
 
   const targetId = normalizePlayerId(message.targetId ?? message.to);
   const target = targetId ? players.get(targetId) : null;
-  if (!target || !isNearbyVoicePeer(player, target)) return;
+  if (!target || !isVoicePeer(player, target)) return;
 
   if (message.type === 'voiceOffer' || message.type === 'voiceAnswer') {
     const description = getVoiceDescription(message, message.type === 'voiceOffer' ? 'offer' : 'answer');
     if (!description) return;
     sendToPlayer(target, {
       type: message.type,
-      channel: VOICE_CHANNEL,
+      channel: player.voiceChannel,
       from: player.id,
       description,
     });
@@ -2881,7 +2938,7 @@ function forwardVoiceSignal(player, message) {
   if (candidate === null && message.candidate !== null) return;
   sendToPlayer(target, {
     type: 'voiceIceCandidate',
-    channel: VOICE_CHANNEL,
+    channel: player.voiceChannel,
     from: player.id,
     candidate,
   });
@@ -3791,19 +3848,23 @@ wss.on('connection', (ws, req) => {
         }
         case 'voiceState': {
           if (!player.joined) break;
-          if (message.channel && message.channel !== VOICE_CHANNEL) break;
 
-          // Observers are receive-only, so the server never stores an enabled
-          // microphone state for them even if a client sends enabled: true.
-          player.voiceMicEnabled = player.team !== 'observer' && message.enabled === true;
-          sendNearbyVoiceState(player);
+          // An unrecognized channel normalizes to the default rather than being
+          // rejected, so an older or newer client lands somewhere valid instead
+          // of silently having no voice at all.
+          if (message.channel !== undefined) {
+            player.voiceChannel = normalizeVoiceChannel(message.channel);
+          }
+          player.voiceMicEnabled = message.enabled === true;
+          sendVoiceStateUpdate(player);
+          // A channel change rewrites other players' rosters too, not just this
+          // one's, so every roster is reconsidered rather than only the sender's.
           refreshVoiceRosters();
           break;
         }
         case 'voiceOffer':
         case 'voiceAnswer':
         case 'voiceIceCandidate': {
-          if (message.channel && message.channel !== VOICE_CHANNEL) break;
           forwardVoiceSignal(player, message);
           break;
         }
@@ -3875,7 +3936,10 @@ wss.on('connection', (ws, req) => {
           break;
         }
         case 'm': {
-          if (player.team === 'observer') break;
+          if (player.team === 'observer') {
+            applyObserverHeartbeat(player, message, ws);
+            break;
+          }
 
           const now = Date.now();
           // Calculate deltaTime based on server's last update time
@@ -4234,9 +4298,9 @@ wss.on('connection', (ws, req) => {
           //
           // It still gets a spawn position, because that is where its camera
           // starts: an observer should arrive standing on the field facing the
-          // way a tank would, not hovering at the origin. Nothing drives the
-          // position after that -- the camera lives on the client, and an
-          // observer sends no move packets.
+          // way a tank would, not hovering at the origin. After that the camera
+          // lives on the client and reports itself every five seconds; see
+          // applyObserverHeartbeat.
           const joinAsObserver = isObserverTeam(assignedTeam);
           player.health = joinAsObserver ? 0 : 100;
           // PlayerInfo::resetPlayer(ctf) puts every CTF spawn on the team base.

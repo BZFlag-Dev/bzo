@@ -37,7 +37,8 @@ export const SOUND_DISTANCE_MODEL = 'inverse';
 // BZFlag has no per-sound volume. Every sample plays at its recorded level,
 // scaled only by the global setting (volumeAtten in sound.cxx) and by distance.
 // The samples are pre-mixed relative to each other, so adding per-sound gain
-// here would undo that balance. Adjust this one number, not the table below.
+// here would undo that balance. The player's Game volume is applied once, to
+// the AudioListener's master gain; this is the per-sound level underneath it.
 export const MASTER_VOLUME = 1;
 
 export const GAME_SOUNDS = Object.freeze({

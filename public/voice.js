@@ -9,9 +9,13 @@
 // WebSocket is used only for signaling and state; audio bytes never go through
 // the WebSocket connection.
 
-import { isObserverTeam, normalizePlayerTeam } from './teams.mjs';
-
-const VOICE_CHANNEL = 'nearby';
+import { normalizePlayerTeam } from './teams.mjs';
+import {
+  DEFAULT_VOLUME_LEVEL,
+  clampVolumeLevel,
+  volumeLevelToGain,
+} from './volume.mjs';
+import { DEFAULT_VOICE_CHANNEL, normalizeVoiceChannel } from './voice-channels.mjs';
 
 function normalizePlayerId(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -106,6 +110,10 @@ function createVoiceError(code, message, cause) {
  * @param {RTCConfiguration} [options.rtcConfig] RTCPeerConnection configuration.
  * @param {RTCPeerConnection} [options.RTCPeerConnection] Test/browser constructor override.
  * @param {boolean} [options.startMuted=true] Keep the microphone disabled after capture.
+ * @param {number} [options.voiceVolumeLevel=10] Playback level, 0..10, for remote voice.
+ * @param {number} [options.microphoneVolumeLevel=10] Capture level, 0..10, for the local microphone.
+ * @param {Function} [options.getAudioContext] Supplies the AudioContext the microphone gain runs in.
+ * @param {string} [options.channel='nearby'] Which players to talk to: all, nearby, or team.
  * @returns {object} Voice manager API.
  */
 export function createVoiceManager(options = {}) {
@@ -130,7 +138,17 @@ export function createVoiceManager(options = {}) {
     noiseSuppression: options.audioConstraints?.noiseSuppression !== false,
     autoGainControl: options.audioConstraints?.autoGainControl !== false,
   };
+  // The raw getUserMedia stream, and the stream actually sent to peers. They
+  // differ whenever the microphone gain stage below is in place.
+  let captureStream = null;
   let localStream = null;
+  let microphoneGraph = null;
+  let channel = normalizeVoiceChannel(options.channel ?? DEFAULT_VOICE_CHANNEL);
+  let voiceVolumeLevel = clampVolumeLevel(options.voiceVolumeLevel, DEFAULT_VOLUME_LEVEL);
+  let microphoneVolumeLevel = clampVolumeLevel(options.microphoneVolumeLevel, DEFAULT_VOLUME_LEVEL);
+  const getAudioContext = typeof options.getAudioContext === 'function'
+    ? options.getAudioContext
+    : () => null;
   let microphonePermission = 'prompt';
   let microphoneEnabled = options.startMuted === false
     ? Boolean(options.microphoneEnabled)
@@ -156,10 +174,68 @@ export function createVoiceManager(options = {}) {
   }
 
   function getTransmitting() {
-    return !isObserverTeam(team)
-      && serverAllowsTransmission
+    return serverAllowsTransmission
       && microphoneEnabled
       && Boolean(localStream && localStream.getAudioTracks().length);
+  }
+
+  // Remote voice arrives as an HTMLMediaElement, outside the Three.js audio
+  // graph the Game volume controls, so its level is the element's own gain.
+  // That is playback only: it never touches the track sent to peers.
+  function applyVoicePlaybackVolume(audio) {
+    const elements = audio ? [audio] : Array.from(peers.values(), (entry) => entry.remoteAudio);
+    const gain = volumeLevelToGain(voiceVolumeLevel);
+    elements.forEach((element) => {
+      if (!element) return;
+      try {
+        element.volume = gain;
+      } catch {
+        // A host may supply a media-element double with a read-only volume.
+      }
+    });
+  }
+
+  // Microphone level is a gain node between capture and the sent track, because
+  // getUserMedia has no volume control of its own. Building it always -- rather
+  // than only below unity -- keeps one code path, and one GainNode costs
+  // nothing next to the encoder already running on that stream.
+  function buildMicrophoneGraph(stream) {
+    const context = getAudioContext();
+    if (!context || typeof context.createMediaStreamSource !== 'function') return null;
+    try {
+      const source = context.createMediaStreamSource(stream);
+      const gain = context.createGain();
+      const destination = context.createMediaStreamDestination();
+      source.connect(gain);
+      gain.connect(destination);
+      gain.gain.value = volumeLevelToGain(microphoneVolumeLevel);
+      // A context suspended by the browser's autoplay policy would send silence.
+      if (context.state === 'suspended') context.resume?.().catch(() => {});
+      return { context, source, gain, destination };
+    } catch (error) {
+      // Without the graph the microphone still works; only its level is fixed.
+      console.error('[Voice] Microphone gain unavailable:', error);
+      return null;
+    }
+  }
+
+  function teardownMicrophoneGraph() {
+    if (!microphoneGraph) return;
+    try {
+      microphoneGraph.source.disconnect();
+      microphoneGraph.gain.disconnect();
+    } catch {
+      // Already torn down by a context that closed underneath us.
+    }
+    microphoneGraph = null;
+  }
+
+  // Muting disables the capture track; the graph output track has to follow, or
+  // the gain node keeps forwarding a silent-but-live stream to every peer.
+  function setMicrophoneTracksEnabled(enabled) {
+    [captureStream, localStream].forEach((stream) => {
+      stream?.getAudioTracks().forEach((track) => { track.enabled = enabled; });
+    });
   }
 
   function getState() {
@@ -167,12 +243,14 @@ export function createVoiceManager(options = {}) {
       started,
       localPlayerId,
       team,
-      channel: VOICE_CHANNEL,
-      canTransmit: !isObserverTeam(team) && serverAllowsTransmission,
+      channel,
+      canTransmit: serverAllowsTransmission,
       transmitting: getTransmitting(),
       microphoneEnabled,
       microphonePermission,
       inputDeviceId,
+      voiceVolumeLevel,
+      microphoneVolumeLevel,
       hasLocalStream: Boolean(localStream),
       peerIds: Array.from(peers.keys()),
       rosterIds: Array.from(roster.keys()),
@@ -197,7 +275,7 @@ export function createVoiceManager(options = {}) {
     if (!started || closed) return;
     sendToServer({
       type: 'voiceState',
-      channel: VOICE_CHANNEL,
+      channel,
       team,
       enabled: getTransmitting(),
       transmitting: getTransmitting(),
@@ -248,6 +326,7 @@ export function createVoiceManager(options = {}) {
     audio.setAttribute('aria-hidden', 'true');
     audio.dataset.voicePeerId = peerId;
     audio.style.display = 'none';
+    applyVoicePlaybackVolume(audio);
     if (document.body) document.body.appendChild(audio);
     invoke('onRemoteAudio', { peerId, element: audio });
     return audio;
@@ -276,9 +355,8 @@ export function createVoiceManager(options = {}) {
 
   function setTransceiverDirection(entry) {
     if (!entry.transceiver) return;
-    const direction = isObserverTeam(team) ? 'recvonly' : 'sendrecv';
     try {
-      entry.transceiver.direction = direction;
+      entry.transceiver.direction = 'sendrecv';
     } catch (error) {
       reportError(createVoiceError('voice_direction_failed', `Could not set voice direction for ${entry.peerId}`, error));
     }
@@ -312,9 +390,7 @@ export function createVoiceManager(options = {}) {
     emitState();
   }
 
-  function shouldInitiateOffer(peerId, metadata = {}) {
-    if (isObserverTeam(team)) return false;
-    if (isObserverTeam(metadata.team)) return true;
+  function shouldInitiateOffer(peerId) {
     return comparePlayerIds(localPlayerId, peerId) < 0;
   }
 
@@ -368,7 +444,7 @@ export function createVoiceManager(options = {}) {
       if (event.candidate) {
         sendToServer({
           type: 'voiceIceCandidate',
-          channel: VOICE_CHANNEL,
+          channel,
           to: peerId,
           candidate: event.candidate,
         });
@@ -419,17 +495,13 @@ export function createVoiceManager(options = {}) {
 
     pc.onnegotiationneeded = () => {
       // The lower player ID owns initial offer creation. This deterministic
-      // rule avoids both active peers racing to create the first offer. An
-      // A combatant must initiate when the other peer is a receive-only
-      // observer, regardless of the numeric player ID.
-      if (shouldInitiateOffer(peerId, entry.metadata)) void createOffer(entry);
+      // rule avoids both active peers racing to create the first offer.
+      if (shouldInitiateOffer(peerId)) void createOffer(entry);
     };
 
     if (typeof pc.addTransceiver === 'function') {
       try {
-        entry.transceiver = pc.addTransceiver('audio', {
-          direction: isObserverTeam(team) ? 'recvonly' : 'sendrecv',
-        });
+        entry.transceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
         preferOpusCodec(entry.transceiver);
         entry.sender = entry.transceiver.sender || null;
       } catch (error) {
@@ -493,7 +565,7 @@ export function createVoiceManager(options = {}) {
       await entry.pc.setLocalDescription(offer);
       sendToServer({
         type: 'voiceOffer',
-        channel: VOICE_CHANNEL,
+        channel,
         to: entry.peerId,
         description: serializeDescription(entry.pc.localDescription || offer),
       });
@@ -534,7 +606,7 @@ export function createVoiceManager(options = {}) {
       await entry.pc.setLocalDescription(answer);
       sendToServer({
         type: 'voiceAnswer',
-        channel: VOICE_CHANNEL,
+        channel,
         to: peerId,
         description: serializeDescription(entry.pc.localDescription || answer),
       });
@@ -605,7 +677,6 @@ export function createVoiceManager(options = {}) {
         const nextTeam = normalizePlayerTeam(message.team);
         if (nextTeam !== team) {
           team = nextTeam;
-          if (isObserverTeam(team)) void stopLocalStream({ notify: false });
           void replaceLocalTrack();
         }
       }
@@ -613,7 +684,7 @@ export function createVoiceManager(options = {}) {
         serverAllowsTransmission = message.canTransmit;
         if (!serverAllowsTransmission) {
           microphoneEnabled = false;
-          if (localStream) localStream.getAudioTracks().forEach((track) => { track.enabled = false; });
+          setMicrophoneTracksEnabled(false);
           void replaceLocalTrack();
         }
       }
@@ -635,11 +706,6 @@ export function createVoiceManager(options = {}) {
   }
 
   async function requestMicrophone({ enable = false } = {}) {
-    if (isObserverTeam(team)) {
-      const error = createVoiceError('observer_microphone_denied', 'Observers can listen but cannot use a microphone.');
-      reportError(error);
-      return false;
-    }
     if (microphoneRequest) return microphoneRequest;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       const error = createVoiceError('microphone_unavailable', 'This browser does not provide microphone capture.');
@@ -658,25 +724,32 @@ export function createVoiceManager(options = {}) {
           stream.getTracks().forEach((track) => track.stop());
           return false;
         }
-        if (localStream) localStream.getTracks().forEach((track) => track.stop());
-        localStream = stream;
+        if (captureStream) captureStream.getTracks().forEach((track) => track.stop());
+        teardownMicrophoneGraph();
+        captureStream = stream;
         microphonePermission = 'granted';
         const track = stream.getAudioTracks()[0];
         if (!track) {
+          captureStream = null;
+          localStream = null;
           microphoneEnabled = false;
           const error = createVoiceError('microphone_track_missing', 'The selected input device has no audio track.');
           reportError(error);
           return false;
         }
+        microphoneGraph = buildMicrophoneGraph(stream);
+        localStream = microphoneGraph ? microphoneGraph.destination.stream : stream;
         track.onended = () => {
           microphoneEnabled = false;
+          teardownMicrophoneGraph();
+          captureStream = null;
           localStream = null;
           void replaceLocalTrack();
           sendVoiceState();
           emitState();
         };
         microphoneEnabled = Boolean(enable);
-        stream.getAudioTracks().forEach((audioTrack) => { audioTrack.enabled = microphoneEnabled; });
+        setMicrophoneTracksEnabled(microphoneEnabled);
         await replaceLocalTrack();
         await refreshInputDevices();
         sendVoiceState();
@@ -702,7 +775,7 @@ export function createVoiceManager(options = {}) {
 
   async function setInputDevice(deviceId) {
     inputDeviceId = normalizeDeviceId(deviceId);
-    if (!localStream || isObserverTeam(team)) {
+    if (!localStream) {
       emitState();
       return true;
     }
@@ -717,24 +790,45 @@ export function createVoiceManager(options = {}) {
       noiseSuppression: nextConstraints.noiseSuppression !== false,
       autoGainControl: nextConstraints.autoGainControl !== false,
     };
-    if (!localStream || isObserverTeam(team)) {
+    if (!localStream) {
       emitState();
       return true;
     }
     return requestMicrophone({ enable: microphoneEnabled });
   }
 
+  // Switching rooms. The server recomputes the roster and sends a fresh one;
+  // applyRoster then closes whatever peer is no longer in it, so there is no
+  // separate teardown here. Peers common to both rooms keep their connection.
+  function setChannel(nextChannel) {
+    const normalized = normalizeVoiceChannel(nextChannel);
+    if (normalized === channel) return channel;
+    channel = normalized;
+    sendVoiceState();
+    emitState();
+    return channel;
+  }
+
+  function setVoiceVolumeLevel(level) {
+    voiceVolumeLevel = clampVolumeLevel(level, voiceVolumeLevel);
+    applyVoicePlaybackVolume();
+    emitState();
+    return voiceVolumeLevel;
+  }
+
+  function setMicrophoneVolumeLevel(level) {
+    microphoneVolumeLevel = clampVolumeLevel(level, microphoneVolumeLevel);
+    if (microphoneGraph) microphoneGraph.gain.gain.value = volumeLevelToGain(microphoneVolumeLevel);
+    emitState();
+    return microphoneVolumeLevel;
+  }
+
   async function toggleMicrophone(forceState) {
-    if (isObserverTeam(team)) {
-      const error = createVoiceError('observer_microphone_denied', 'Observers can listen but cannot use a microphone.');
-      reportError(error);
-      return false;
-    }
     if (!localStream || !localStream.getAudioTracks().length) {
       return requestMicrophone({ enable: forceState === undefined ? true : Boolean(forceState) });
     }
     microphoneEnabled = forceState === undefined ? !microphoneEnabled : Boolean(forceState);
-    localStream.getAudioTracks().forEach((track) => { track.enabled = microphoneEnabled; });
+    setMicrophoneTracksEnabled(microphoneEnabled);
     await replaceLocalTrack();
     sendVoiceState();
     emitState();
@@ -765,10 +859,12 @@ export function createVoiceManager(options = {}) {
 
   async function stopLocalStream({ notify = true } = {}) {
     microphoneEnabled = false;
-    if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
-      localStream = null;
+    teardownMicrophoneGraph();
+    if (captureStream) {
+      captureStream.getTracks().forEach((track) => track.stop());
+      captureStream = null;
     }
+    localStream = null;
     await replaceLocalTrack();
     if (notify) sendVoiceState();
     emitState();
@@ -787,7 +883,6 @@ export function createVoiceManager(options = {}) {
       const next = normalizePlayerTeam(requestedTeam);
       if (next !== team) {
         team = next;
-        if (isObserverTeam(team)) void stopLocalStream({ notify: false });
         void replaceLocalTrack();
       }
     }
@@ -798,7 +893,7 @@ export function createVoiceManager(options = {}) {
 
   function handleServerMessage(message) {
     if (!message || typeof message.type !== 'string') return false;
-    if (message.channel && message.channel !== VOICE_CHANNEL) return false;
+    if (message.channel && normalizeVoiceChannel(message.channel) !== channel) return false;
     switch (message.type) {
       case 'voiceRoster':
         applyRoster(message);
@@ -882,6 +977,9 @@ export function createVoiceManager(options = {}) {
     requestMicrophone,
     setInputDevice,
     setAudioConstraints,
+    setChannel,
+    setVoiceVolumeLevel,
+    setMicrophoneVolumeLevel,
     setRtcConfig,
     toggleMicrophone,
     handleServerMessage,

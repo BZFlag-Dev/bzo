@@ -81,51 +81,83 @@
         <button id="anaglyphBtn" class="settingsHudBtn" title="Anaglyph 3D">Anaglyph 3D</button>
         <button id="dynamicLightingBtn" class="settingsHudBtn" title="Dynamic Lighting">Dynamic Lighting</button>
         <button id="xrBtn" class="settingsHudBtn" title="Enter WebXR VR Mode">VR Mode</button>
-        <button id="voiceBtn" class="settingsHudBtn" title="Open Voice Settings">Voice</button>
+        <button id="audioBtn" class="settingsHudBtn" title="Open Audio Settings">Audio</button>
         <button id="closeSettingsHud" class="settingsHudBtn">Close</button>
       </div>
     </div>
   </div>
 
-  <div id="voiceOverlay" class="dialog">
-    <div class="dialogTitle">Voice Settings <button id="closeVoiceBtn" class="closeBtn">&times;</button></div>
-    <div class="dialogContent voiceSettings">
-      <p id="voiceSettingsDescription" class="voiceSettingsDescription">
-        Nearby voice uses your microphone only after you grant permission. Use B to toggle your microphone.
+  <div id="audioOverlay" class="dialog">
+    <div class="dialogTitle">Audio Settings <button id="closeAudioBtn" class="closeBtn">&times;</button></div>
+    <div class="dialogContent audioSettings">
+      <p id="audioSettingsDescription" class="audioSettingsDescription">
+        Each level runs from Off to 100%. Nearby voice uses your microphone only after you grant permission. Use B to toggle your microphone.
       </p>
-      <div class="voiceSettingRow">
-        <label for="voiceChannelSelect">Voice channel</label>
-        <select id="voiceChannelSelect" aria-describedby="voiceChannelDescription" disabled>
-          <option value="nearby">Nearby</option>
-        </select>
-        <span id="voiceChannelDescription" class="voiceSettingHint">The initial voice channel is Nearby.</span>
+      <div class="audioSettingRow">
+        <label for="gameVolumeSlider">Game volume</label>
+        <div class="volumeControl">
+          <input id="gameVolumeSlider" class="volumeSlider" type="range" min="0" max="10" step="1" value="10"
+            data-menu-row="gameVolumeSlider" data-menu-kind="range"
+            aria-describedby="gameVolumeDescription" aria-valuetext="100%">
+          <output id="gameVolumeValue" class="volumeValue" for="gameVolumeSlider">100%</output>
+        </div>
+        <span id="gameVolumeDescription" class="audioSettingHint">Gameplay sound effects.</span>
       </div>
-      <div class="voiceSettingRow">
+      <div class="audioSettingRow">
+        <label for="voiceVolumeSlider">Voice volume</label>
+        <div class="volumeControl">
+          <input id="voiceVolumeSlider" class="volumeSlider" type="range" min="0" max="10" step="1" value="10"
+            data-menu-row="voiceVolumeSlider" data-menu-kind="range"
+            aria-describedby="voiceVolumeDescription" aria-valuetext="100%">
+          <output id="voiceVolumeValue" class="volumeValue" for="voiceVolumeSlider">100%</output>
+        </div>
+        <span id="voiceVolumeDescription" class="audioSettingHint">How loud nearby players sound to you.</span>
+      </div>
+      <div class="audioSettingRow">
+        <label for="microphoneVolumeSlider">Microphone volume</label>
+        <div class="volumeControl">
+          <input id="microphoneVolumeSlider" class="volumeSlider" type="range" min="0" max="10" step="1" value="10"
+            data-menu-row="microphoneVolumeSlider" data-menu-kind="range"
+            aria-describedby="microphoneVolumeDescription" aria-valuetext="100%">
+          <output id="microphoneVolumeValue" class="volumeValue" for="microphoneVolumeSlider">100%</output>
+        </div>
+        <span id="microphoneVolumeDescription" class="audioSettingHint">How loud you are to nearby players.</span>
+      </div>
+      <div class="audioSettingRow">
+        <label for="voiceChannelSelect">Voice channel</label>
+        <select id="voiceChannelSelect" aria-describedby="voiceChannelDescription">
+          <option value="all">All</option>
+          <option value="nearby" selected>Nearby</option>
+          <option value="team">Team</option>
+        </select>
+        <span id="voiceChannelDescription" class="audioSettingHint">Players within earshot, whatever team they are on.</span>
+      </div>
+      <div class="audioSettingRow">
         <label for="voiceInputDevice">Microphone input</label>
         <select id="voiceInputDevice" aria-describedby="voiceInputDeviceDescription">
           <option value="">Default microphone</option>
         </select>
-        <span id="voiceInputDeviceDescription" class="voiceSettingHint">Choose the microphone used for voice chat.</span>
+        <span id="voiceInputDeviceDescription" class="audioSettingHint">Choose the microphone used for voice chat.</span>
       </div>
-      <div class="voiceSettingRow voiceProcessingOptions" role="group" aria-labelledby="voiceProcessingTitle">
-        <span id="voiceProcessingTitle" class="voiceSettingLabel">Native audio processing</span>
-        <label class="voiceCheckboxLabel" for="voiceEchoCancellation">
+      <div class="audioSettingRow audioProcessingOptions" role="group" aria-labelledby="audioProcessingTitle">
+        <span id="audioProcessingTitle" class="audioSettingLabel">Native audio processing</span>
+        <label class="audioCheckboxLabel" for="voiceEchoCancellation">
           <input id="voiceEchoCancellation" type="checkbox" checked>
           Echo cancellation
         </label>
-        <label class="voiceCheckboxLabel" for="voiceNoiseSuppression">
+        <label class="audioCheckboxLabel" for="voiceNoiseSuppression">
           <input id="voiceNoiseSuppression" type="checkbox" checked>
           Noise suppression
         </label>
-        <label class="voiceCheckboxLabel" for="voiceAutoGainControl">
+        <label class="audioCheckboxLabel" for="voiceAutoGainControl">
           <input id="voiceAutoGainControl" type="checkbox" checked>
           Automatic gain control
         </label>
-        <span id="voiceProcessingStatus" class="voiceSettingHint" role="status" aria-live="polite">
+        <span id="audioProcessingStatus" class="audioSettingHint" role="status" aria-live="polite">
           Native browser processing is enabled when supported.
         </span>
       </div>
-      <div class="voiceSettingActions">
+      <div class="audioSettingActions">
         <button id="voiceRequestPermissionBtn" class="settingsHudBtn" type="button">Enable microphone</button>
         <button id="voiceMicToggle" class="settingsHudBtn voiceMicToggle" type="button" aria-pressed="false" disabled>
           Microphone off
@@ -278,11 +310,13 @@
         <li>The camera rests at the eye height of a tank on the ground.</li>
       </ul>
 
-      <h2>Nearby Voice</h2>
+      <h2>Audio</h2>
       <ul>
+        <li><strong>Settings -&gt; Audio Settings</strong> — <b>Game, voice, and microphone levels</b>, each from Off to 100%</li>
+        <li><strong>Voice channel</strong> — <b>All</b> is everyone on the server, <b>Nearby</b> is only players within earshot, <b>Team</b> is your own team anywhere on the map</li>
         <li><strong>B</strong> — <b>Toggle Microphone</b></li>
-        <li>Nearby voice is available to combatants after microphone permission is granted.</li>
-        <li>Observers can listen but cannot transmit.</li>
+        <li>Voice is available after microphone permission is granted.</li>
+        <li>Observers talk and listen on the same terms as everyone else.</li>
       </ul>
 
       <h2>3D Viewing Modes</h2>

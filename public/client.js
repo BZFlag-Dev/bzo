@@ -154,6 +154,12 @@ import {
 } from './teams.mjs';
 import { createVoiceManager } from './voice.js';
 import {
+  DEFAULT_VOICE_CHANNEL,
+  VOICE_CHANNELS,
+  getVoiceChannel,
+  normalizeVoiceChannel,
+} from './voice-channels.mjs';
+import {
   BZFLAG_TANK_RADIUS,
   FLAG_GRAB_INTERVAL_MS,
   FLAG_GRAB_LEVEL_TOLERANCE,
@@ -172,6 +178,15 @@ import {
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
 import { getSoundPaths } from './audio.js';
+import {
+  DEFAULT_VOLUME_LEVEL,
+  VOLUME_CHANNELS,
+  clampVolumeLevel,
+  formatVolumeLevel,
+  readVolumeLevel,
+  stepVolumeLevel,
+  writeVolumeLevel,
+} from './volume.mjs';
 import { setupInstallPrompt } from './install.js';
 import {
   getBaseTeamAtPoint,
@@ -345,10 +360,21 @@ let teamScores = [];
 let selectedPlayerTeam = PLAYER_TEAM.AUTOMATIC;
 let availablePlayerTeams = [PLAYER_TEAM.ROGUE, PLAYER_TEAM.OBSERVER];
 let selectedVoiceInputDeviceId = '';
+// One level per VOLUME_CHANNELS row, restored before the first sound plays so
+// nothing is ever briefly loud on the way to the level the player chose.
+const volumeLevels = Object.fromEntries(VOLUME_CHANNELS.map(
+  (channel) => [channel.id, readVolumeLevel(localStorage, channel.storageKey)],
+));
 let voiceRtcConfig = { iceServers: [] };
+let selectedVoiceChannel = normalizeVoiceChannel(
+  localStorage.getItem('voiceChannel') ?? DEFAULT_VOICE_CHANNEL,
+);
+// What the WebRTC layer is actually doing, keyed by peer id. The voice manager
+// tracks its peers already; this is the part the player can see.
+const voicePeerDebug = new Map();
 let voiceManager = null;
 let voiceManagerState = {
-  channel: 'nearby',
+  channel: selectedVoiceChannel,
   team: PLAYER_TEAM.ROGUE,
   microphonePermission: 'prompt',
   microphoneEnabled: false,
@@ -358,7 +384,6 @@ let voiceManagerState = {
   lastError: null,
 };
 
-const VOICE_CHANNEL = 'nearby';
 function getSelectedPlayerTeam() {
   const teamSelector = document.getElementById('entryTeamSelector');
   return teamSelector ? normalizePlayerTeamSelection(teamSelector.dataset.team) : selectedPlayerTeam;
@@ -498,6 +523,157 @@ function getVoiceState() {
   return { ...voiceManagerState };
 }
 
+// The voice manager has always tracked its peers -- a Map of RTCPeerConnections,
+// with handlers on connectionstatechange and iceconnectionstatechange -- and has
+// always offered them through callbacks. Nothing listened, so a voice link that
+// never came up, or quietly died, left no trace anywhere the player could see.
+//
+// These go through debugLog when the debug HUD is on, which puts them in the
+// debug chat tab and the server log as well as the console. With it off the
+// console still gets them: a peer coming and going is rare and worth having in a
+// bug report, but not worth sending to the server unasked.
+function logVoiceEvent(text) {
+  if (debugEnabled) debugLog(text, 'Voice');
+  else console.log(`[Voice] ${text}`);
+}
+
+function describeVoicePeer(peerId) {
+  const name = voicePeerDebug.get(peerId)?.name;
+  return name ? `${name} (${peerId})` : `peer ${peerId}`;
+}
+
+function trackVoicePeer(peerId, changes) {
+  const entry = voicePeerDebug.get(peerId) || { name: null, states: {}, audio: false };
+  Object.assign(entry, changes);
+  voicePeerDebug.set(peerId, entry);
+  return entry;
+}
+
+function handleVoicePeerChange({ peerId, state } = {}) {
+  if (!peerId || !state) return;
+  const entry = trackVoicePeer(peerId, {});
+  Object.entries(state).forEach(([key, value]) => {
+    if (entry.states[key] === value) return;
+    entry.states[key] = value;
+    logVoiceEvent(`${describeVoicePeer(peerId)} ${key}: ${value}`);
+  });
+}
+
+function handleVoiceRosterChange(roster = []) {
+  const present = new Set();
+  roster.forEach((item) => {
+    const peerId = String(item?.id ?? '');
+    if (!peerId) return;
+    present.add(peerId);
+    const known = voicePeerDebug.has(peerId);
+    trackVoicePeer(peerId, { name: item.name || null });
+    if (!known) logVoiceEvent(`${describeVoicePeer(peerId)} joined the roster`);
+  });
+  Array.from(voicePeerDebug.keys()).forEach((peerId) => {
+    if (present.has(peerId)) return;
+    logVoiceEvent(`${describeVoicePeer(peerId)} left the roster`);
+    voicePeerDebug.delete(peerId);
+  });
+}
+
+function handleVoiceRemoteAudio({ peerId } = {}, attached) {
+  if (!peerId) return;
+  trackVoicePeer(peerId, { audio: attached });
+  logVoiceEvent(`${describeVoicePeer(peerId)} audio ${attached ? 'attached' : 'detached'}`);
+}
+
+// One line per peer for the debug HUD: who, whether audio is flowing, and the
+// two connection states that actually differ when a link is failing.
+function getVoiceDebugState() {
+  return {
+    channel: getVoiceChannel(selectedVoiceChannel).label,
+    transmitting: getVoiceState().transmitting === true,
+    peers: Array.from(voicePeerDebug.entries()).map(([peerId, entry]) => ({
+      label: entry.name || peerId,
+      audio: entry.audio === true,
+      connection: entry.states.connectionState || 'new',
+      ice: entry.states.iceConnectionState || 'new',
+    })),
+  };
+}
+
+function getVolumeLevel(channelId) {
+  return clampVolumeLevel(volumeLevels[channelId], DEFAULT_VOLUME_LEVEL);
+}
+
+// Each channel ends in a different place: the game level is the renderer's
+// AudioListener master gain, and the two voice levels live in the voice manager
+// -- one on the remote elements, one on the microphone gain node.
+function sendVolumeLevelToSink(channelId, level) {
+  if (channelId === 'game') {
+    renderManager.setGameVolumeLevel(level);
+    return;
+  }
+  if (channelId === 'voice') {
+    callVoiceManager('setVoiceVolumeLevel', level);
+    return;
+  }
+  if (channelId === 'microphone') callVoiceManager('setMicrophoneVolumeLevel', level);
+}
+
+function syncVolumeControl(channel) {
+  const level = getVolumeLevel(channel.id);
+  const slider = document.getElementById(channel.sliderId);
+  if (slider) {
+    slider.value = String(level);
+    slider.setAttribute('aria-valuetext', formatVolumeLevel(level));
+  }
+  const value = document.getElementById(channel.valueId);
+  if (value) value.textContent = formatVolumeLevel(level);
+}
+
+function setVolumeLevel(channelId, level) {
+  const clamped = clampVolumeLevel(level, getVolumeLevel(channelId));
+  volumeLevels[channelId] = clamped;
+  const channel = VOLUME_CHANNELS.find((candidate) => candidate.id === channelId);
+  if (channel) {
+    writeVolumeLevel(localStorage, channel.storageKey, clamped);
+    syncVolumeControl(channel);
+  }
+  sendVolumeLevelToSink(channelId, clamped);
+  return clamped;
+}
+
+function setVoiceChannel(nextChannel) {
+  const normalized = normalizeVoiceChannel(nextChannel);
+  const changed = normalized !== selectedVoiceChannel;
+  selectedVoiceChannel = normalized;
+  localStorage.setItem('voiceChannel', normalized);
+  const select = document.getElementById('voiceChannelSelect');
+  if (select && select.value !== normalized) select.value = normalized;
+  const hint = document.getElementById('voiceChannelDescription');
+  if (hint) hint.textContent = getVoiceChannel(normalized).hint;
+  if (changed) {
+    callVoiceManager('setChannel', normalized);
+    logVoiceEvent(`channel: ${getVoiceChannel(normalized).label}`);
+  }
+  updateVoiceHud();
+  return normalized;
+}
+
+function bindVolumeControls() {
+  const overlay = document.getElementById('audioOverlay');
+  VOLUME_CHANNELS.forEach((channel) => {
+    syncVolumeControl(channel);
+    // Pointer and touch drags arrive here; keyboard and XR arrive as menuadjust
+    // below, because the shared dialog model owns Left/Right on a focused row.
+    document.getElementById(channel.sliderId)
+      ?.addEventListener('input', (event) => setVolumeLevel(channel.id, event.target.value));
+  });
+  overlay?.addEventListener('menuadjust', (event) => {
+    const row = event.target.closest?.('[data-menu-row]');
+    const channel = VOLUME_CHANNELS.find((candidate) => candidate.sliderId === row?.id);
+    if (!channel) return;
+    setVolumeLevel(channel.id, stepVolumeLevel(getVolumeLevel(channel.id), event.detail?.direction));
+  });
+  renderManager.setGameVolumeLevel(getVolumeLevel('game'));
+}
+
 function updateVoiceInputDevices(devices = []) {
   const input = document.getElementById('voiceInputDevice');
   if (!input) return;
@@ -542,6 +718,7 @@ function updateVoiceHud(nextState = null) {
   const microphoneButton = document.getElementById('voiceMicToggle');
   const inputDevice = document.getElementById('voiceInputDevice');
   const channelSelect = document.getElementById('voiceChannelSelect');
+  const microphoneSlider = document.getElementById('microphoneVolumeSlider');
 
   const team = normalizePlayerTeam(state.team || playerTeam);
   const transmitting = Boolean(state.transmitting);
@@ -567,24 +744,23 @@ function updateVoiceHud(nextState = null) {
   if (label) label.textContent = 'Nearby';
   if (statusElement) statusElement.textContent = status;
   if (channelSelect) {
-    channelSelect.value = VOICE_CHANNEL;
-    channelSelect.disabled = true;
+    channelSelect.value = selectedVoiceChannel;
   }
+  const channelHint = document.getElementById('voiceChannelDescription');
+  if (channelHint) channelHint.textContent = getVoiceChannel(selectedVoiceChannel).hint;
   if (permissionButton) {
-    permissionButton.disabled = isObserverTeam(team);
     permissionButton.textContent = permission === 'granted' ? 'Microphone permission granted' : 'Enable microphone';
   }
   if (microphoneButton) {
     const permissionGranted = permission === 'granted';
-    microphoneButton.disabled = isObserverTeam(team) || (!permissionGranted && !state.hasLocalStream);
+    microphoneButton.disabled = !permissionGranted && !state.hasLocalStream;
     microphoneButton.textContent = transmitting ? 'Microphone on' : 'Microphone off';
     microphoneButton.setAttribute('aria-pressed', transmitting ? 'true' : 'false');
   }
-  if (inputDevice) inputDevice.disabled = isObserverTeam(team);
+  if (inputDevice) inputDevice.disabled = false;
+  if (microphoneSlider) microphoneSlider.disabled = false;
   if (permissionStatus) {
-    if (isObserverTeam(team)) {
-      permissionStatus.textContent = 'Observers can listen but cannot use a microphone.';
-    } else if (permission === 'granted') {
+    if (permission === 'granted') {
       permissionStatus.textContent = transmitting ? 'Microphone is transmitting on the Nearby channel.' : 'Microphone permission granted; transmission is off.';
     } else if (permission === 'denied') {
       permissionStatus.textContent = 'Microphone permission was denied by the browser.';
@@ -610,14 +786,23 @@ function initializeVoiceManager() {
     sendToServer,
     localPlayerId: myPlayerId,
     team: playerTeam,
+    channel: selectedVoiceChannel,
     inputDeviceId: selectedVoiceInputDeviceId,
     rtcConfig: voiceRtcConfig,
     audioConstraints: getVoiceAudioSettings(),
+    voiceVolumeLevel: getVolumeLevel('voice'),
+    microphoneVolumeLevel: getVolumeLevel('microphone'),
+    // The renderer's context is already open, and a phone counts contexts.
+    getAudioContext: () => renderManager.getAudioContext(),
     startMuted: true,
     callbacks: {
       onStateChange: updateVoiceHud,
       onError: handleVoiceError,
       onInputDevices: updateVoiceInputDevices,
+      onPeerChange: handleVoicePeerChange,
+      onRosterChange: handleVoiceRosterChange,
+      onRemoteAudio: (event) => handleVoiceRemoteAudio(event, true),
+      onRemoteAudioRemoved: (event) => handleVoiceRemoteAudio(event, false),
     },
   });
   updateVoiceHud();
@@ -644,10 +829,6 @@ async function resetVoiceManagerForReconnect() {
 }
 
 function requestVoicePermission() {
-  if (isObserver()) {
-    updateVoiceHud({ team: playerTeam });
-    return;
-  }
   const result = callVoiceManager('requestMicrophone', { enable: false });
   if (result.value && typeof result.value.catch === 'function') {
     result.value.catch(handleVoiceError);
@@ -655,17 +836,15 @@ function requestVoicePermission() {
 }
 
 function toggleVoiceMicrophone() {
-  if (isObserver()) {
-    updateVoiceHud({ team: playerTeam });
-    return;
-  }
   const result = callVoiceManager('toggleMicrophone');
   if (result.value && typeof result.value.catch === 'function') {
     result.value.catch(handleVoiceError);
   }
 }
 
-function bindVoiceControls() {
+function bindAudioControls() {
+  bindVolumeControls();
+
   const teamSelector = document.getElementById('entryTeamSelector');
   if (teamSelector) {
     teamSelector.addEventListener('click', () => selectRelativePlayerTeam(1));
@@ -676,6 +855,12 @@ function bindVoiceControls() {
   }
   syncPlayerTeamSelector();
   updatePlayerTeamSelectorAvailability();
+
+  const channelSelect = document.getElementById('voiceChannelSelect');
+  if (channelSelect) {
+    channelSelect.value = selectedVoiceChannel;
+    channelSelect.addEventListener('change', () => setVoiceChannel(channelSelect.value));
+  }
 
   const inputDevice = document.getElementById('voiceInputDevice');
   if (inputDevice) {
@@ -1697,6 +1882,9 @@ let roamTargetFlagIndex = null;
 // than held states.
 let roamFireWasHeld = false;
 let roamIdentifyWasHeld = false;
+// -Infinity so the first frame of observing sends one rather than waiting out
+// an interval the camera has not been alive for.
+let lastObserverHeartbeatAt = -Infinity;
 let playerRotation = 0;
 
 // Dead reckoning state - track last sent velocities (not positions, since positions are extrapolated)
@@ -2337,7 +2525,8 @@ function getDebugState() {
     gamepadConnected: isGamepadConnected(),
     gamepadInfo: getGamepadInfo(),
     renderStats: renderManager.getRenderStats(),
-    framePhases: framePhaseReport
+    framePhases: framePhaseReport,
+    voice: getVoiceDebugState()
   };
 }
 
@@ -2704,7 +2893,7 @@ function init() {
   // Prevent iOS scrolling/bounce on fullscreen (web app mode)
   document.addEventListener('touchmove', (e) => {
     // Allow touch on specific elements (chat, controls overlay, etc.)
-    const allowedSelectors = ['#chatInput', '#chatWindow', '#controlsOverlay', '#settingsHud', '#voiceOverlay', '#helpPanel', '#entryDialog', '#operatorOverlay'];
+    const allowedSelectors = ['#chatInput', '#chatWindow', '#controlsOverlay', '#settingsHud', '#audioOverlay', '#helpPanel', '#entryDialog', '#operatorOverlay'];
     const isAllowed = allowedSelectors.some(sel => {
       const el = document.querySelector(sel);
       return el && (e.target === el || (e.target && el.contains(e.target)));
@@ -2717,7 +2906,7 @@ function init() {
 
   buildFlagHelp();
   setupInputHandlers();
-  bindVoiceControls();
+  bindAudioControls();
   initializeVoiceManager();
   collectClientCapabilities();
 
@@ -5424,8 +5613,8 @@ function getRoamLabel() {
 // Upstream moves the observer's own tank to the eye point every frame --
 // `myTank->move(virtPos, roamViewAngle)` in `playing.cxx:6110` -- so the radar,
 // the heading tape, and the sound listener all read the camera without knowing
-// about roaming. bzo does the same: the mesh is invisible at health 0, and no
-// move packet is ever sent for it.
+// about roaming. bzo does the same: the mesh is invisible at health 0, and the
+// only thing sent for it is the heartbeat at the bottom of this function.
 function handleRoamMotion(deltaTime) {
   if (!isObserver()) {
     roamCamera = null;
@@ -5433,6 +5622,7 @@ function handleRoamMotion(deltaTime) {
     roamTargetId = null;
     roamFireWasHeld = false;
     roamIdentifyWasHeld = false;
+    lastObserverHeartbeatAt = -Infinity;
     return;
   }
   if (!myTank || !gameConfig) return;
@@ -5495,6 +5685,35 @@ function handleRoamMotion(deltaTime) {
   playerRotation = roamCamera.theta;
   myTank.position.set(playerX, playerY, playerZ);
   myTank.rotation.y = roamCamera.theta;
+
+  sendObserverHeartbeat();
+}
+
+// Upstream has this: `sendObserverHeartbeat` in playing.cxx:7415 gates a normal
+// player update behind `observerHeartbeat`, so a server can say where its
+// observers are. Its default is 30 seconds, which is coarse enough to place a
+// name on a scoreboard and far too coarse to place a voice, so bzo sends one on
+// the same MAX_UPDATE_INTERVAL a driving tank already uses as its heartbeat.
+//
+// The packet carries a position and a heading and nothing else. Every velocity
+// is zero, so neither end has anything to dead reckon: the camera is simply
+// wherever it was when the packet left, until the next one says otherwise. That
+// is enough for the nearby voice roster, which is the only thing that reads it.
+function sendObserverHeartbeat() {
+  const now = performance.now();
+  if (now - lastObserverHeartbeatAt < MAX_UPDATE_INTERVAL) return;
+  lastObserverHeartbeatAt = now;
+  sendToServer({
+    type: 'm',
+    id: myPlayerId,
+    x: Number(playerX.toFixed(2)),
+    y: Number(playerY.toFixed(2)),
+    z: Number(playerZ.toFixed(2)),
+    r: Number(playerRotation.toFixed(2)),
+    fs: 0,
+    rs: 0,
+    vv: 0,
+  });
 }
 
 // The drive axes every input surface funnels into, gathered in one place so a
@@ -7900,25 +8119,36 @@ function beginXRTextEntry(value, commit) {
   input.focus();
 }
 
-function getXRVoiceMenuItems() {
+function getXRAudioMenuItems() {
   const state = getVoiceState();
-  const observer = isObserverTeam(playerTeam);
   const input = document.getElementById('voiceInputDevice');
   const selectedInput = input?.selectedOptions?.[0]?.textContent || 'Default microphone';
   return [
     {
+      id: 'voiceChannelXR',
+      label: 'Voice Channel',
+      value: getVoiceChannel(selectedVoiceChannel).label,
+      adjustable: true,
+    },
+    ...VOLUME_CHANNELS.map((channel) => ({
+      id: channel.xrId,
+      label: channel.label,
+      value: formatVolumeLevel(getVolumeLevel(channel.id)),
+      adjustable: true,
+    })),
+    {
       id: 'voicePermissionXR',
       label: 'Permission',
       value: state.microphonePermission || 'Prompt',
-      disabled: observer || state.microphonePermission === 'granted',
+      disabled: state.microphonePermission === 'granted',
     },
     {
       id: 'voiceMicrophoneXR',
       label: 'Microphone',
       value: state.transmitting ? 'On' : 'Off',
-      disabled: observer || (state.microphonePermission !== 'granted' && !state.hasLocalStream),
+      disabled: state.microphonePermission !== 'granted' && !state.hasLocalStream,
     },
-    { id: 'voiceInputXR', label: 'Input', value: selectedInput, adjustable: true, disabled: observer },
+    { id: 'voiceInputXR', label: 'Input', value: selectedInput, adjustable: true },
     { id: 'voiceEchoXR', label: 'Echo Cancellation', value: getVoiceAudioSettings().echoCancellation ? 'On' : 'Off' },
     { id: 'voiceNoiseXR', label: 'Noise Suppression', value: getVoiceAudioSettings().noiseSuppression ? 'On' : 'Off' },
     { id: 'voiceGainXR', label: 'Auto Gain', value: getVoiceAudioSettings().autoGainControl ? 'On' : 'Off' },
@@ -7956,7 +8186,7 @@ function getXRSettingsMenuDefinition() {
     };
   }
   if (xrSettingsMenuScreen === 'help') return { title: 'Help', items: XR_HELP_ITEMS };
-  if (xrSettingsMenuScreen === 'voice') return { title: 'Voice', items: getXRVoiceMenuItems() };
+  if (xrSettingsMenuScreen === 'audio') return { title: 'Audio', items: getXRAudioMenuItems() };
   if (xrSettingsMenuScreen === 'operator') return { title: 'Operator', items: getXROperatorMenuItems() };
   return { title: 'Settings', items: getXRSettingsMenuItems() };
 }
@@ -7971,6 +8201,17 @@ function cycleSelectElement(select, direction) {
 
 function adjustXRSettingsMenuItem(item, direction) {
   if (!item || item.disabled) return false;
+  if (item.id === 'voiceChannelXR') {
+    const index = VOICE_CHANNELS.findIndex((channel) => channel.id === selectedVoiceChannel);
+    const next = (index + direction + VOICE_CHANNELS.length) % VOICE_CHANNELS.length;
+    setVoiceChannel(VOICE_CHANNELS[next].id);
+    return true;
+  }
+  const volumeChannel = VOLUME_CHANNELS.find((channel) => channel.xrId === item.id);
+  if (volumeChannel) {
+    setVolumeLevel(volumeChannel.id, stepVolumeLevel(getVolumeLevel(volumeChannel.id), direction));
+    return true;
+  }
   if (item.id === 'teamXR') {
     selectRelativePlayerTeam(direction, { allowJoined: true });
     return true;
@@ -8032,7 +8273,7 @@ function activateXRSettingsMenuSelection(item) {
   else if (item.id === 'backXR') setXRSettingsMenuScreen('settings');
   else if (item.id === 'playerOptionsBtn') setXRSettingsMenuScreen('player');
   else if (item.id === 'helpBtn') setXRSettingsMenuScreen('help');
-  else if (item.id === 'voiceBtn') setXRSettingsMenuScreen('voice');
+  else if (item.id === 'audioBtn') setXRSettingsMenuScreen('audio');
   else if (item.id === 'operatorBtn') setXRSettingsMenuScreen('operator');
   else if (item.id === 'rejoinXR') applyXRJoinSelection();
   else if (item.id === 'nameXR') beginXRTextEntry(myPlayerName, savePlayerName);

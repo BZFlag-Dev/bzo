@@ -241,7 +241,8 @@ If you want automatic container updates, use your preferred container update man
 - `-` or `Numpad -` — zoom radar in (decrease range)
 - `\` — reset radar zoom to the default medium range (0.5x shot-distance)
 - `Settings -> Radar: ...` — cycle Short/Medium/Long radar presets
-- `B` — toggle nearby voice microphone
+- `B` — toggle the voice microphone
+- `Settings -> Audio Settings` — set the game, voice, and microphone levels, and choose the voice channel: All, Nearby, or Team
 - `/` or `?` — show/hide help panel
 
 - `I` or right-click — identify the tank in your sights
