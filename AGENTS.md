@@ -116,6 +116,12 @@ These are deliberate. Do not "fix" them without being asked.
   superflag in the shared `flags` table, so the feature is not invisible
   without editing `server.json`.
 
+- **Jumping is on by default.** bzfs needs `-j` before any tank can jump; bzo
+  has had jumping since before there was a switch, so `jumping` defaults to on
+  and `jumping: false` in `server.json` is what turns it off. The rest follows
+  upstream: a map's `-j` can still turn it back on, the `JP` flag is forbidden
+  while it is on, and `WG` never consults it. See `docs/flags-plan.md`.
+
 - **The one-tap VR button on the HUD is hidden on phones.** Chrome on Android
   reports `immersive-vr` support on any phone, through Cardboard, so support
   alone does not mean a headset is present. The Settings menu still offers VR
@@ -1034,17 +1040,17 @@ promotion → GitHub release with notes extracted from `CHANGELOG.md`.
 release task; the workflow result arrives by email. Stop at a concise
 confirmation once the tag is pushed.
 
+**A release that fails its workflow is left alone.** bzo is in development and
+not every tag produces artifacts. Fix the cause and move to the next version --
+do not delete or move a published tag, and do not backfill a GitHub release for
+one that never built. `CHANGELOG.md` is the record either way, and it already
+carries the section for the version that failed.
+
 - Release tags are stable `vX.Y.Z` SemVer only. Prereleases and build metadata
   are not published.
 - `public/version.mjs` is written by `scripts/prepare-release.mjs` and verified
   against the tag by `scripts/check-release.mjs`. Do not edit it by hand, and do
   not reintroduce a hardcoded client version string elsewhere.
-
-## Environment Preference
-
-For git push/tag operations in this environment, always run with
-`SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"` (or export it first) so SSH
-authentication succeeds.
 
 ## Debugging Tips
 

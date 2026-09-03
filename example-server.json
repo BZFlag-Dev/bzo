@@ -26,8 +26,11 @@
   "forwardDecel": 2.5,
   "turnAccel": 3.0,
   "turnDecel": 4.0,
+  "jumping": true,
   "jumpVelocity": 19,
   "gravity": 9.8,
+  "wingsJumpCount": 1,
+  "wingsSlideTime": 0,
   "shotSpeed": 100,
   "shotRange": 350,
   "shotDuration": 3.5,
@@ -40,7 +43,9 @@
     "count": 16,
     "allowed": [
       "ID",
-      "US"
+      "US",
+      "JP",
+      "WG"
     ]
   },
   "teamFlagTimeout": 30,

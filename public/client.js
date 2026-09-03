@@ -168,10 +168,14 @@ import {
   FLAG_STATUS,
   FLAG_TYPES,
   SUPER_FLAG_COLOR,
+  canJump,
   getFlagFlightState,
   getFlagTeamIndex,
   getFlagType,
   getKnownFlagAbbreviation,
+  getWingsJumpVelocity,
+  getWingsSlideVelocity,
+  hasAirControl,
   isTeamFlag,
   rememberFlagIdentity,
 } from './flags.mjs';
@@ -2083,7 +2087,7 @@ function samplePredictedAirPath(state) {
   const points = [];
   const stepTime = JUMP_PATH_STEP_TIME;
   const maxSteps = Math.max(4, Math.floor(JUMP_PATH_MAX_TIME / stepTime));
-  const gravity = gameConfig.GRAVITY || 9.8;
+  const gravity = hasAirControl(state.flagType) ? gameConfig.WINGS_GRAVITY : gameConfig.GRAVITY;
   let landed = false;
   let landingPoint = null;
 
@@ -3589,10 +3593,13 @@ function handleServerMessage(message) {
           tank.userData.jumpDirection = message.jd;
         }
 
-        // Detect jump start (record jump direction)
+        // Detect jump start (record jump direction). Upstream announces a flap
+        // with PlayerState::WingsSound; bzo already knows who carries what, so
+        // the flag answers instead of a bit in the packet.
         if (oldVerticalVel <= 0 && message.vv > 10) {
           tank.userData.jumpDirection = message.r;
-          renderManager.playSound('jump', tank.position);
+          const wings = hasAirControl(getPlayerFlag(message.id)?.type);
+          renderManager.playSound(wings ? 'flap' : 'jump', tank.position);
           renderManager.fireTankJumpJets(tank);
         }
 
@@ -3636,7 +3643,8 @@ function handleServerMessage(message) {
             jumpDirection: tank.userData.jumpDirection,
             slideDirection: message.d,
             airVelocityX: Number.isFinite(message.vx) ? message.vx : tank.userData.airVelocityX || 0,
-            airVelocityZ: Number.isFinite(message.vz) ? message.vz : tank.userData.airVelocityZ || 0
+            airVelocityZ: Number.isFinite(message.vz) ? message.vz : tank.userData.airVelocityZ || 0,
+            flagType: getPlayerFlag(message.id)?.type ?? null
           }, 'received');
         } else {
           clearJumpPredictionDebug(tank);
@@ -3704,7 +3712,7 @@ function handleServerMessage(message) {
       message.flags.forEach((state) => setFlagState(state));
       break;
 
-    case 'flagGrabbed': {
+    case 'grabFlag': {
       const flag = setFlagState(message.flag);
       const label = describeFlag(flag);
       handleFlagGrabbedAlerts(message.playerId, flag);
@@ -3714,7 +3722,7 @@ function handleServerMessage(message) {
       break;
     }
 
-    case 'flagCaptured':
+    case 'captureFlag':
       handleFlagCaptured(message);
       callUpdateScoreboard();
       break;
@@ -3723,7 +3731,7 @@ function handleServerMessage(message) {
       handleNearFlag(message);
       break;
 
-    case 'flagDropped': {
+    case 'dropFlag': {
       const flag = setFlagState(message.flag);
       const label = describeFlag(flag);
       if (message.playerId === myPlayerId) {
@@ -3896,7 +3904,8 @@ function addPlayer(player) {
       jumpDirection: player.jumpDirection,
       slideDirection: player.slideDirection,
       airVelocityX: player.airVelocityX || 0,
-      airVelocityZ: player.airVelocityZ || 0
+      airVelocityZ: player.airVelocityZ || 0,
+      flagType: getPlayerFlag(player.id)?.type ?? null
     }, player.id === myPlayerId ? 'sent' : 'received');
   } else {
     clearJumpPredictionDebug(tank);
@@ -4051,7 +4060,7 @@ function handlePlayerHit(message) {
   const victimName = victimTank && victimTank.userData && victimTank.userData.playerState && victimTank.userData.playerState.name ? victimTank.userData.playerState.name : 'Someone';
   const isSelfDestruct = Boolean(message.suicide) || (message.victimId === message.shooterId);
   // A capture kills a whole team at once. Upstream scores nobody for it -- the
-  // team loss is the entire penalty -- and the flagCaptured message has already
+  // team loss is the entire penalty -- and the captureFlag message has already
   // said what happened, so only the local victim needs telling.
   const isCapture = Boolean(message.captured);
   const shooterId = normalizeMessageEndpoint(message.shooterId, CHAT_TARGET_SERVER);
@@ -5103,6 +5112,18 @@ let isInAir = false;
 let onGround = false;
 let onObstacle = false;
 let jumpDirection = null; // Stores the direction at jump start
+// LocalPlayer::wingsFlapCount. Refilled to _wingsJumpCount on every tick the
+// tank spends on a surface and spent one per jump, take-off included. Only Wings
+// ever reads it, because every other tank is refused the moment it leaves the
+// ground.
+let wingsFlapsLeft = 0;
+// LocalPlayer::setJump. Upstream takes one jump per key press; every bzo input
+// surface reports the jump control as a held button instead, and a wings tank
+// holding it would spend all _wingsJumpCount flaps in as many frames.
+let jumpWasHeld = false;
+// Whether the flag in hand steers in the air, resolved once per frame in
+// handleInputEvents and read by handleMotion, which runs straight after it.
+let airControl = false;
 let currentSupportObstacle = null;
 let smoothedForwardInput = 0;
 let smoothedRotationInput = 0;
@@ -5227,6 +5248,31 @@ function setAirVelocity(tank, vx, vz) {
     tank.userData.fallForwardSpeed = 0;
     tank.userData.slideDirection = undefined;
   }
+}
+
+// LocalPlayer::doJump's vertical component, and the gravity the tank falls back
+// under. Wings has its own of each: _wingsJumpVelocity and _wingsGravity, both
+// of which are the world's own values until a server says otherwise.
+function getJumpVelocity(verticalVelocity) {
+  if (!airControl) return gameConfig.JUMP_VELOCITY;
+  return getWingsJumpVelocity(gameConfig.WINGS_JUMP_VELOCITY, verticalVelocity);
+}
+
+function getLocalGravity() {
+  return airControl ? gameConfig.WINGS_GRAVITY : gameConfig.GRAVITY;
+}
+
+// HUDRenderer's altitude tape, which updateFlag() (playing.cxx:1465) puts up
+// only where there is altitude to read: a world that allows jumping, or the
+// Jumping flag in hand. Upstream does not list Wings there, and neither does
+// this.
+let altitudeTapeShown = true;
+function updateAltitudeTape() {
+  if (!gameConfig) return;
+  const shown = gameConfig.ALLOW_JUMPING || getMyFlag()?.type === 'JP';
+  if (shown === altitudeTapeShown) return;
+  altitudeTapeShown = shown;
+  document.body.classList.toggle('no-jumping', !shown);
 }
 
 function deriveAirVelocityFromState(rotation, normalizedSpeed) {
@@ -5800,22 +5846,35 @@ function handleInputEvents() {
     hideSupportFootprintDebug();
   }
   isInAir = !onGround && !onObstacle;
+  // LocalPlayer.cxx:328. Standing on anything refills the flaps.
+  if (!isInAir) wingsFlapsLeft = gameConfig.WINGS_JUMP_COUNT;
 
   if (isPaused || pauseCountdownStart > 0) return;
 
   // Gather intended input from controls
-  if (isInAir) {
+  const carriedFlagType = getMyFlag()?.type ?? null;
+  airControl = hasAirControl(carriedFlagType);
+  if (isInAir && !airControl) {
     // In air: use stored jump values to match what we send in packets
     intendedForward = myTank.userData.jumpForwardSpeed || 0;
     intendedRotation = myTank.userData.rotationSpeed || 0;
+    // A coasting tank does not read the sticks at all, so the jump control goes
+    // unsampled and has to be treated as released. Landing therefore re-arms it,
+    // which is what makes holding jump bounce a tank down a building.
+    jumpWasHeld = false;
   } else {
     const drive = gatherDriveInput();
     intendedForward = drive.forward;
     intendedRotation = drive.turn;
-    if (jumpDirection === null && drive.up) {
+    if (drive.up && !jumpWasHeld
+      && canJump(carriedFlagType, gameConfig.ALLOW_JUMPING, jumpDirection !== null, wingsFlapsLeft)) {
       intendedY = 1;
       jumpTriggered = true;
+      // Every jump spends a flap. Only Wings ever holds more than the one a
+      // surface just put back.
+      wingsFlapsLeft--;
     }
+    jumpWasHeld = drive.up;
   }
   const reverseSpeedRatio = Number.isFinite(gameConfig?.REVERSE_SPEED_RATIO)
     ? gameConfig.REVERSE_SPEED_RATIO
@@ -5866,7 +5925,11 @@ function handleMotion(deltaTime) {
 
   let movementForwardInput = intendedForward;
   let movementRotationInput = intendedRotation;
-  if (!isInAir) {
+  // Wings drives in the air on the same terms as on the ground, so it takes the
+  // same acceleration limits with it. Upstream reaches the same place from the
+  // other side: its wings branch skips doMomentum but still runs getNewAngVel,
+  // and doMomentum does nothing without the Momentum flag anyway.
+  if (!isInAir || airControl) {
     const forwardAccel = Number.isFinite(gameConfig.FORWARD_ACCEL) ? gameConfig.FORWARD_ACCEL : 1.8;
     const reverseAccel = Number.isFinite(gameConfig.REVERSE_ACCEL) ? gameConfig.REVERSE_ACCEL : 1.2;
     const forwardDecel = Number.isFinite(gameConfig.FORWARD_DECEL) ? gameConfig.FORWARD_DECEL : 2.5;
@@ -5893,12 +5956,26 @@ function handleMotion(deltaTime) {
 
   // Determine forward speed for movement calculation
   let movementForwardSpeed = movementForwardInput;
-  if (isInAir && jumpDirection !== null) {
+  const coasting = isInAir && jumpDirection !== null && !airControl;
+  const sliding = isInAir && airControl && gameConfig.WINGS_SLIDE_TIME > 0;
+  if (coasting) {
     intendedDeltaX = priorAirVelocityX * deltaTime;
     intendedDeltaZ = priorAirVelocityZ * deltaTime;
-  }
-
-  if (!(isInAir && jumpDirection !== null)) {
+  } else if (sliding) {
+    // _wingsSlideTime above zero: the stick adds to the velocity the tank
+    // already has rather than replacing it, so flight carries momentum.
+    const slid = getWingsSlideVelocity(
+      priorAirVelocityX,
+      priorAirVelocityZ,
+      moveRotation,
+      movementForwardSpeed * gameConfig.TANK_SPEED,
+      gameConfig.TANK_SPEED,
+      gameConfig.WINGS_SLIDE_TIME,
+      deltaTime,
+    );
+    intendedDeltaX = slid.x * deltaTime;
+    intendedDeltaZ = slid.z * deltaTime;
+  } else {
     intendedDeltaX = -Math.sin(moveRotation) * movementForwardSpeed * speed;
     intendedDeltaZ = -Math.cos(moveRotation) * movementForwardSpeed * speed;
   }
@@ -5912,15 +5989,16 @@ function handleMotion(deltaTime) {
   }
 
   if (isInAir) {
-    myTank.userData.verticalVelocity -= (gameConfig.GRAVITY || 9.8) * deltaTime;
+    myTank.userData.verticalVelocity -= getLocalGravity() * deltaTime;
   }
 
   let jumpStarted = false; // Track if jump was just triggered this frame
   let fallStarted = false; // Track if fall was just triggered this frame
 
-  // Only allow jump if not currently in a jump (jumpDirection is null)
-  if (jumpTriggered && jumpDirection === null) {
-    myTank.userData.verticalVelocity = gameConfig.JUMP_VELOCITY || 30;
+  // handleInputEvents already asked canJump, which is what refuses a second jump
+  // in mid air -- and grants one to Wings, which is allowed to flap there.
+  if (jumpTriggered) {
+    myTank.userData.verticalVelocity = getJumpVelocity(myTank.userData.verticalVelocity || 0);
     intendedDeltaY = myTank.userData.verticalVelocity * deltaTime;
     jumpStarted = true; // Mark that jump started this frame
     myTank.userData.jumpForwardSpeed = movementForwardInput;
@@ -5928,7 +6006,7 @@ function handleMotion(deltaTime) {
     myTank.userData.slideDirection = undefined;
     forceMoveSend = true; // Force send on jump
     if (myTank) {
-      renderManager.playSound('jump', myTank.position);
+      renderManager.playSound(airControl ? 'flap' : 'jump', myTank.position);
       renderManager.fireTankJumpJets(myTank);
     }
   }
@@ -6113,6 +6191,11 @@ function handleMotion(deltaTime) {
     if (teleportedThisFrame) {
       // Preserve the rotated airborne velocity through teleports. The portal
       // displacement is not physical travel and would wildly overstate speed.
+    } else if (airControl && !jumpStarted) {
+      // Wings changes its horizontal velocity every frame, so the figure the
+      // server and the other clients extrapolate from is this frame's actual
+      // travel rather than the one the tank took off with.
+      setAirVelocity(myTank, actualDeltaX / deltaTime, actualDeltaZ / deltaTime);
     } else if (result.moved && result.altered) {
       const newAirVelocityX = trajectoryDeltaX / deltaTime;
       const newAirVelocityZ = trajectoryDeltaZ / deltaTime;
@@ -6128,9 +6211,9 @@ function handleMotion(deltaTime) {
   }
 
   if (deltaTime > 0) {
-    // Only recalculate forwardSpeed when on ground
-    // In air, keep using the last calculated value (from userData)
-    if (!isInAir) {
+    // Only recalculate forwardSpeed when the sticks are connected to the tank:
+    // on the ground, or in the air with Wings. Coasting keeps the last value.
+    if (!isInAir || airControl) {
       const actualDeltaX = playerX - oldX;
       const actualDeltaZ = playerZ - oldZ;
       const actualDistance = Math.sqrt(actualDeltaX * actualDeltaX + actualDeltaZ * actualDeltaZ);
@@ -6157,8 +6240,9 @@ function handleMotion(deltaTime) {
       const airSpeed = Math.hypot(myTank.userData.airVelocityX || 0, myTank.userData.airVelocityZ || 0);
       forwardSpeed = gameConfig.TANK_SPEED > 0 ? airSpeed / gameConfig.TANK_SPEED : 0;
     }
-    // Calculate rotation speed when not in air (on ground or obstacle)
-    if (!isInAir) {
+    // Calculate rotation speed whenever the tank is steering: on the ground or
+    // on an obstacle, and in the air with Wings.
+    if (!isInAir || airControl) {
       const actualDeltaRot = playerRotation - oldRotation;
       const actualRotSpeed = actualDeltaRot / deltaTime;
       const tankRotSpeed = gameConfig.TANK_ROTATION_SPEED;
@@ -8438,7 +8522,7 @@ function extrapolatePosition(player, dt) {
 
   const {
     x, y, z, r, forwardSpeed, rotationSpeed, verticalVelocity,
-    jumpDirection, slideDirection, airVelocityX, airVelocityZ
+    jumpDirection, slideDirection, airVelocityX, airVelocityZ, flagType
   } = player;
 
   // Apply rotation
@@ -8455,8 +8539,9 @@ function extrapolatePosition(player, dt) {
     const dx = hasAirVelocity ? airVelocityX * dt : -Math.sin(moveDirection) * (forwardSpeed || 0) * speed * dt;
     const dz = hasAirVelocity ? airVelocityZ * dt : -Math.cos(moveDirection) * (forwardSpeed || 0) * speed * dt;
 
-    // Apply gravity to vertical velocity
-    const gravity = gameConfig.GRAVITY || 9.8;
+    // Apply gravity to vertical velocity. Wings falls at _wingsGravity, which is
+    // the world's own unless a server has said otherwise.
+    const gravity = hasAirControl(flagType) ? gameConfig.WINGS_GRAVITY : gameConfig.GRAVITY;
     const vv = (verticalVelocity || 0) - gravity * dt;
     const dy = ((verticalVelocity || 0) + vv) / 2 * dt; // Average velocity over dt
 
@@ -8564,6 +8649,7 @@ function animate(frameTime) {
 
   updateFps();
   updateChatWindow();
+  updateAltitudeTape();
   updateAltimeter({ myTank });
   updateDegreeBar({ myTank, playerRotation, markers: getTeamFlagHeadingMarkers() });
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
@@ -8631,7 +8717,8 @@ function animate(frameTime) {
         jumpDirection: remoteJumpDirection,
         slideDirection: tank.userData.slideDirection,
         airVelocityX: remoteAirVx,
-        airVelocityZ: remoteAirVz
+        airVelocityZ: remoteAirVz,
+        flagType: getPlayerFlag(playerId)?.type ?? null
       }, clampedTimeSinceUpdate);
 
       // Update tank's rendered position smoothly

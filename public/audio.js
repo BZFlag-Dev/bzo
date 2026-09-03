@@ -50,6 +50,10 @@ export const GAME_SOUNDS = Object.freeze({
   explosion: { file: 'explosion.wav', sfx: 'SFX_EXPLOSION' },
   // A tank jumps.
   jump: { file: 'jump.wav', sfx: 'SFX_JUMP' },
+  // A tank flaps its Wings. Upstream tells the other clients about this one
+  // explicitly, through PlayerState::WingsSound; bzo already knows who is
+  // carrying what, so the flag answers instead.
+  flap: { file: 'flap.wav', sfx: 'SFX_FLAP' },
   // A tank lands.
   land: { file: 'land.wav', sfx: 'SFX_LAND' },
   // A tank passes through a teleporter.

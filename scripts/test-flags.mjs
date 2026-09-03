@@ -35,7 +35,10 @@ import {
   FLAG_TYPES,
   IDENTIFY_RANGE,
   MAX_FLAG_GRABS,
+  DEFAULT_WINGS_JUMP_COUNT,
+  DEFAULT_WINGS_SLIDE_TIME,
   SUPER_FLAG_COLOR,
+  canJump,
   computeFlagFlight,
   getFlagFlightHeight,
   getFlagFlightState,
@@ -44,6 +47,9 @@ import {
   getFlagType,
   getKnownFlagAbbreviation,
   getTeamFlagAbbreviation,
+  getWingsJumpVelocity,
+  getWingsSlideVelocity,
+  hasAirControl,
   isTeamFlag,
   rememberFlagIdentity,
 } from '../public/flags.mjs';
@@ -86,6 +92,89 @@ assert.equal(identify.endurance, 1);
 assert.equal(identify.quality, 0);
 assert.equal(identify.team, null);
 assert.equal(IDENTIFY_RANGE, 50.0);
+
+// Flag.cxx:133 and :149 -- Jumping and Wings, both unstable good superflags.
+const jumping = getFlagType('JP');
+assert.equal(jumping.name, 'Jumping');
+assert.equal(jumping.endurance, 1);
+assert.equal(jumping.quality, 0);
+assert.equal(jumping.team, null);
+const wings = getFlagType('WG');
+assert.equal(wings.name, 'Wings');
+assert.equal(wings.endurance, 1);
+assert.equal(wings.quality, 0);
+assert.equal(wings.team, null);
+assert.equal(DEFAULT_WINGS_JUMP_COUNT, 1, '_wingsJumpCount');
+assert.equal(DEFAULT_WINGS_SLIDE_TIME, 0, '_wingsSlideTime');
+
+// LocalPlayer::doJump. `allowJumping` is the world switch, `airborne` says the
+// tank has already left a surface, and `flapsLeft` is the wings count, which a
+// surface refills and a jump spends.
+{
+  const flaps = DEFAULT_WINGS_JUMP_COUNT;
+  // A world that allows jumping: any tank may, and only from a surface.
+  assert.equal(canJump(null, true, false, flaps), true, 'no flag, jumping on');
+  assert.equal(canJump('US', true, false, flaps), true, 'any flag, jumping on');
+  assert.equal(canJump(null, true, true, flaps), false, 'no second jump in the air');
+
+  // A world that does not: Jumping is the only way off the ground.
+  assert.equal(canJump(null, false, false, flaps), false, 'no flag, jumping off');
+  assert.equal(canJump('US', false, false, flaps), false, 'the wrong flag is no help');
+  assert.equal(canJump('JP', false, false, flaps), true, 'Jumping is the point of Jumping');
+  assert.equal(canJump('JP', false, true, flaps), false, 'Jumping still cannot steer or flap');
+
+  // Wings never asks the world, and is the one flag that answers in mid air --
+  // for as many flaps as it has left, and no more.
+  assert.equal(canJump('WG', false, false, flaps), true, 'Wings takes off on a no-jump world');
+  assert.equal(canJump('WG', false, true, flaps), true, 'Wings flaps in the air');
+  assert.equal(canJump('WG', true, true, 0), false, 'a spent Wings has nothing left');
+  assert.equal(canJump('WG', false, false, 0), false, 'not even from the ground');
+}
+
+// Only Wings drives off the ground.
+assert.equal(hasAirControl('WG'), true);
+for (const abbreviation of ['JP', 'US', 'ID', 'B*', null]) {
+  assert.equal(hasAirControl(abbreviation), false, `${abbreviation} coasts`);
+}
+
+// A flap on the way up is worth taking only while you are climbing slower than
+// it would launch you; on the way down it is spent cancelling the fall.
+{
+  const flapVelocity = 19;
+  close(getWingsJumpVelocity(flapVelocity, 0), 19, 'a flap from a standstill');
+  close(getWingsJumpVelocity(flapVelocity, -5), 14, 'a flap while falling only slows it');
+  close(getWingsJumpVelocity(flapVelocity, -25), -6, 'a late flap does not stop a long fall');
+  close(getWingsJumpVelocity(flapVelocity, 4), 19, 'a flap while climbing slowly relaunches');
+  close(getWingsJumpVelocity(flapVelocity, 30), 30, 'a flap while climbing faster is wasted');
+}
+
+// LocalPlayer::doSlideMotion. Forward in bzo is (-sin, -cos), so a tank at
+// heading 0 accelerates towards -z.
+{
+  const maxSpeed = 25;
+  const slideTime = 2;
+  const dt = 0.5;
+  // From a standstill, a quarter of the slide time buys a quarter of the ask.
+  const first = getWingsSlideVelocity(0, 0, 0, maxSpeed, maxSpeed, slideTime, dt);
+  close(first.x, 0, 'no sideways component at heading 0');
+  close(first.z, -maxSpeed * (dt / slideTime), 'a slide builds up over slideTime');
+
+  // Asking for the same thing repeatedly converges on maxSpeed and stops there.
+  let velocity = { x: 0, z: 0 };
+  for (let step = 0; step < 20; step += 1) {
+    velocity = getWingsSlideVelocity(velocity.x, velocity.z, 0, maxSpeed, maxSpeed, slideTime, dt);
+  }
+  close(Math.hypot(velocity.x, velocity.z), maxSpeed, 'a slide is held at maxSpeed');
+
+  // A tank thrown over the limit is bled back towards it rather than snapped.
+  const over = getWingsSlideVelocity(0, -100, 0, maxSpeed, maxSpeed, slideTime, dt);
+  close(Math.hypot(over.x, over.z), 100 - (maxSpeed * (dt / slideTime)), 'over the limit bleeds off');
+
+  // Turning the stick off leaves the velocity alone, which is what momentum is.
+  const coasting = getWingsSlideVelocity(3, -4, 0, 0, maxSpeed, slideTime, dt);
+  close(coasting.x, 3, 'no ask, no change in x');
+  close(coasting.z, -4, 'no ask, no change in z');
+}
 
 // The table is the list of flags bzo implements, and every one of them needs a
 // name and a help string because the help panel is generated from it.
@@ -307,6 +396,36 @@ for (const [name, value] of Object.entries(serverFlags)) {
     const clientValue = (await import('../public/flags.mjs'))[name];
     assert.equal(value, clientValue, `${name} diverged between the copies`);
   }
+}
+
+for (const abbreviation of ['WG', 'JP', 'US', null]) {
+  for (const allowJumping of [false, true]) {
+    for (const airborne of [false, true]) {
+      for (const flapsLeft of [0, 1]) {
+        assert.equal(
+          serverFlags.canJump(abbreviation, allowJumping, airborne, flapsLeft),
+          canJump(abbreviation, allowJumping, airborne, flapsLeft),
+          `client/server canJump diverged for ${abbreviation}/${allowJumping}/${airborne}/${flapsLeft}`
+        );
+      }
+    }
+  }
+  assert.equal(serverFlags.hasAirControl(abbreviation), hasAirControl(abbreviation));
+}
+
+for (const verticalVelocity of [-30, -5, 0, 4, 30]) {
+  close(
+    serverFlags.getWingsJumpVelocity(19, verticalVelocity),
+    getWingsJumpVelocity(19, verticalVelocity),
+    'client/server wings jump velocity diverged'
+  );
+}
+for (const [vx, vz, speed] of [[0, 0, 25], [0, -100, 25], [3, -4, 0], [10, 10, 12.5]]) {
+  assert.deepEqual(
+    serverFlags.getWingsSlideVelocity(vx, vz, 0.5, speed, 25, 2, 0.5),
+    getWingsSlideVelocity(vx, vz, 0.5, speed, 25, 2, 0.5),
+    'client/server wings slide diverged'
+  );
 }
 
 const parityFlags = [thrown, coming, going];

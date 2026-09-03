@@ -24,8 +24,12 @@ const {
   FLAG_STATUS,
   IDENTIFY_RANGE,
   MAX_FLAG_GRABS,
+  DEFAULT_WINGS_JUMP_COUNT,
+  DEFAULT_WINGS_SLIDE_TIME,
   SUPER_FLAG_HALF_LIFE_SECONDS,
+  canJump,
   computeFlagFlight,
+  hasAirControl,
   getFlagType,
   getTeamFlagAbbreviation,
   isTeamFlag,
@@ -364,6 +368,15 @@ const GAME_CONFIG = {
   RESPAWN_DELAY: 5000, // ms; BZFlag _explodeTime, which is also its _rejoinTime
   JUMP_VELOCITY: 19, // BZFlag _jumpVelocity default
   GRAVITY: 9.8, // BZFlag _gravity magnitude (units per second squared)
+  // Wings' four BZDB variables. Locked upstream, which means the server sets
+  // them and the client obeys, so they travel with the rest of the world's
+  // physics. The two nulls are upstream's own defaults, which are the strings
+  // "_jumpVelocity" and "_gravity" rather than numbers; they are resolved to the
+  // world's values below.
+  WINGS_JUMP_COUNT: DEFAULT_WINGS_JUMP_COUNT, // BZFlag _wingsJumpCount
+  WINGS_JUMP_VELOCITY: null, // BZFlag _wingsJumpVelocity; defaults to JUMP_VELOCITY
+  WINGS_GRAVITY: null, // BZFlag _wingsGravity magnitude; defaults to GRAVITY
+  WINGS_SLIDE_TIME: DEFAULT_WINGS_SLIDE_TIME, // BZFlag _wingsSlideTime
   JUMP_COOLDOWN: 500, // ms between jumps
   FOG_MODE: 'none', // BZFlag _fogMode default
   FOG_DENSITY: 0.001, // BZFlag _fogDensity default
@@ -530,6 +543,37 @@ if (Number.isFinite(configJumpVelocity) && configJumpVelocity >= 0) {
 const configGravity = Number(serverConfig.gravity);
 if (Number.isFinite(configGravity) && configGravity > 0) {
   GAME_CONFIG.GRAVITY = configGravity;
+}
+
+// `?? NaN` because Number(null) is 0, and a config that spells a key out as null
+// is asking for the default rather than for zero.
+const configWingsJumpCount = Number(serverConfig.wingsJumpCount ?? NaN);
+if (Number.isInteger(configWingsJumpCount) && configWingsJumpCount >= 0) {
+  GAME_CONFIG.WINGS_JUMP_COUNT = configWingsJumpCount;
+}
+
+const configWingsJumpVelocity = Number(serverConfig.wingsJumpVelocity ?? NaN);
+if (Number.isFinite(configWingsJumpVelocity) && configWingsJumpVelocity >= 0) {
+  GAME_CONFIG.WINGS_JUMP_VELOCITY = configWingsJumpVelocity;
+}
+
+const configWingsGravity = Number(serverConfig.wingsGravity ?? NaN);
+if (Number.isFinite(configWingsGravity) && configWingsGravity > 0) {
+  GAME_CONFIG.WINGS_GRAVITY = configWingsGravity;
+}
+
+const configWingsSlideTime = Number(serverConfig.wingsSlideTime ?? NaN);
+if (Number.isFinite(configWingsSlideTime) && configWingsSlideTime >= 0) {
+  GAME_CONFIG.WINGS_SLIDE_TIME = configWingsSlideTime;
+}
+
+// _wingsJumpVelocity and _wingsGravity are aliases upstream, so a server that
+// says nothing about them gets a wings jump identical to an ordinary one.
+if (GAME_CONFIG.WINGS_JUMP_VELOCITY === null) {
+  GAME_CONFIG.WINGS_JUMP_VELOCITY = GAME_CONFIG.JUMP_VELOCITY;
+}
+if (GAME_CONFIG.WINGS_GRAVITY === null) {
+  GAME_CONFIG.WINGS_GRAVITY = GAME_CONFIG.GRAVITY;
 }
 
 const configShotSpeed = Number(serverConfig.shotSpeed);
@@ -729,6 +773,9 @@ function parseBZWServerOptions(lines) {
     const [option] = line.split(/\s+/, 1);
     // -fb: superflags may come to rest on buildings, and may spawn on them.
     if (option === '-fb') options.flagsOnBuildings = true;
+    // -j: tanks may jump. bzo already defaults this on, so the switch only
+    // matters on a server whose config has turned jumping off.
+    if (option === '-j') options.jumping = true;
   }
 
   return options;
@@ -1219,10 +1266,17 @@ function getMaxObstacleTopY(obstacles = []) {
   }, 0);
 }
 
+// How high a tank can get, which is where the clouds have to start. Wings
+// out-climbs an ordinary jump wherever a server raises _wingsJumpCount, because
+// a flap taken at the top of the last one adds another whole apex. Upstream asks
+// the same question in getMaxWorldHeight (bzfs.cxx:1264) and answers it with a
+// deliberately generous over-estimate; this is the arithmetic behind it.
 function getJumpApexHeight() {
-  const jumpVelocity = Number.isFinite(GAME_CONFIG.JUMP_VELOCITY) ? GAME_CONFIG.JUMP_VELOCITY : 19;
-  const gravity = Number.isFinite(GAME_CONFIG.GRAVITY) && GAME_CONFIG.GRAVITY > 0 ? GAME_CONFIG.GRAVITY : 9.8;
-  return (jumpVelocity * jumpVelocity) / (2 * gravity);
+  const apex = (velocity, gravity) => (velocity * velocity) / (2 * gravity);
+  return Math.max(
+    apex(GAME_CONFIG.JUMP_VELOCITY, GAME_CONFIG.GRAVITY),
+    GAME_CONFIG.WINGS_JUMP_COUNT * apex(GAME_CONFIG.WINGS_JUMP_VELOCITY, GAME_CONFIG.WINGS_GRAVITY)
+  );
 }
 
 // Generate random clouds with fractal patter.
@@ -1333,6 +1387,7 @@ class Player {
       linearDrift: 0,
       angularDrift: 0,
       shotRejected: 0,
+      jumpRejected: 0,
       totalWarnings: 0,
       lastWarningTime: 0,
     };
@@ -1544,8 +1599,12 @@ class Player {
       const dx = hasAirVelocity ? this.airVelocityX * dt : -Math.sin(moveDirection) * this.forwardSpeed * speed * dt;
       const dz = hasAirVelocity ? this.airVelocityZ * dt : -Math.cos(moveDirection) * this.forwardSpeed * speed * dt;
 
-      // Apply gravity to vertical velocity
-      const gravity = GAME_CONFIG.GRAVITY || 9.8;
+      // Apply gravity to vertical velocity. A wings tank falls at _wingsGravity,
+      // which is the world's own unless a server has said otherwise, so
+      // extrapolating it at the world's would read as vertical drift.
+      const gravity = hasAirControl(getPlayerFlag(this.id)?.type)
+        ? GAME_CONFIG.WINGS_GRAVITY
+        : GAME_CONFIG.GRAVITY;
       const vv = this.verticalVelocity - gravity * dt;
       const dy = (this.verticalVelocity + vv) / 2 * dt; // Average velocity over dt
 
@@ -2066,6 +2125,23 @@ function logShotRejection(player, reason, message) {
   );
 }
 
+// LocalPlayer::doJump refuses the jump on the client, so an unmodified client
+// never sends one from a tank that may not leave the ground. bzfs does not check
+// this at all -- upstream trusts the client with jumping entirely -- but bzo's
+// server is where the anti-cheat line is drawn, and free flight on a no-jump
+// world is a larger prize than a little position drift.
+function logJumpRejection(player, flagType) {
+  player.cheatWarnings.jumpRejected++;
+  player.cheatWarnings.totalWarnings++;
+  player.cheatWarnings.lastWarningTime = Date.now();
+
+  log(
+    `[ANTICHEAT:${ANTICHEAT_CONFIG.mode.toUpperCase()}] Player "${player.name}" JUMP REJECTED:`
+    + ` jumping is off and the tank carries ${flagType || 'no flag'}`
+    + ` | Warnings: ${player.cheatWarnings.totalWarnings}`
+  );
+}
+
 function getAvailableShotSlot(playerId) {
   const occupiedSlots = new Set();
   projectiles.forEach((proj) => {
@@ -2158,6 +2234,19 @@ rebuildTeamBases(OBSTACLES);
 // ClassicCTF upstream. Team flags need both a team game and bases to stand on,
 // so a team-mode map with no bases plays without them.
 const CTF_ENABLED = TEAM_MODE.enabled && BASES_BY_TEAM.size > 0;
+// World::allowJumping, upstream's -j. Upstream has jumping off until the switch
+// turns it on; bzo has had it on since before there was a switch, so the default
+// stays on and `jumping: false` in server.json is what turns it off. A map's
+// `-j` can still turn it back on, because a bzfs switch never turns anything
+// off. With jumping on the `JP` flag has nothing to offer and is forbidden, and
+// with it off `JP` is the only way a tank leaves the ground -- except `WG`,
+// which never asks.
+const ALLOW_JUMPING = serverConfig.jumping !== false || mapServerOptions.jumping === true;
+GAME_CONFIG.ALLOW_JUMPING = ALLOW_JUMPING;
+// CmdLineOptions.cxx:1705. Upstream drops a flag that contradicts the game style
+// from the pool outright rather than leaving it to confuse people. It forbids
+// `NJ` the other way round; bzo has no `NJ` yet.
+const FORBIDDEN_FLAGS = ALLOW_JUMPING ? ['JP'] : [];
 // -fb upstream. Whether a superflag may spawn on, and come to rest on, a
 // building. A map's `options` block may turn it on; nothing turns it back off,
 // which is how a bzfs switch behaves.
@@ -2194,7 +2283,8 @@ function normalizeSuperFlagConfig(value) {
   const requestedTypes = Array.isArray(value?.allowed) ? value.allowed : FLAG_ABBREVIATIONS;
   const allowed = requestedTypes
     .map((abbreviation) => (typeof abbreviation === 'string' ? abbreviation.trim().toUpperCase() : ''))
-    .filter((abbreviation) => getFlagType(abbreviation) && !isTeamFlag(abbreviation));
+    .filter((abbreviation) => getFlagType(abbreviation) && !isTeamFlag(abbreviation))
+    .filter((abbreviation) => !FORBIDDEN_FLAGS.includes(abbreviation));
   return {
     count: allowed.length > 0 ? count : 0,
     allowed: allowed.length > 0 ? allowed : [],
@@ -2402,7 +2492,7 @@ function sendFlagDrop(flag) {
   const state = getFlagState(flag);
   flag.owner = null;
   if (!owner) return;
-  broadcastAll({ type: 'flagDropped', playerId: owner.id, flag: state });
+  broadcastAll({ type: 'dropFlag', playerId: owner.id, flag: state });
 }
 
 function getPlayerFlag(playerId) {
@@ -2434,7 +2524,7 @@ function grabFlag(player, flag) {
   flag.status = FLAG_STATUS.ON_TANK;
   flag.flightStartedAt = 0;
   log(`Player "${player.name}" grabbed ${getFlagType(flag.type).name} flag ${flag.index}`);
-  broadcastAll({ type: 'flagGrabbed', playerId: player.id, flag: getFlagState(flag) });
+  broadcastAll({ type: 'grabFlag', playerId: player.id, flag: getFlagState(flag) });
 }
 
 // searchFlag(). The whole of the Identify flag: while a player carries `ID`,
@@ -2588,7 +2678,7 @@ function captureFlag(player, baseColorIndex) {
   // respawns on the base it now sits on.
   resetFlag(flag);
   broadcastAll({
-    type: 'flagCaptured',
+    type: 'captureFlag',
     playerId: player.id,
     index: flag.index,
     flagTeam: cappedIndex,
@@ -2681,6 +2771,17 @@ function createFlags() {
     log(
       `Flags: ${SUPER_FLAGS.count} superflag slots (${SUPER_FLAGS.allowed.join(', ')});` +
       ` flagsOnBuildings=${FLAGS_ON_BUILDINGS}`
+    );
+  }
+  log(
+    `Jumping: ${ALLOW_JUMPING ? 'allowed' : 'flag only'}`
+    + (FORBIDDEN_FLAGS.length > 0 ? `; forbidden flags ${FORBIDDEN_FLAGS.join(', ')}` : '')
+  );
+  if (SUPER_FLAGS.allowed.includes('WG')) {
+    log(
+      `Wings: jumpCount=${GAME_CONFIG.WINGS_JUMP_COUNT},`
+      + ` jumpVelocity=${GAME_CONFIG.WINGS_JUMP_VELOCITY},`
+      + ` gravity=${GAME_CONFIG.WINGS_GRAVITY}, slideTime=${GAME_CONFIG.WINGS_SLIDE_TIME}`
     );
   }
 }
@@ -4029,9 +4130,19 @@ wss.on('connection', (ws, req) => {
           const isSliding = d !== undefined; // Use loose validation whenever sliding (extrapolation may not match)
           const velocityChanged = fsChanged || rsChanged || vvChanged || isSliding;
 
+          // Whether this tank may leave a surface at all. The flap count is not
+          // tracked here -- following it would mean running the client's whole
+          // ground/air state machine off position updates -- so the server asks
+          // the weaker question it can answer, and Wings is taken at its word
+          // about how many flaps it has left.
+          const carriedFlagType = getPlayerFlag(player.id)?.type ?? null;
+          const jumpRefused = isJumpStart
+            && !canJump(carriedFlagType, ALLOW_JUMPING, false, GAME_CONFIG.WINGS_JUMP_COUNT);
+          if (jumpRefused) logJumpRejection(player, carriedFlagType);
+
           // Use actual deltaTime for validation since we compare to extrapolated position
           // The extrapolated position accounts for the full time interval using OLD velocities
-          if (validateMovement(
+          if (!jumpRefused && validateMovement(
             player,
             x,
             y,

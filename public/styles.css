@@ -1219,6 +1219,13 @@ body.observing #altimeter {
   display: none;
 }
 
+/* A tank that cannot leave the ground has no altitude to read, so the tape goes
+   with the ability. updateFlag() sets the same rule upstream: the tape is up
+   while the world allows jumping or the Jumping flag is in hand. */
+body.no-jumping #altimeter {
+  display: none;
+}
+
 /* Identify picks the roaming target. It will also lock a guided missile once
    those exist; until then it has nothing to do outside observer mode, so the
    touch button is only offered there. Fire and Drop keep their own labels,

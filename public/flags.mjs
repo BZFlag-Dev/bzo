@@ -66,6 +66,26 @@ export const SUPER_FLAG_HALF_LIFE_SECONDS = 10.0;
 // flag on the ground (searchFlag, bzfs.cxx:3631).
 export const IDENTIFY_RANGE = 50.0;
 
+// Wings' four BZDB variables. All are Locked upstream, which means a server may
+// set them and a client may not, so they are world configuration and reach the
+// client with the rest of it -- they are not constants the way _flagRadius is.
+// These are only the stock values.
+//
+// _wingsJumpCount is how many times a tank may leave a surface before it has to
+// touch one again, refilled every tick it spends on the ground or on a building
+// (LocalPlayer.cxx:328) and spent by the take-off as well as by each flap. At
+// the stock 1 that is one jump and no flaps, which is why Wings is worth
+// carrying for its air control rather than for its altitude; a server that wants
+// tanks to actually fly raises it.
+export const DEFAULT_WINGS_JUMP_COUNT = 1;
+// _wingsSlideTime. Zero means a wings tank takes the velocity its stick asks for
+// outright; above zero it accelerates towards it over that many seconds, so
+// flight carries momentum.
+export const DEFAULT_WINGS_SLIDE_TIME = 0.0;
+// _wingsJumpVelocity and _wingsGravity have no stock values of their own: they
+// are the strings "_jumpVelocity" and "_gravity", so unless a server sets them a
+// wings jump rises and falls exactly as an ordinary one does.
+
 // Every superflag is white; only team flags carry a colour (Flag.cxx:409). That
 // is what makes hiding a superflag's identity free: an unidentified flag looks
 // exactly like an identified one.
@@ -115,6 +135,14 @@ export const FLAG_TYPES = Object.freeze({
     team: 4,
     help: TEAM_FLAG_HELP,
   }),
+  JP: Object.freeze({
+    abbreviation: 'JP',
+    name: 'Jumping',
+    endurance: FLAG_ENDURANCE.UNSTABLE,
+    quality: FLAG_QUALITY.GOOD,
+    team: null,
+    help: 'Tank can jump.  Use Tab key.  Can\'t steer in the air.',
+  }),
   ID: Object.freeze({
     abbreviation: 'ID',
     name: 'Identify',
@@ -131,6 +159,14 @@ export const FLAG_TYPES = Object.freeze({
     team: null,
     help: 'You have found the useless flag. Use it wisely.',
   }),
+  WG: Object.freeze({
+    abbreviation: 'WG',
+    name: 'Wings',
+    endurance: FLAG_ENDURANCE.UNSTABLE,
+    quality: FLAG_QUALITY.GOOD,
+    team: null,
+    help: 'Tank can drive in air.',
+  }),
 });
 
 export const FLAG_ABBREVIATIONS = Object.freeze(Object.keys(FLAG_TYPES));
@@ -141,6 +177,57 @@ export function getFlagType(abbreviation) {
 
 export function isTeamFlag(abbreviation) {
   return getFlagTeamIndex(abbreviation) !== null;
+}
+
+// LocalPlayer::doJump. Who may leave a surface, and who may do it again without
+// touching one first. Wings never consults the world switch -- a flap is a flap,
+// whatever the map says about jumping -- and it is the only flag that answers
+// true while the tank is already in the air.
+export function canJump(abbreviation, allowJumping, airborne, flapsLeft) {
+  if (abbreviation === 'WG') return flapsLeft > 0;
+  if (airborne) return false;
+  return allowJumping || abbreviation === 'JP';
+}
+
+// LocalPlayer::doUpdateMotion. Wings is the one flag that drives and steers off
+// the ground; every other tank keeps the velocity it took off with until it
+// lands.
+export function hasAirControl(abbreviation) {
+  return abbreviation === 'WG';
+}
+
+// LocalPlayer::doJump's vertical component. A flap relaunches a tank that is on
+// its way up only if it is climbing slower than the flap would, and a falling
+// one is slowed rather than relaunched -- so flapping late in a dive costs you
+// most of what the flap was worth.
+export function getWingsJumpVelocity(wingsJumpVelocity, verticalVelocity) {
+  if (verticalVelocity < 0) return wingsJumpVelocity + verticalVelocity;
+  return Math.max(wingsJumpVelocity, verticalVelocity);
+}
+
+// LocalPlayer::doSlideMotion, which a wings tank flies through when
+// _wingsSlideTime is above zero. The stick adds to the velocity rather than
+// replacing it, and the result is held at maxSpeed -- a tank already over that,
+// from a flap taken at speed, is bled back towards it over the same slide time
+// rather than snapped to it. Heading is bzo's, where forward is (-sin, -cos).
+export function getWingsSlideVelocity(
+  velocityX, velocityZ, heading, desiredSpeed, maxSpeed, slideTime, deltaTime
+) {
+  const scale = deltaTime / slideTime;
+  const speedAdjustment = desiredSpeed * scale;
+  let x = velocityX - (Math.sin(heading) * speedAdjustment);
+  let z = velocityZ - (Math.cos(heading) * speedAdjustment);
+  const newSpeed = Math.hypot(x, z);
+  if (newSpeed > maxSpeed) {
+    const oldSpeed = Math.hypot(velocityX, velocityZ);
+    const adjustedSpeed = oldSpeed > maxSpeed
+      ? Math.max(0, oldSpeed - (maxSpeed * scale))
+      : maxSpeed;
+    const speedScale = adjustedSpeed / newSpeed;
+    x *= speedScale;
+    z *= speedScale;
+  }
+  return { x, z };
 }
 
 // The BZFlag colour index of a team flag, or null for a superflag or for a flag

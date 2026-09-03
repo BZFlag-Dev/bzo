@@ -5,7 +5,9 @@ as **GitHub issue #6**; reference it from every flag commit and changelog entry.
 Upstream references are paths under `$HOME/bzflag/`.
 
 Phases 1 (the Useless superflag, animation, and the drop key), 2 (team flags and
-capture) and 3 (Identify) are **implemented**. Phase 4 and later are not.
+capture) and 3 (Identify) are **implemented**, as are the jumping switch and the
+two flags that turn on it, `JP` and `WG` -- see "Jumping, and the flags that
+carry it". Phase 4 and later are not.
 
 The flag table in `public/flags.mjs` carries only the flags bzo implements, so
 **this document is the list of what is missing** -- see "What is left to add".
@@ -66,23 +68,22 @@ player -- so `flag.owner` is the one answer to who carries what.
 
 ## Protocol
 
-Client to server:
+Every message is upstream's own name with the redundant `Msg` dropped. Grab,
+drop and capture each travel in both directions under one name, as they do
+upstream -- `MsgGrabFlag` is both the client's request and the server's
+broadcast of what it decided -- and the direction says which is which, since
+neither side has a handler for the other's copy.
 
-| message | payload | upstream |
-|---|---|---|
-| `grabFlag` | `{ index }` | `MsgGrabFlag` |
-| `dropFlag` | none | `MsgDropFlag` |
-| `captureFlag` | `{ team }` | `MsgCaptureFlag` |
-
-Server to client:
-
-| message | payload | upstream |
-|---|---|---|
-| `flagUpdate` | `{ flags: [...] }`, also embedded in `init` | `MsgFlagUpdate` |
-| `flagGrabbed` | `{ playerId, flag }` | `MsgGrabFlag` |
-| `flagDropped` | `{ playerId, flag }` | `MsgDropFlag` |
-| `flagCaptured` | `{ playerId, index, flagTeam, baseTeam }` | `MsgCaptureFlag` |
-| `nearFlag` | `{ index, flagType, position }`, to one player | `MsgNearFlag` |
+| message | direction | payload | upstream |
+|---|---|---|---|
+| `grabFlag` | to server | `{ index }` | `MsgGrabFlag` |
+| `grabFlag` | to client | `{ playerId, flag }` | `MsgGrabFlag` |
+| `dropFlag` | to server | none | `MsgDropFlag` |
+| `dropFlag` | to client | `{ playerId, flag }` | `MsgDropFlag` |
+| `captureFlag` | to server | `{ team }` | `MsgCaptureFlag` |
+| `captureFlag` | to client | `{ playerId, index, flagTeam, baseTeam }` | `MsgCaptureFlag` |
+| `flagUpdate` | to client | `{ flags: [...] }`, also embedded in `init` | `MsgFlagUpdate` |
+| `nearFlag` | to client | `{ index, flagType, position }`, to one player | `MsgNearFlag` |
 
 Two deliberate departures from upstream's packets, neither a behaviour change:
 
@@ -177,8 +178,8 @@ worse than trusting a modified client about a base it still had to drive to.
 ## What is left to add
 
 Upstream carries 47 flag types: a Null type, four team flags, and 42
-superflags. bzo has the four team flags, Useless and Identify, so **40
-superflags remain** -- 26 good and 14 bad. The table below is the whole list,
+superflags. bzo has the four team flags, Useless, Identify, Jumping and Wings,
+so **38 superflags remain** -- 24 good and 14 bad. The table below is the whole list,
 grouped by the machinery each group needs rather than by name, because the
 machinery is what decides the order. `src/common/Flag.cxx` is the authority for
 every name, abbreviation, endurance, quality and help string;
@@ -187,7 +188,7 @@ every name, abbreviation, endurance, quality and help string;
 | Phase | Flags | What it needs that bzo does not have |
 |---|---|---|
 | 4 | `B` `JM` `CB` `WA` | shake timeout, shake wins, antidote flags |
-| 5 | `V` `QT` `A` `M` `RC` `FO` `RO` `LT` `RT` `JP` `NJ` `BY` `TR` | the effect resolver, in the shared pair |
+| 5 | `V` `QT` `A` `M` `RC` `FO` `RO` `LT` `RT` `NJ` `BY` `TR` | the effect resolver, in the shared pair |
 | 6 | `SR` `SH` `G` | damage rules, and a shot that remembers its flag |
 | 7 | `T` `N` `O` | per-player tank dimensions |
 | 8 | `F` `MG` `L` `IB` `SB` | per-shot rate, life, velocity and obstacle rules |
@@ -196,7 +197,7 @@ every name, abbreviation, endurance, quality and help string;
 | 11 | `TH` | flag stealing |
 | 12 | `GM` | a steerable shot, and a lock-on target |
 | 13 | `ST` `CL` `MQ` `SE` | per-viewer visibility |
-| 14 | `OO` `BU` `WG` `PZ` | movement through and under geometry |
+| 14 | `OO` `BU` `PZ` | movement through and under geometry |
 
 Phases 4 to 8 are each a small hook on machinery the phase before it built.
 Phases 9 to 14 are each their own feature and can be taken in any order once 8
@@ -281,6 +282,105 @@ help string present, every bad flag sticky, every team flag normal.
 Upstream's `-f` and `+f` (`CmdLineOptions.cxx:751` and `:757`) set per-type
 counts and forbid types. `superFlags.allowed` covers the common case; per-type
 counts are worth adding only when there are enough flags for the mix to matter.
+
+## Jumping, and the flags that carry it (implemented)
+
+`JP` and `WG` out of order, because both hang off one thing the world did not
+have: a switch that says whether an ordinary tank may leave the ground.
+
+**The switch.** `World::allowJumping`, upstream's `-j`, reaches bzo as a
+`jumping` key in `server.json` and as `-j` in a map's `options` block. Upstream
+has jumping off until the switch turns it on; bzo has had it on since before
+there was a switch, so the default stays **on** and `jumping: false` is what
+turns it off. A map's `-j` can still turn it back on, because a bzfs switch
+never turns anything off -- the same rule `-fb` follows. It goes to the client
+as `ALLOW_JUMPING` in the `init` config.
+
+**`JP` Jumping.** Unstable, good, and forbidden outright while the switch is on
+(`CmdLineOptions.cxx:1705`): a flag that grants what every tank already has is
+worse than absent, because it looks like it does something. `superFlags.allowed`
+may name it either way and the server drops it from the pool when it cannot
+matter, and says so in the log. Upstream forbids `NJ` the other way round; bzo
+has no `NJ` yet.
+
+**`WG` Wings.** Unstable, good, and never gated on the switch at all -- a flap
+is a flap, whatever the map says. Wings is the one flag that drives and steers
+off the ground (`LocalPlayer.cxx:342`); every other tank keeps the velocity it
+took off with, which is what upstream calls dead stick and what bzo already did.
+
+**Wings is four BZDB variables, and it plays as whatever a server sets them
+to.** All four are `Locked` upstream, which means the server sets them and the
+client obeys, so they are world configuration and travel to the client in the
+`init` config with the rest of the physics. bzo reads them from `server.json`
+rather than from upstream's `-set`, the same way it reads `tankSpeed` and
+`gravity`, which upstream also only has as BZDB.
+
+| `server.json` | BZDB | default | what it does |
+|---|---|---|---|
+| `wingsJumpCount` | `_wingsJumpCount` | 1 | flaps a surface refills, take-off included |
+| `wingsJumpVelocity` | `_wingsJumpVelocity` | `jumpVelocity` | how hard a flap throws you |
+| `wingsGravity` | `_wingsGravity` | `gravity` | how fast a wings tank falls |
+| `wingsSlideTime` | `_wingsSlideTime` | 0 | seconds to reach the speed the stick asks for |
+
+The count is what decides whether Wings is a flying flag or a steering one. A
+surface refills it every tick and the take-off spends one, so at the stock 1
+there is one jump and no flaps left -- Wings is then worth carrying for its air
+control alone, which is why servers that want tanks to actually fly raise it.
+The flap you have left over after driving off a ledge is the interesting case:
+upstream slows a falling tank rather than relaunching it
+(`newVelocity[2] += oldVelocity[2]`), and one already rising faster keeps what
+it has, so a flap taken late in a dive buys almost nothing.
+
+`_wingsJumpVelocity` and `_wingsGravity` have no values of their own upstream --
+they are the strings `"_jumpVelocity"` and `"_gravity"` -- so a server that says
+nothing about them gets a wings jump identical to an ordinary one. Leave the keys
+out of `server.json` for that; spelling either one out as `null` means the same.
+`_wingsSlideTime` above zero puts momentum in the air: the stick adds to the
+velocity the tank has rather than replacing it (`doSlideMotion`).
+
+`getMaxWorldHeight` (`bzfs.cxx:1264`) exists upstream because raising the count
+raises how high a tank can get, and the clouds have to start above that. bzo's
+`getJumpApexHeight` answers the same question.
+
+**The jump control is one press, one jump, which upstream's is not.** Upstream
+binds `jump` on both press and release: the press sets `wantJump`, the release
+clears it, a refused jump leaves it set so the request fires the moment the tank
+lands, and -- because `SDL2Display` does not filter `event.key.repeat` -- holding
+the key re-sets it at the operating system's key-repeat rate. On a jumping world
+that reads as bouncing; with `_wingsJumpCount` above 1 it means a held key dumps
+every flap in a fraction of a second, once the repeat delay has passed.
+
+bzo has no key-repeat event to inherit. Every input surface it has -- the
+keyboard, the touch button, an XR grip, a gamepad face button -- reports the jump
+control as a held boolean sampled once a frame, so copying upstream would spend
+the flaps at frame rate, which is both faster than upstream and different on
+every machine. bzo takes the rising edge instead: one press, one jump. A tank
+coasting through the air does not sample the sticks at all, so landing re-arms
+the control and holding jump still bounces a tank down a building, which is the
+part of upstream's behaviour worth having. What bzo does not carry over is the
+pending request: a flap asked for in mid-air with no flaps left is dropped rather
+than queued for the landing.
+
+A flap is `SFX_FLAP` rather than `SFX_JUMP`. Upstream announces it to the other
+clients with `PlayerState::WingsSound`; bzo already knows who is carrying what,
+so the flag answers and there is no bit in the packet.
+
+The shared pair answers all of it: `canJump(abbreviation, allowJumping,
+airborne, flapsLeft)`, `hasAirControl(abbreviation)`,
+`getWingsJumpVelocity(wingsJumpVelocity, verticalVelocity)` and
+`getWingsSlideVelocity(...)`. The client gates the key with them and the server
+re-asks on every jump it sees, because bzfs does not check jumping at all and a
+modified client would otherwise fly on a world that forbids it. The server does
+not follow the flap count -- that would mean running the client's whole
+ground/air state machine off position updates -- so it asks the weaker question
+it can answer, may this tank leave a surface, and logs a refusal as
+`[ANTICHEAT:...] JUMP REJECTED`. Wings' own gravity does reach the server, which
+extrapolates a wings carrier at `_wingsGravity` so a lower one does not read as
+vertical drift.
+
+The altitude tape follows upstream's own rule (`playing.cxx:1465`): it is up
+while the world allows jumping or `JP` is in hand. Upstream does not list Wings
+there and neither does bzo.
 
 ## Phase 4 -- shaking a bad flag off
 
@@ -368,17 +468,14 @@ Upstream applies these in `LocalPlayer::getMaxSpeed` (`LocalPlayer.cxx:1100`),
 | `RO` Reverse Only | forward speed clamped to 0 | bad |
 | `LT` Left Turn Only | right turn clamped to 0 | bad |
 | `RT` Right Turn Only | left turn clamped to 0 | bad |
-| `JP` Jumping | may jump | needs the world switch, below |
 | `NJ` No Jumping | may not jump | bad |
 | `BY` Bouncy | jumps continuously on landing (`LocalPlayer.cxx:877`) | bad |
 | `TR` Trigger Happy | fires continuously (`LocalPlayer.cxx:1308`) | bad |
 
-`JP` needs one thing first: **every bzo tank can jump today.** Upstream gates it
-on the world (`LocalPlayer.cxx:479`), so a world either allows jumping for all
-or hands it out as a flag. Add the switch -- upstream's `-j`, a map `options`
-entry and a `server.json` key, defaulting to on so today's behaviour is what
-you get by default -- and then `JP` and `NJ` both mean something. bzo's jump is
-already an arc with no air steering, which is upstream's.
+`NJ` is the other half of the jumping switch, which is already in -- see
+"Jumping, and the flags that carry it". It is the one flag in this group whose
+answer `canJump` does not yet carry, because a bad flag is unplayable until
+phase 4 gives you a way to shake it off.
 
 `TR` is a firing rule rather than a motion one, but it belongs here: it is an
 input clamp, and the resolver is where input clamps live.
@@ -540,8 +637,9 @@ the protocol.
 
 ## Phase 14 -- movement through and under geometry
 
-Four flags, each of them a change to collision itself, which is why they are
-last. `motion.mjs` and `collision.mjs` are the shared pairs involved, and both
+Three flags, each of them a change to collision itself, which is why they are
+last. `WG` was the fourth and is done -- it needed air steering rather than a
+change to collision, so it came out of this group early. `motion.mjs` and `collision.mjs` are the shared pairs involved, and both
 have tests that need to keep passing.
 
 - **`OO` Oscillation Overthruster** -- drives through buildings; cannot reverse
@@ -552,9 +650,6 @@ have tests that need to keep passing.
   killable by `SR` from anyone including teammates, speed x`_burrowSpeedAd` 0.80
   and turn x`_burrowAngularAd` 0.55. Needs negative ground, which bzo's
   `groundLimit` assumes is zero.
-- **`WG` Wings** -- drives in the air, `_wingsJumpCount` 1 extra jump at
-  `_wingsJumpVelocity`, gravity `_wingsGravity`, `_wingsSlideTime` 0.0. Needs
-  air steering, which bzo deliberately does not have.
 - **`PZ` Phantom Zone** -- passing through a teleporter toggles Zoned; a Zoned
   tank drives through buildings, fires Zoned shots, and can only be hit by
   `SB`, `SW` or another Zoned shot. Needs `OO`'s pass-through, a hook on bzo's

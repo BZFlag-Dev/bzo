@@ -10,6 +10,7 @@ sounds like the game it mirrors. See `AGENTS.md` for the mapping between BZFlag'
 | `boom.wav` | `SFX_SHOT_BOOM` | a shot expires or hits an obstacle |
 | `explosion.wav` | `SFX_EXPLOSION`, `SFX_DIE` | a tank is destroyed |
 | `jump.wav` | `SFX_JUMP` | a tank jumps |
+| `flap.wav` | `SFX_FLAP` | a tank flaps its Wings |
 | `land.wav` | `SFX_LAND` | a tank lands |
 | `teleport.wav` | `SFX_TELEPORT` | a tank passes through a teleporter |
 | `pop.wav` | `SFX_POP` | a tank appears (spawn) |
