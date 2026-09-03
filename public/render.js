@@ -4442,15 +4442,47 @@ class RenderManager {
     return node;
   }
 
+  // The debug label over a flag, created the first time that flag has anything
+  // to say. Most flags in a world are unidentified, so a world of 200 would
+  // otherwise pay for 200 label canvases to draw nothing.
+  //
+  // It hangs off the world group rather than off the flag, because a flag is
+  // billboarded every frame and a child would be swung around with it.
+  _ensureFlagLabel(node) {
+    if (node.label) return node.label;
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+      alphaTest: 0.1,
+    }));
+    label.scale.set(4, 1, 1);
+    this.getWorldGroup().add(label);
+    node.label = label;
+    return label;
+  }
+
   // Places a flag and sets how solid it looks. `warp` is the size fraction of
-  // the arrival/departure disc stack, zero for no warp at all.
-  showFlag(index, { x, y, z, color = SUPER_FLAG_COLOR, alpha = 1, warp = 0 }) {
+  // the arrival/departure disc stack, zero for no warp at all. `label` is the
+  // abbreviation of a flag whose identity this client knows, or null for one it
+  // does not, and it draws only while the debug labels are on.
+  showFlag(index, { x, y, z, color = SUPER_FLAG_COLOR, alpha = 1, warp = 0, label = null }) {
     const node = this._ensureFlagNode(index);
     node.group.visible = alpha > 0;
     node.group.position.set(x, y, z);
     node.clothMaterial.color.setHex(color);
     node.clothMaterial.opacity = alpha;
     node.poleMaterial.opacity = alpha;
+
+    const showLabel = Boolean(label) && this.debugLabelsEnabled && alpha > 0;
+    if (showLabel) {
+      const sprite = this._ensureFlagLabel(node);
+      this.updateSpriteLabel(sprite, label, '#ffffff');
+      sprite.position.set(x, y + BZFLAG_FLAG_HEIGHT + FLAG_POLE_SIZE + 1, z);
+      sprite.visible = true;
+    } else if (node.label) {
+      node.label.visible = false;
+    }
 
     node.warp.group.visible = warp > 0;
     node.warp.group.position.set(x, y, z);
@@ -4468,6 +4500,7 @@ class RenderManager {
     if (!node) return;
     node.group.visible = false;
     node.warp.group.visible = false;
+    if (node.label) node.label.visible = false;
   }
 
   clearFlags() {
@@ -4477,6 +4510,11 @@ class RenderManager {
       // geometry and materials are disposed here.
       node.group.parent?.remove(node.group);
       node.warp.group.parent?.remove(node.warp.group);
+      if (node.label) {
+        node.label.parent?.remove(node.label);
+        node.label.material.map?.dispose();
+        node.label.material.dispose();
+      }
       node.clothMaterial.dispose();
       node.poleMaterial.dispose();
       node.pole.geometry.dispose();

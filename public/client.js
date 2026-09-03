@@ -160,11 +160,14 @@ import {
   FLAG_GRAB_RADIUS,
   FLAG_RADIUS,
   FLAG_STATUS,
+  FLAG_TYPES,
   SUPER_FLAG_COLOR,
   getFlagFlightState,
   getFlagTeamIndex,
   getFlagType,
+  getKnownFlagAbbreviation,
   isTeamFlag,
+  rememberFlagIdentity,
 } from './flags.mjs';
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
@@ -302,6 +305,11 @@ const DEATH_ALERT_SECONDS = 4;
 const KILL_ALERT_SECONDS = 4;
 // setTarget()'s own two seconds, on its own slot so it never displaces a death.
 const IDENTIFY_ALERT_SECONDS = 2;
+// handleNearFlag()'s five (playing.cxx:2016). It shares the identify slot
+// rather than upstream's slot 0: driving past a row of flags reports each one,
+// and bzo keeps slot 0 for the death and kill notices, which a player has four
+// seconds to read and cannot ask for again.
+const NEAR_FLAG_ALERT_SECONDS = 5;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 // BZFlag's displayRadarRange default (defaultBZDB.cxx). The level is deliberately
@@ -2707,6 +2715,7 @@ function init() {
     }
   }, { passive: false });
 
+  buildFlagHelp();
   setupInputHandlers();
   bindVoiceControls();
   initializeVoiceManager();
@@ -3519,6 +3528,10 @@ function handleServerMessage(message) {
     case 'flagCaptured':
       handleFlagCaptured(message);
       callUpdateScoreboard();
+      break;
+
+    case 'nearFlag':
+      handleNearFlag(message);
       break;
 
     case 'flagDropped': {
@@ -6371,6 +6384,9 @@ function isShotTeleportDebugEnabled() {
 // client integrates it locally from there. See docs/flags-plan.md.
 
 const flags = new Map();
+// Flag index to abbreviation, for every slot whose identity this client has
+// learned -- see rememberFlagIdentity in the flags pair for the rule.
+const knownFlagTypes = new Map();
 // checkEnvironment() sweeps for flags to grab no more than five times a second,
 // and a capture is rate-limited the same way: the flag only leaves the tank when
 // the server says so, and until then the condition stays true every frame.
@@ -6387,6 +6403,7 @@ const FLAG_CARRY_HEIGHT = 2;
 
 function clearFlags() {
   flags.clear();
+  knownFlagTypes.clear();
   renderManager.clearFlags();
 }
 
@@ -6413,6 +6430,7 @@ function setFlagState(state) {
     alpha: existing ? existing.alpha : 1,
   };
   flags.set(state.index, flag);
+  rememberFlagIdentity(knownFlagTypes, flag.index, flag.type, flag.status);
   if (flag.status === FLAG_STATUS.NO_EXIST) renderManager.hideFlag(flag.index);
   return flag;
 }
@@ -6447,6 +6465,54 @@ function getPlayerFlagLabel(playerId) {
 function describeFlag(flag) {
   const type = getFlagType(flag?.type);
   return type ? type.name : 'unidentified';
+}
+
+// HelpMenu's flag pages, built from the shared flag table rather than written
+// out in index.html. The table is the list of flags bzo implements, so the help
+// cannot document a flag the server will not hand out, or miss one it will.
+//
+// Team flags share a single help string upstream, so it is printed once for the
+// group instead of four times. Each name is drawn in the flag's own colour, as
+// the scoreboard draws it.
+function buildFlagHelp() {
+  const container = document.getElementById('helpFlags');
+  if (!container) return;
+  container.replaceChildren();
+
+  const abbreviations = Object.keys(FLAG_TYPES);
+  const teamAbbreviations = abbreviations.filter((abbreviation) => isTeamFlag(abbreviation));
+  const superAbbreviations = abbreviations.filter((abbreviation) => !isTeamFlag(abbreviation));
+
+  const addSection = (title, listAbbreviations, sharedHelp) => {
+    if (listAbbreviations.length === 0) return;
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    container.appendChild(heading);
+
+    if (sharedHelp) {
+      const shared = document.createElement('p');
+      shared.textContent = sharedHelp;
+      container.appendChild(shared);
+    }
+
+    const list = document.createElement('ul');
+    listAbbreviations.forEach((abbreviation) => {
+      const type = FLAG_TYPES[abbreviation];
+      const item = document.createElement('li');
+      const code = document.createElement('strong');
+      code.textContent = abbreviation;
+      const name = document.createElement('b');
+      name.textContent = type.name;
+      name.style.color = colorToCSS(getFlagColor(abbreviation));
+      item.append(code, ' — ', name);
+      if (!sharedHelp) item.append(` — ${type.help}`);
+      list.appendChild(item);
+    });
+    container.appendChild(list);
+  };
+
+  addSection('Team Flags', teamAbbreviations, FLAG_TYPES[teamAbbreviations[0]]?.help);
+  addSection('Superflags', superAbbreviations, null);
 }
 
 // FlagType::getColor. Team flags take their team's colour and every superflag is
@@ -6519,6 +6585,21 @@ function handleFlagGrabbedAlerts(grabberId, flag) {
     showMessage('Team Grab!!!');
     if (grabber) renderManager.playSound('teamGrab', grabber.position);
   }
+}
+
+// MsgNearFlag on the client. The Identify flag's answer: the name of the
+// nearest flag on the ground, on the HUD and in the chat log.
+//
+// Upstream guards this on still carrying `ID`, because the message can arrive a
+// lag period after the flag is gone (playing.cxx:2029), and so does bzo.
+function handleNearFlag(message) {
+  if (getMyFlag()?.type !== 'ID') return;
+  const type = getFlagType(message.flagType);
+  if (!type) return;
+  knownFlagTypes.set(message.index, message.flagType);
+  const notice = `Closest Flag: ${type.name}`;
+  setHudAlert(1, notice, NEAR_FLAG_ALERT_SECONDS, false);
+  showMessage(notice);
 }
 
 // MsgCaptureFlag on the client. The server sends a playerHit for each tank on
@@ -6690,6 +6771,7 @@ function updateFlags(deltaTime) {
       color: getFlagColor(flag.type),
       alpha: flag.alpha,
       warp: flag.warp,
+      label: getKnownFlagAbbreviation(knownFlagTypes, flag),
     });
   });
 

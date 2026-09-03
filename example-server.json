@@ -39,6 +39,7 @@
   "superFlags": {
     "count": 16,
     "allowed": [
+      "ID",
       "US"
     ]
   },

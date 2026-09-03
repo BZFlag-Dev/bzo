@@ -112,10 +112,9 @@ These are deliberate. Do not "fix" them without being asked.
   had to drive to. The mismatch is logged as `[ANTICHEAT:...] CAPTURE CLAIMED`.
 
 - **Superflags are on by default.** bzfs needs `-s` before a world has any
-  superflags at all. bzo defaults `superFlags` to 16 slots of `US`, because
-  Useless is the only type implemented and it has no effect on play, so the
-  feature would otherwise be invisible without editing `server.json`. Revisit
-  when flags that do something land.
+  superflags at all. bzo defaults `superFlags` to 16 slots drawn from every
+  superflag in the shared `flags` table, so the feature is not invisible
+  without editing `server.json`.
 
 - **The one-tap VR button on the HUD is hidden on phones.** Chrome on Android
   reports `immersive-vr` support on any phone, through Cardboard, so support
@@ -308,10 +307,17 @@ altitude once per map.
 ## Flags
 
 `docs/flags-plan.md` is the design and staging plan: what upstream does, the
-data model, the protocol, and which phase each piece belongs to. Read it before
-extending flags. Phases 1 and 2 -- the Useless superflag with its flight
-animation and drop key, then team flags and capture -- are implemented. Bad flags
-and the superflag effects are not.
+data model, the protocol, which phase each piece belongs to, and the full list
+of the superflags still missing. Read it before extending flags. Phases 1 to 3
+are implemented -- the Useless superflag with its flight animation and drop key,
+team flags and capture, and Identify. Everything from phase 4 on is not.
+
+**The `FLAG_TYPES` table holds only the flags bzo implements.** Adding a row is
+the last step of implementing a flag, not the first: the row is what puts the
+flag in `superFlags.allowed`'s default and in the help panel, which
+`buildFlagHelp` generates from the same table. An unimplemented row would be a
+flag in the world that lies about what it does, and a help entry promising it.
+The plan is the list of what is missing; the code is not.
 
 The shape of it: the server owns every flag and sends the whole flight with the
 event that starts it, and the client integrates that arc locally, exactly as
@@ -323,6 +329,13 @@ arrangement bzfs uses.
 
 Flag ownership lives only in the server's `flags` array. Do not add a second
 copy on the player.
+
+A client's *knowledge* of a flag's identity is separate, because bzfs reveals a
+superflag's type only while somebody is holding it: `rememberFlagIdentity` in
+the flags pair keeps what each client has learned, and the debug labels draw an
+identified flag's abbreviation over it. The memory is keyed by flag index, which
+is a slot rather than a flag, so it is forgotten when the slot's flag leaves the
+world.
 
 CTF is on when team mode is on **and** the map has bases, which is upstream's
 `ClassicCTF`. Team flags occupy the first slots of the flag array so a team's

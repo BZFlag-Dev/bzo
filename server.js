@@ -22,6 +22,7 @@ const {
   FLAG_QUALITY,
   FLAG_RADIUS,
   FLAG_STATUS,
+  IDENTIFY_RANGE,
   MAX_FLAG_GRABS,
   SUPER_FLAG_HALF_LIFE_SECONDS,
   computeFlagFlight,
@@ -1299,6 +1300,9 @@ class Player {
     this.joined = false;
     // PlayerInfo::restartOnBase. Set for every CTF spawn and after a capture.
     this.restartOnBase = false;
+    // GameKeeper::Player::lastIdFlag. Which flag the Identify flag last named,
+    // so the answer is sent once rather than on every position update.
+    this.lastIdFlag = null;
     this.voiceMicEnabled = false;
     this.voiceRosterSignature = '';
 
@@ -2175,8 +2179,8 @@ function isTeamEmpty(colorIndex) {
 
 // +s/-s upstream: how many superflag slots the world carries, and which types
 // may fill them. Upstream needs the switch to have any superflags at all; bzo
-// defaults them on because Useless is the only type implemented and it has no
-// effect on play.
+// defaults them on, and defaults `allowed` to every superflag in the shared
+// flag table.
 function normalizeSuperFlagConfig(value) {
   const requestedCount = Number(value?.count);
   const count = Number.isInteger(requestedCount) && requestedCount >= 0 ? requestedCount : 16;
@@ -2424,6 +2428,53 @@ function grabFlag(player, flag) {
   flag.flightStartedAt = 0;
   log(`Player "${player.name}" grabbed ${getFlagType(flag.type).name} flag ${flag.index}`);
   broadcastAll({ type: 'flagGrabbed', playerId: player.id, flag: getFlagState(flag) });
+}
+
+// searchFlag(). The whole of the Identify flag: while a player carries `ID`,
+// name the nearest flag resting on the ground within `_identifyRange` for them
+// alone. Runs off each accepted position update, as upstream runs it off
+// MsgPlayerUpdate, so it costs nothing for a player who is not moving.
+//
+// A flag's identity stays hidden in `flagUpdate` regardless. Identify tells its
+// carrier what one flag is; it does not reveal that flag to the world.
+function searchFlag(player) {
+  const playerFlag = getPlayerFlag(player.id);
+  if (playerFlag?.type !== 'ID') {
+    // Upstream leaves lastIdFlag alone here, so re-taking Identify beside the
+    // same flag stays silent. Clearing it means the answer arrives again, which
+    // is what a player who just picked the flag up is waiting for.
+    player.lastIdFlag = null;
+    return;
+  }
+  if (player.health <= 0 || player.paused) return;
+
+  let closest = null;
+  let closestDistanceSquared = IDENTIFY_RANGE * IDENTIFY_RANGE;
+  for (const flag of flags) {
+    if (flag.status !== FLAG_STATUS.ON_GROUND) continue;
+    const dx = player.x - flag.position.x;
+    const dy = player.y - flag.position.y;
+    const dz = player.z - flag.position.z;
+    const distanceSquared = (dx * dx) + (dy * dy) + (dz * dz);
+    if (distanceSquared >= closestDistanceSquared) continue;
+    closestDistanceSquared = distanceSquared;
+    closest = flag;
+  }
+
+  if (!closest) {
+    player.lastIdFlag = null;
+    return;
+  }
+  // One message per flag, not one per update: the answer only changes when a
+  // different flag becomes the nearest one.
+  if (closest.index === player.lastIdFlag) return;
+  player.lastIdFlag = closest.index;
+  sendToPlayer(player, {
+    type: 'nearFlag',
+    index: closest.index,
+    flagType: closest.type,
+    position: { ...closest.position },
+  });
 }
 
 // dropFlag(). Upstream takes the drop position from the client because the
@@ -3982,6 +4033,8 @@ wss.on('connection', (ws, req) => {
             }
 
             broadcast(pmPacket, ws);
+
+            searchFlag(player);
           } else {
             // Validation failed - jumpDirection unchanged (no update needed)
             // Send correction back to client

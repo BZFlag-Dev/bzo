@@ -6,6 +6,17 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+Part of #6.
+
+### Added
+- The Identify flag, `ID`. While you carry it, the nearest flag lying on the ground within 50 units names itself -- "Closest Flag: Useless" on the HUD for five seconds and in the chat log -- and it says so once per flag rather than once per frame. It is entirely server-side and passive, as it is in BZFlag: the flag has no key, and it tells only its carrier, so the flag it names is still anonymous to everybody else. It is nothing to do with bzo's existing `identify` on `I` and right click, which picks the tank in your sights.
+- The client remembers which flags it has identified. bzfs reveals a superflag's type only while somebody is holding it, so a flag picked up and dropped goes anonymous again on the wire even though you watched it happen -- the client now keeps what it learned, whether from Identify or from anyone's grab. It forgets a slot when that flag leaves the world, because the next flag to arrive there is a fresh roll.
+- With the debug labels on, every flag whose identity this client knows carries its abbreviation over it -- `ID`, `US`, or `B*` for the blue team flag. A flag nobody has identified carries nothing, which is what makes the label worth having.
+- The help panel documents every flag bzo implements, with BZFlag's own descriptions, split into team flags and superflags and each named in the flag's own colour. It is generated from the shared flag table, so it cannot promise a flag the server will not hand out or miss one it will.
+
+### Changed
+- `superFlags.allowed` now defaults to every superflag in the shared flag table rather than to a hardcoded list. The table carries only the flags bzo implements, so the default cannot put a flag in the world that does nothing.
+
 ## [1.0.50] - 2026-09-02
 
 Closes #33.

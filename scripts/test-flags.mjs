@@ -33,6 +33,7 @@ import {
   FLAG_RADIUS,
   FLAG_STATUS,
   FLAG_TYPES,
+  IDENTIFY_RANGE,
   MAX_FLAG_GRABS,
   SUPER_FLAG_COLOR,
   computeFlagFlight,
@@ -41,8 +42,10 @@ import {
   getFlagHoverHeight,
   getFlagTeamIndex,
   getFlagType,
+  getKnownFlagAbbreviation,
   getTeamFlagAbbreviation,
   isTeamFlag,
+  rememberFlagIdentity,
 } from '../public/flags.mjs';
 
 const require = createRequire(import.meta.url);
@@ -75,6 +78,71 @@ assert.equal(getFlagTeamIndex('US'), null, 'a superflag has no team');
 assert.equal(SUPER_FLAG_COLOR, 0xffffff, 'every superflag is white');
 assert.equal(getFlagType('ZZ'), null);
 assert.equal(getFlagTeamIndex(null), null, 'a hidden flag has no team either');
+
+// Flag.cxx:136 -- Identify, likewise an unstable good superflag.
+const identify = getFlagType('ID');
+assert.equal(identify.name, 'Identify');
+assert.equal(identify.endurance, 1);
+assert.equal(identify.quality, 0);
+assert.equal(identify.team, null);
+assert.equal(IDENTIFY_RANGE, 50.0);
+
+// The table is the list of flags bzo implements, and every one of them needs a
+// name and a help string because the help panel is generated from it.
+for (const [abbreviation, type] of Object.entries(FLAG_TYPES)) {
+  assert.equal(type.abbreviation, abbreviation, `${abbreviation} agrees with its key`);
+  assert.ok(type.name.length > 0, `${abbreviation} has a name`);
+  assert.ok(type.help.length > 0, `${abbreviation} has help text`);
+  // Every bad flag upstream is sticky and every team flag is normal.
+  if (type.quality === 1) assert.equal(type.endurance, 2, `${abbreviation} is sticky`);
+  if (type.team !== null) assert.equal(type.endurance, 0, `${abbreviation} is FlagNormal`);
+}
+
+// rememberFlagIdentity -- what a client is allowed to remember about a slot.
+// bzfs hides a superflag's type whenever nobody is carrying it, so the label a
+// player sees comes from this memory rather than from the flag state.
+{
+  const known = new Map();
+  const remember = (index, type, status) => rememberFlagIdentity(known, index, type, status);
+  const label = (index, type = null) => getKnownFlagAbbreviation(known, { index, type });
+
+  // A flag flies in and lands without anyone touching it: hidden throughout.
+  remember(3, null, FLAG_STATUS.COMING);
+  remember(3, null, FLAG_STATUS.ON_GROUND);
+  assert.equal(label(3), null, 'a flag nobody has touched has no identity');
+
+  // Identify names it, and it stays named while it sits there.
+  remember(3, 'ID', FLAG_STATUS.ON_GROUND);
+  assert.equal(label(3), 'ID', 'an identified flag is remembered');
+
+  // The slot empties and refills. Its next flag is a fresh roll, so keeping the
+  // old answer would label a new flag as the one that stood there before it.
+  remember(3, null, FLAG_STATUS.NO_EXIST);
+  assert.equal(label(3), null, 'a vanished flag is forgotten');
+  remember(3, null, FLAG_STATUS.COMING);
+  remember(3, null, FLAG_STATUS.ON_GROUND);
+  assert.equal(label(3), null, 'the slot\'s next flag is not the last one');
+
+  // A grab reveals a flag to everyone; the drop hides it again on the wire.
+  remember(7, null, FLAG_STATUS.ON_GROUND);
+  assert.equal(label(7), null, 'unheld and unknown');
+  remember(7, 'US', FLAG_STATUS.ON_TANK);
+  assert.equal(label(7, 'US'), 'US', 'a carried flag names itself');
+  remember(7, 'US', FLAG_STATUS.IN_AIR);
+  remember(7, null, FLAG_STATUS.ON_GROUND);
+  assert.equal(label(7), 'US', 'a flag dropped back into the world stays identified');
+
+  // A team flag is never hidden, so it answers with no memory needed, and a
+  // flag that is still in flight has an identity worth keeping.
+  remember(0, 'B*', FLAG_STATUS.ON_GROUND);
+  assert.equal(label(0, 'B*'), 'B*', 'a team flag labels itself');
+  remember(0, 'B*', FLAG_STATUS.NO_EXIST);
+  assert.equal(label(0), null, 'a retired team flag is forgotten');
+  remember(0, 'B*', FLAG_STATUS.ON_GROUND);
+  assert.equal(label(0), 'B*', 'and re-learned when its team comes back');
+
+  assert.equal(getKnownFlagAbbreviation(known, null), null, 'no flag, no label');
+}
 
 // Flag.cxx:89 -- the four team flags, in BZFlag's TeamColor order, all normal
 // endurance so they can always be dropped and never vanish on their own.

@@ -62,16 +62,23 @@ export const FLAG_GRAB_INTERVAL_MS = 200;
 // bzfs.cxx:86. A vacated superflag slot refills on a halflife distribution.
 export const SUPER_FLAG_HALF_LIFE_SECONDS = 10.0;
 
+// _identifyRange. How far the Identify flag reaches when it names the nearest
+// flag on the ground (searchFlag, bzfs.cxx:3631).
+export const IDENTIFY_RANGE = 50.0;
+
 // Every superflag is white; only team flags carry a colour (Flag.cxx:409). That
 // is what makes hiding a superflag's identity free: an unidentified flag looks
 // exactly like an identified one.
 export const SUPER_FLAG_COLOR = 0xffffff;
 
-// Flag.cxx builds one FlagType per flag. Only the flags bzo implements appear
-// here -- an abbreviation the table does not carry is not a flag the server can
-// hand out. `team` is a BZFlag colour index for a team flag and null for a
-// superflag; resolve it to a colour through the `teams` pair, which is where
-// team identity lives.
+// Flag.cxx builds one FlagType per flag. This table is the whole of what bzo
+// knows about flags: an abbreviation it does not carry is not a flag the server
+// can hand out, is not offered by `superFlags.allowed`, and is not documented in
+// the help panel, which is generated from here.
+//
+// Rows keep upstream's declaration order. `team` is a BZFlag colour index for a
+// team flag and null for a superflag; resolve it to a colour through the `teams`
+// pair, which is where team identity lives.
 const TEAM_FLAG_HELP = "If it's yours, prevent other teams from taking it."
   + " If it's not take it to your base to capture it!";
 
@@ -108,6 +115,14 @@ export const FLAG_TYPES = Object.freeze({
     team: 4,
     help: TEAM_FLAG_HELP,
   }),
+  ID: Object.freeze({
+    abbreviation: 'ID',
+    name: 'Identify',
+    endurance: FLAG_ENDURANCE.UNSTABLE,
+    quality: FLAG_QUALITY.GOOD,
+    team: null,
+    help: 'Identifies type of nearest flag.',
+  }),
   US: Object.freeze({
     abbreviation: 'US',
     name: 'Useless',
@@ -133,6 +148,32 @@ export function isTeamFlag(abbreviation) {
 export function getFlagTeamIndex(abbreviation) {
   const type = getFlagType(abbreviation);
   return type && type.team ? type.team : null;
+}
+
+// What a client has learned about a slot's identity. bzfs reveals a superflag's
+// type only while somebody is carrying it, so `flag.type` drops back to null
+// the moment it is dropped -- but the flag is the same flag, and a player who
+// saw what it was still knows. Identify feeds this too.
+//
+// `known` is a Map from flag index to abbreviation. The index is a *slot*, not a
+// flag, so a slot that empties or takes a flag flying in has to be forgotten:
+// its next identity is a fresh roll, and keeping the old one would label a new
+// Useless as the Identify that stood there before it.
+export function rememberFlagIdentity(known, index, type, status) {
+  if (status === FLAG_STATUS.NO_EXIST || status === FLAG_STATUS.COMING) {
+    known.delete(index);
+    return;
+  }
+  if (type) known.set(index, type);
+}
+
+// The abbreviation to label a flag with, or null for one this client has no
+// business knowing. A carried flag names itself; anything else is whatever was
+// learned while its identity was visible. A team flag is never hidden, so it
+// always answers.
+export function getKnownFlagAbbreviation(known, flag) {
+  if (!flag) return null;
+  return flag.type || known.get(flag.index) || null;
 }
 
 export function getTeamFlagAbbreviation(colorIndex) {
