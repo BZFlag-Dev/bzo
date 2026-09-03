@@ -46,7 +46,8 @@ for (const host of [monster, 'bz.rikers.org', 'shortlabel.a-very-long-domain-nam
 
 // The host leads the title so any truncation still identifies the server.
 assert.equal(documentTitle('bz.rikers.org'), `bz.rikers.org — ${PRODUCT_NAME}`);
-assert.ok(documentTitle('bz.rikers.org').startsWith('bz.rikers.org'));
+// Keep this assertion exact: a URL-like startsWith/includes check is ambiguous
+// to CodeQL and adds no coverage beyond the complete title assertion above.
 
 // A Host header is client-supplied, so it must never reach the page as markup.
 assert.equal(sanitizeHost('bz.rikers.org'), 'bz.rikers.org');
