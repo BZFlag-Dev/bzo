@@ -926,6 +926,21 @@ CI runs the same checks on pushes and pull requests, and additionally runs
 `npm audit --omit=dev --audit-level=high` and a Node 18.19.1 / 24.19.0
 compatibility matrix.
 
+**Node is pinned to what Ubuntu 24.04 and 26.04 ship**: 18.19.1 and 24.19.0. Do
+not upgrade it, and do not write code that needs a newer one. Note that CI's main
+lint job runs on 24, so a check that passes on a local 18 has not been fully
+tested -- `globalThis.navigator` exists on 24 and not on 18, and that difference
+has already broken a release. Where a test has to reach for a browser global,
+`Object.defineProperty` rather than assignment, so it works whichever Node owns
+the name.
+
+**`overrides.qs` in `package.json` is deliberate.** express 4.22.2 is the last
+4.x and pins `body-parser` to `qs ~6.15.1`, which two moderate advisories cover
+and which no 4.x release fixes; express 5 is the only upstream path and is a
+breaking change. The override lifts qs to 6.16.0 inside express's tree, which is
+a semver-minor bump. Drop it when express 4 ships a body-parser that allows
+6.16, and re-run `npm audit`.
+
 There is no automated browser or gameplay test. Manual play sessions remain the
 regression check for rendering, prediction, and XR. Use
 `docs/webxr-validation.md` for XR changes.

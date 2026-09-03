@@ -77,14 +77,22 @@ const audioContext = {
   createMediaStreamDestination: () => ({ stream: makeStream(sentTrack) }),
 };
 
-globalThis.navigator = {
-  mediaDevices: {
-    getUserMedia: async () => captureStream,
-    enumerateDevices: async () => [],
-    addEventListener() {},
-    removeEventListener() {},
+// Node 21 added a built-in `navigator`, defined as a getter, so assigning to it
+// throws on 24 while working fine on 18. defineProperty replaces it on both --
+// the property is configurable either way, and absent entirely on 18. `document`
+// above needs no such care: Node has never had one.
+Object.defineProperty(globalThis, 'navigator', {
+  configurable: true,
+  writable: true,
+  value: {
+    mediaDevices: {
+      getUserMedia: async () => captureStream,
+      enumerateDevices: async () => [],
+      addEventListener() {},
+      removeEventListener() {},
+    },
   },
-};
+});
 
 const manager = createVoiceManager({
   autoStart: false,
