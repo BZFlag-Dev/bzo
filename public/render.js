@@ -247,6 +247,10 @@ const CELESTIAL_GLOW_RATIO = 1.5;
 // texture coordinates, rather than on one kilometres across whose interpolation
 // drifts as the view moves -- which is the ground appearing to slide against the
 // obstacles standing on it.
+// How far a wall texture and a roof texture stretch, in metres per tile. These
+// were the divisors on the per-face texture repeats and are now the divisors on
+// the baked UVs, so the tiling is unchanged.
+const BOX_TEXTURE_SCALES = { sideScale: 8, capScale: 2 };
 const GROUND_CENTER_SIZE = 128; // upstream centerSize
 const GROUND_TEX_REPEAT = 0.05; // upstream groundHighResTexRepeat (defaultBZDB.cxx:82)
 // Upstream's five triangle strips over the four outer and four centre corners.
@@ -1348,26 +1352,74 @@ class RenderManager {
     this._disposeGroundGrid();
   }
 
-  _createBoxFaceMaterials(width, height, depth, sideTextureFactory, topTextureFactory) {
-    const sideTextureScale = 8;
-    const topTextureScale = 2;
+  // A box's four walls and its two caps, as one shared material each. The repeat
+  // that used to ride on the texture is baked into the geometry's UVs instead,
+  // which is what lets every box in the world share them: nothing about the
+  // material depends on the box's size any more. `_prepareBoxGeometry` also puts
+  // the four walls next to each other in the index buffer, so a box is two draw
+  // calls rather than the six a BoxGeometry's own face groups ask for.
+  //
+  // Shared, so never disposed with the mesh -- `clearObstacles` drops the cache
+  // once every mesh using it is gone.
+  _getSharedBoxMaterials(key, sideTextureFactory, topTextureFactory) {
+    if (!this._sharedBoxMaterials) this._sharedBoxMaterials = new Map();
+    const existing = this._sharedBoxMaterials.get(key);
+    if (existing) return existing;
     const materials = [
       new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
-      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
       new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
-      new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
-      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
-      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
     ];
-
-    materials[0].map.repeat.set(depth / sideTextureScale, height / sideTextureScale);
-    materials[1].map.repeat.set(depth / sideTextureScale, height / sideTextureScale);
-    materials[4].map.repeat.set(width / sideTextureScale, height / sideTextureScale);
-    materials[5].map.repeat.set(width / sideTextureScale, height / sideTextureScale);
-    materials[2].map.repeat.set(width / topTextureScale, depth / topTextureScale);
-    materials[3].map.repeat.set(width / topTextureScale, depth / topTextureScale);
-
+    materials.forEach((material) => { material.userData.shared = true; });
+    this._sharedBoxMaterials.set(key, materials);
     return materials;
+  }
+
+  // Per key, because the boxes and the boundary walls are torn down separately
+  // and each owns only its own entry.
+  _disposeSharedBoxMaterials(key) {
+    const materials = this._sharedBoxMaterials?.get(key);
+    if (!materials) return;
+    materials.forEach((material) => {
+      material.map?.dispose();
+      material.dispose();
+    });
+    this._sharedBoxMaterials.delete(key);
+  }
+
+  // A BoxGeometry whose UVs already carry the tiling and whose faces are grouped
+  // as walls then caps. Vertices come out of BoxGeometry four to a face in the
+  // order +X, -X, +Y, -Y, +Z, -Z, and the index buffer six to a face in the same
+  // order, which is what both loops below count on.
+  _prepareBoxGeometry(width, height, depth, { sideScale = 1, capScale = 1 } = {}) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const faceRepeats = [
+      [depth / sideScale, height / sideScale],  // +X
+      [depth / sideScale, height / sideScale],  // -X
+      [width / capScale, depth / capScale],     // +Y
+      [width / capScale, depth / capScale],     // -Y
+      [width / sideScale, height / sideScale],  // +Z
+      [width / sideScale, height / sideScale],  // -Z
+    ];
+    const uv = geometry.attributes.uv;
+    for (let face = 0; face < 6; face += 1) {
+      const [repeatU, repeatV] = faceRepeats[face];
+      for (let vertex = face * 4; vertex < (face * 4) + 4; vertex += 1) {
+        uv.setXY(vertex, uv.getX(vertex) * repeatU, uv.getY(vertex) * repeatV);
+      }
+    }
+    uv.needsUpdate = true;
+
+    // The caps are already adjacent; the walls are not, so the index buffer is
+    // rewritten to put them together and the whole box becomes two groups.
+    const index = geometry.getIndex().array;
+    const face = (n) => Array.from(index.slice(n * 6, (n * 6) + 6));
+    const walls = [...face(0), ...face(1), ...face(4), ...face(5)];
+    const caps = [...face(2), ...face(3)];
+    geometry.setIndex([...walls, ...caps]);
+    geometry.clearGroups();
+    geometry.addGroup(0, walls.length, 0);
+    geometry.addGroup(walls.length, caps.length, 1);
+    return geometry;
   }
 
   _createBaseFaceMaterials(width, height, depth, team = 1, showBottom = true) {
@@ -1411,9 +1463,13 @@ class RenderManager {
         child.geometry.dispose();
       }
 
+      // Shared materials outlive any one mesh; whoever owns the cache disposes
+      // them once nothing is left using them.
       if (Array.isArray(child.material)) {
-        child.material.forEach((material) => material.dispose());
-      } else if (child.material) {
+        child.material.forEach((material) => {
+          if (!material.userData.shared) material.dispose();
+        });
+      } else if (child.material && !child.material.userData.shared) {
         child.material.dispose();
       }
     });
@@ -1492,31 +1548,41 @@ class RenderManager {
       [[0.0, 0.5], [5.0, 0.5], [5.0, 1.0], [0.0, 1.0]],
     ];
 
+    // A teleporter is fourteen small quads sharing four materials between them.
+    // Each one used to be its own mesh and so its own draw call, which on a map
+    // with eight teleporters is over a hundred draws for a few hundred
+    // triangles. They accumulate per material here and become one mesh each
+    // below. No quad shares a vertex with another, so the normals a merged
+    // geometry computes are still per-quad.
+    const quadBuckets = new Map();
     const addQuad = (base, sEdge, tEdge, uvCoords, material, renderOrder = 5) => {
+      let bucket = quadBuckets.get(material);
+      if (!bucket) {
+        bucket = { material, renderOrder, positions: [], uvs: [], indices: [] };
+        quadBuckets.set(material, bucket);
+      }
       const p0 = new THREE.Vector3(base[0], base[2], base[1]);
       const p1 = new THREE.Vector3(base[0] + sEdge[0], base[2] + sEdge[2], base[1] + sEdge[1]);
       const p2 = new THREE.Vector3(base[0] + sEdge[0] + tEdge[0], base[2] + sEdge[2] + tEdge[2], base[1] + sEdge[1] + tEdge[1]);
       const p3 = new THREE.Vector3(base[0] + tEdge[0], base[2] + tEdge[2], base[1] + tEdge[1]);
 
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute([
-        p0.x, p0.y, p0.z,
-        p1.x, p1.y, p1.z,
-        p2.x, p2.y, p2.z,
-        p3.x, p3.y, p3.z,
-      ], 3));
-      geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
-        uvCoords[0][0], uvCoords[0][1],
-        uvCoords[1][0], uvCoords[1][1],
-        uvCoords[2][0], uvCoords[2][1],
-        uvCoords[3][0], uvCoords[3][1],
-      ], 2));
-      geometry.setIndex([0, 1, 2, 0, 2, 3]);
-      geometry.computeVertexNormals();
+      const first = bucket.positions.length / 3;
+      bucket.positions.push(p0.x, p0.y, p0.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, p3.x, p3.y, p3.z);
+      for (const [u, v] of uvCoords) bucket.uvs.push(u, v);
+      bucket.indices.push(first, first + 1, first + 2, first, first + 2, first + 3);
+    };
 
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.renderOrder = renderOrder;
-      teleporter.add(mesh);
+    const buildQuadBuckets = () => {
+      quadBuckets.forEach((bucket) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(bucket.positions, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(bucket.uvs, 2));
+        geometry.setIndex(bucket.indices);
+        geometry.computeVertexNormals();
+        const mesh = new THREE.Mesh(geometry, bucket.material);
+        mesh.renderOrder = bucket.renderOrder;
+        teleporter.add(mesh);
+      });
     };
 
     const x = [1.0, 0.0];
@@ -1562,6 +1628,8 @@ class RenderManager {
 
     addPortalFace(halfWidth, centerMaterialFront, true);
     addPortalFace(-halfWidth, centerMaterialBack, false);
+
+    buildQuadBuckets();
 
     teleporter.userData.portalMaterials = [centerMaterialFront, centerMaterialBack];
     teleporter.userData.portalTextures = [portalTextureFront, portalTextureBack];
@@ -1704,16 +1772,11 @@ class RenderManager {
 
     // Remove old boundary meshes and debug labels if present
     if (!this.boundaryMeshes) this.boundaryMeshes = [];
-    this.boundaryMeshes.forEach(mesh => {
-      this.worldGroup.remove(mesh);
-      if (mesh.geometry) mesh.geometry.dispose();
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(mat => mat.dispose());
-      } else if (mesh.material) {
-        mesh.material.dispose();
-      }
+    this.boundaryMeshes.forEach((mesh) => {
+      this._clearObjectForRemoval(mesh);
     });
     this.boundaryMeshes = [];
+    this._disposeSharedBoxMaterials('boundary');
     this._clearDebugLabels('boundary');
 
     const wallHeight = 5;
@@ -1732,8 +1795,8 @@ class RenderManager {
     this.compassMarkers = [];
 
     const northWall = new THREE.Mesh(
-      new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
-      this._createBoxFaceMaterials(mapSize + wallThickness * 2, wallHeight, wallThickness, createBoundaryTexture, createBoundaryTexture),
+      this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, BOX_TEXTURE_SCALES),
+      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
     northWall.castShadow = true;
@@ -1747,8 +1810,8 @@ class RenderManager {
 
 
     const southWall = new THREE.Mesh(
-      new THREE.BoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness),
-      this._createBoxFaceMaterials(mapSize + wallThickness * 2, wallHeight, wallThickness, createBoundaryTexture, createBoundaryTexture),
+      this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, BOX_TEXTURE_SCALES),
+      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
     southWall.castShadow = true;
@@ -1761,8 +1824,8 @@ class RenderManager {
 
 
     const eastWall = new THREE.Mesh(
-      new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-      this._createBoxFaceMaterials(wallThickness, wallHeight, mapSize, createBoundaryTexture, createBoundaryTexture),
+      this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, BOX_TEXTURE_SCALES),
+      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
     eastWall.castShadow = true;
@@ -1775,8 +1838,8 @@ class RenderManager {
 
 
     const westWall = new THREE.Mesh(
-      new THREE.BoxGeometry(wallThickness, wallHeight, mapSize),
-      this._createBoxFaceMaterials(wallThickness, wallHeight, mapSize, createBoundaryTexture, createBoundaryTexture),
+      this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, BOX_TEXTURE_SCALES),
+      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
     westWall.castShadow = true;
@@ -1839,6 +1902,9 @@ class RenderManager {
       this._clearObjectForRemoval(mesh);
     });
     this.obstacleMeshes = [];
+    // After the meshes, so nothing is still pointing at them. The boundary walls
+    // keep their own entry and are not cleared here.
+    this._disposeSharedBoxMaterials('box');
     this._clearDebugLabels('obstacle');
   }
 
@@ -1931,11 +1997,9 @@ class RenderManager {
         this.worldGroup.add(mesh);
         this._addDebugLabel(mesh, 'obstacle');
       } else {
-        const materials = this._createBoxFaceMaterials(obs.w, h, obs.d, createBoxWallTexture, createRoofTexture);
-
         mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(obs.w, h, obs.d),
-          materials,
+          this._prepareBoxGeometry(obs.w, h, obs.d, BOX_TEXTURE_SCALES),
+          this._getSharedBoxMaterials('box', createBoxWallTexture, createRoofTexture),
         );
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
         mesh.rotation.y = obs.rotation || 0;
