@@ -6,6 +6,22 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+Getting rid of a bad flag, and No Jumping, are part of #6.
+
+### Added
+- The shake timeout, BZFlag's `-st`: how long a bad flag sticks before it falls off on its own. `flagShakeTimeout` in `server.json` and `-st <seconds>` in a map's `options` block both reach it, the larger of the two wins as a bzfs switch behaves, and it defaults to off as upstream has it -- with no timeout a bad flag is carried until it kills you. Values are clamped to 0.1s..300s and rounded to the tenth of a second upstream sends on the wire, so the client and the server count the same number down.
+- The client owns the countdown and asks for the drop when it runs out, as `LocalPlayer::doUpdate` does. The server records when it saw the grab and puts the request through `canShakeFlag` before it agrees, because a modified client would otherwise shed a bad flag the moment it took one; a refusal is logged as `[ANTICHEAT:...] SHAKE REJECTED`. The countdown re-asks rather than latching at zero, so an honest request that arrives a fraction ahead of the server's clock still lands.
+- The carried flag is named on HUD alert slot 2 for three seconds, in the warning colour when it is one you cannot put down, which is upstream's own slot and rule (`playing.cxx:1455`). A bad flag with a timeout running holds the slot and shows the time left to a tenth, which is what upstream's status line does. Both reach the XR panel, because the alert slots are shared. Pressing the drop control on a sticky flag says why it does nothing instead of sending a request the server will refuse.
+- Shake wins, BZFlag's `-sw`: a count of kills, clamped 1..20, that sheds the bad flag you are carrying. `flagShakeWins` in `server.json` and `-sw <kills>` in a map's `options` block both reach it, off by default as upstream has it. Upstream counts this down on the client and asks for the drop; bzo's server is what decides a kill happened, so it counts and drops and the client is simply told. A win counts and only a win -- never a loss, never a teamkill -- which is upstream's rule too.
+- Antidote flags, BZFlag's `-sa`: while you carry a bad flag a yellow flag stands somewhere in the world, and driving onto it sheds what you have. The spot is upstream's -- a random point inside a square centred on the world, half the world wide on a CTF map and the world less a base width otherwise, re-rolled while a tank would not fit there. It is drawn as a flag, on the radar in yellow over everything else, and as a yellow marker on the heading tape, which are upstream's own three.
+- The antidote's spot is picked by the server rather than by the client, which is where bzo departs from upstream. Upstream can leave it on the client because its bzfs accepts any drop request; bzo's refuses a sticky one, so a client-placed antidote would mean accepting every sticky drop on a server with `-sa` on and would undo the shake timeout's validation. It reaches its owner alone as `antidoteFlag`, and driving onto it is detected off position updates the way Identify's sweep is.
+- The No Jumping flag, `NJ`. Sticky and bad: a tank carrying it cannot leave a surface, whatever the world says. It is the other end of the jumping switch from `JP`, so exactly one of the two is ever in the flag pool -- `JP` forbidden while jumping is on and `NJ` while it is off, as `CmdLineOptions.cxx` has it. The altitude tape stays up under it, which is upstream's rule too.
+
+### Changed
+- Picking up a bad flag says how this world lets you put it down -- a timeout, a number of kills, the antidote, or none of them, in which case it stays until it kills you. The drop control says the same thing rather than doing nothing.
+- The heading tape's flag markers no longer give up on a world with no teams, because the antidote marker does not need one.
+- A flag's endurance is read off the flag table through `getFlagEndurance` rather than derived from its quality, which is what `FlagInfo::addFlag` does. The two agree for every flag upstream declares; asking the table means they cannot drift.
+
 ## [1.0.55] - 2026-09-04
 
 Ricochet is part of #6.

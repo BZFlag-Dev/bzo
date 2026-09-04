@@ -19,7 +19,6 @@ const {
   FLAG_CLEARANCE,
   FLAG_ENDURANCE,
   FLAG_GRAB_LEVEL_TOLERANCE,
-  FLAG_QUALITY,
   FLAG_RADIUS,
   FLAG_STATUS,
   IDENTIFY_RANGE,
@@ -27,10 +26,17 @@ const {
   DEFAULT_WINGS_JUMP_COUNT,
   DEFAULT_WINGS_SLIDE_TIME,
   SUPER_FLAG_HALF_LIFE_SECONDS,
+  ANTIDOTE_PLACEMENT_ATTEMPTS,
+  FLAG_GRAB_RADIUS,
   canJump,
+  canShakeFlag,
   computeFlagFlight,
+  getAntidoteCoordinate,
   hasAirControl,
+  normalizeShakeTimeout,
+  normalizeShakeWins,
   shotRicochets,
+  getFlagEndurance,
   getFlagType,
   getTeamFlagAbbreviation,
   isTeamFlag,
@@ -773,7 +779,7 @@ function parseBZWServerOptions(lines) {
       inOptions = false;
       continue;
     }
-    const [option] = line.split(/\s+/, 1);
+    const [option, value] = line.split(/\s+/);
     // -fb: superflags may come to rest on buildings, and may spawn on them.
     if (option === '-fb') options.flagsOnBuildings = true;
     // -j: tanks may jump. bzo already defaults this on, so the switch only
@@ -781,6 +787,12 @@ function parseBZWServerOptions(lines) {
     if (option === '-j') options.jumping = true;
     // +r: every shot ricochets, whatever flag fired it.
     if (option === '+r') options.ricochet = true;
+    // -st <seconds>: how long a bad flag sticks before it shakes off, and -sw
+    // <kills>: how many wins shake one off. Both take a value.
+    if (option === '-st') options.flagShakeTimeout = normalizeShakeTimeout(value);
+    if (option === '-sw') options.flagShakeWins = normalizeShakeWins(value);
+    // -sa: put an antidote flag in the world for whoever is carrying a bad one.
+    if (option === '-sa') options.antidoteFlags = true;
   }
 
   return options;
@@ -1367,6 +1379,14 @@ class Player {
     // GameKeeper::Player::lastIdFlag. Which flag the Identify flag last named,
     // so the answer is sent once rather than on every position update.
     this.lastIdFlag = null;
+    // LocalPlayer::flagShakingWins, kept here because bzo's server owns the
+    // score. Wins still owed before the bad flag in hand falls off; zero
+    // whenever the switch is off or there is no bad flag.
+    this.flagShakeWins = 0;
+    // LocalPlayer::flagAntidotePos. Where this player's antidote flag stands
+    // while they carry a bad flag, or null. Upstream's client picks its own; see
+    // armBadFlagRelease for why bzo's server picks it instead.
+    this.antidote = null;
     this.voiceMicEnabled = false;
     this.voiceChannel = DEFAULT_VOICE_CHANNEL;
     this.voiceRosterSignature = '';
@@ -2222,13 +2242,50 @@ GAME_CONFIG.ALLOW_JUMPING = ALLOW_JUMPING;
 // runs, which is why the flag pool is filtered per draw rather than at startup.
 GAME_CONFIG.ALL_SHOTS_RICOCHET = serverConfig.ricochet === true
   || mapServerOptions.ricochet === true;
+// -st upstream, the shake timeout: seconds a bad flag sticks before it falls off
+// by itself. Off by default, as upstream has it, so a bad flag is otherwise
+// carried until it kills you. `flagShakeTimeout` in `server.json` and `-st` in a
+// map's `options` block both reach it, and as with every bzfs switch the map may
+// turn it on where nothing turns it back off -- so the larger of the two wins.
+// The client runs the countdown and the server re-asks; see canShakeFlag.
+const FLAG_SHAKE_TIMEOUT = Math.max(
+  normalizeShakeTimeout(serverConfig.flagShakeTimeout),
+  normalizeShakeTimeout(mapServerOptions.flagShakeTimeout)
+);
+GAME_CONFIG.FLAG_SHAKE_TIMEOUT = FLAG_SHAKE_TIMEOUT;
+// -sw upstream, the shake win count: kills that shed a bad flag. Off by default
+// like the timeout, and reached the same two ways. Upstream counts this down on
+// the client and asks for the drop (`LocalPlayer::changeScore`); bzo's server
+// owns the score, so it counts and drops, and the client is simply told.
+const FLAG_SHAKE_WINS = Math.max(
+  normalizeShakeWins(serverConfig.flagShakeWins),
+  normalizeShakeWins(mapServerOptions.flagShakeWins)
+);
+GAME_CONFIG.FLAG_SHAKE_WINS = FLAG_SHAKE_WINS;
+// -sa upstream, antidote flags: a yellow flag put in the world for as long as
+// you are carrying a bad one, which sheds it when you drive onto it.
+const ANTIDOTE_FLAGS = serverConfig.antidoteFlags === true
+  || mapServerOptions.antidoteFlags === true;
+GAME_CONFIG.ANTIDOTE_FLAGS = ANTIDOTE_FLAGS;
+// The three ways upstream lets you shed a bad flag, for the startup log and for
+// the message a player gets when they pick one up. With none of them on, dying
+// is the only way out -- which is upstream's default.
+function describeBadFlagRelease() {
+  const ways = [];
+  if (FLAG_SHAKE_TIMEOUT > 0) ways.push(`after ${FLAG_SHAKE_TIMEOUT}s`);
+  if (FLAG_SHAKE_WINS > 0) ways.push(`after ${FLAG_SHAKE_WINS} ${FLAG_SHAKE_WINS === 1 ? 'win' : 'wins'}`);
+  if (ANTIDOTE_FLAGS) ways.push('on the antidote');
+  return ways.length > 0 ? ways.join(' or ') : 'only on death';
+}
 // CmdLineOptions.cxx:1705. Upstream drops a flag that contradicts the game style
-// from the pool outright rather than leaving it to confuse people. It forbids
-// `NJ` the other way round; bzo has no `NJ` yet. `R` goes the same way as `JP`:
-// on a world where every shot already ricochets it grants nothing.
+// from the pool outright rather than leaving it to confuse people. `JP` and `NJ`
+// are the two ends of the jumping switch and exactly one of them is ever worth
+// carrying: on a jumping world `JP` grants what every tank already has, and on
+// one without it `NJ` takes away what no tank had. `R` goes the same way as
+// `JP`: on a world where every shot already ricochets it grants nothing.
 function getForbiddenFlags() {
   const forbidden = [];
-  if (ALLOW_JUMPING) forbidden.push('JP');
+  forbidden.push(ALLOW_JUMPING ? 'JP' : 'NJ');
   if (GAME_CONFIG.ALL_SHOTS_RICOCHET) forbidden.push('R');
   return forbidden;
 }
@@ -2362,15 +2419,17 @@ function addFlag(flag) {
   flag.type = pool[Math.floor(Math.random() * pool.length)];
   flag.status = FLAG_STATUS.COMING;
   flag.owner = null;
+  flag.grabbedAt = 0;
   flag.launchPosition = { ...flag.position };
   flag.landingPosition = { ...flag.position };
   flag.flightEnd = flight.flightEnd;
   flag.initialVelocity = flight.initialVelocity;
   flag.flightStartedAt = Date.now();
   // A bad flag is sticky and can only be shaken off; a good one may be dropped
-  // freely and survives _maxFlagGrabs pickups.
-  const type = getFlagType(flag.type);
-  flag.endurance = type.quality === FLAG_QUALITY.BAD ? FLAG_ENDURANCE.STICKY : FLAG_ENDURANCE.UNSTABLE;
+  // freely and survives _maxFlagGrabs pickups. FlagInfo.cxx:135 gives a sticky
+  // flag a single grab, so shaking one off spends it and the flag leaves the
+  // world rather than lying in wait for the next tank.
+  flag.endurance = getFlagEndurance(flag.type);
   flag.grabs = flag.endurance === FLAG_ENDURANCE.STICKY ? 1 : MAX_FLAG_GRABS;
 }
 
@@ -2381,6 +2440,7 @@ function resetFlag(flag) {
   if (flag.status === FLAG_STATUS.ON_TANK) sendFlagDrop(flag);
   flag.owner = null;
   flag.flightStartedAt = 0;
+  flag.grabbedAt = 0;
 
   if (flag.team === null) {
     flag.position = findFlagSpawnPosition();
@@ -2500,6 +2560,13 @@ function sendFlagDrop(flag) {
   const state = getFlagState(flag);
   flag.owner = null;
   if (!owner) return;
+  // The one place a flag leaves a tank, whether it was thrown, shaken, zapped or
+  // captured, so it is where the shed state that was armed with it is torn down.
+  owner.flagShakeWins = 0;
+  if (owner.antidote) {
+    owner.antidote = null;
+    sendToPlayer(owner, { type: 'antidoteFlag', position: null });
+  }
   broadcastAll({ type: 'dropFlag', playerId: owner.id, flag: state });
 }
 
@@ -2531,8 +2598,79 @@ function grabFlag(player, flag) {
   flag.owner = player.id;
   flag.status = FLAG_STATUS.ON_TANK;
   flag.flightStartedAt = 0;
+  flag.grabbedAt = Date.now();
+  armBadFlagRelease(player, flag);
   log(`Player "${player.name}" grabbed ${getFlagType(flag.type).name} flag ${flag.index}`);
   broadcastAll({ type: 'grabFlag', playerId: player.id, flag: getFlagState(flag) });
+}
+
+// LocalPlayer::setFlag's antidote placement, moved to the server. Upstream picks
+// a random spot inside a square centred on the world -- half the world on a CTF
+// map, the world less a base width otherwise -- and rejects anywhere a tank
+// could not stand, giving up after a hundred tries and taking what it has.
+function findAntidotePosition() {
+  const worldSize = GAME_CONFIG.MAP_SIZE;
+  let position = { x: 0, y: 0, z: 0 };
+  for (let attempt = 0; attempt < ANTIDOTE_PLACEMENT_ATTEMPTS; attempt++) {
+    position = {
+      x: getAntidoteCoordinate(worldSize, BASE_SIZE, CTF_ENABLED, Math.random()),
+      y: 0,
+      z: getAntidoteCoordinate(worldSize, BASE_SIZE, CTF_ENABLED, Math.random()),
+    };
+    // inBuilding(pos, tankRadius, tankHeight) upstream: the test is whether a
+    // tank fits, not whether a flag does, because you have to drive onto it.
+    if (!checkCollision(position.x, position.y, position.z, 2)) break;
+  }
+  return position;
+}
+
+// Everything that has to be set up when a player takes a sticky flag, and torn
+// down when they lose it. The shake timeout needs neither -- it runs off
+// `flag.grabbedAt`, which the flag itself carries.
+//
+// **The server picks the antidote spot, which upstream's client does.** Upstream
+// can leave it on the client because upstream's bzfs accepts any drop request;
+// bzo's refuses a sticky one, so a client-chosen antidote would mean accepting
+// every sticky drop from anyone with `-sa` on and would undo the shake timeout's
+// validation. Picking it here costs one message and makes the antidote as
+// server-authoritative as the timeout, and the flag is drawn from the same
+// numbers either way.
+function armBadFlagRelease(player, flag) {
+  const sticky = flag.endurance === FLAG_ENDURANCE.STICKY;
+  player.flagShakeWins = sticky ? FLAG_SHAKE_WINS : 0;
+  const antidote = sticky && ANTIDOTE_FLAGS ? findAntidotePosition() : null;
+  if (antidote === null && player.antidote === null) return;
+  player.antidote = antidote;
+  sendToPlayer(player, { type: 'antidoteFlag', position: antidote });
+}
+
+// checkEnvironment()'s "see if I'm over my antidote" (LocalPlayer.cxx:867),
+// server-side for the same reason the placement is. Runs off each accepted
+// position update, as searchFlag does, and asks the same two questions the flag
+// grab does: same level, and within a tank plus a flag radius.
+function checkAntidote(player) {
+  const antidote = player.antidote;
+  if (!antidote) return;
+  const flag = getPlayerFlag(player.id);
+  if (!flag || flag.endurance !== FLAG_ENDURANCE.STICKY) return;
+  if (player.health <= 0 || player.paused) return;
+  if (Math.abs(player.y - antidote.y) >= FLAG_GRAB_LEVEL_TOLERANCE) return;
+  if (distance(player.x, player.z, antidote.x, antidote.z) > FLAG_GRAB_RADIUS) return;
+  log(`Player "${player.name}" drove onto the antidote and shed ${getFlagType(flag.type).name}`);
+  dropFlag(flag);
+}
+
+// LocalPlayer::changeScore. A win owed against a bad flag, counted down by the
+// server because the server is what decides a kill happened. Upstream only ever
+// counts a win, never a loss or a teamkill, and drops at zero.
+function recordShakeWin(player) {
+  if (player.flagShakeWins <= 0) return;
+  const flag = getPlayerFlag(player.id);
+  if (!flag || flag.endurance !== FLAG_ENDURANCE.STICKY) return;
+  player.flagShakeWins -= 1;
+  if (player.flagShakeWins > 0) return;
+  log(`Player "${player.name}" shook off ${getFlagType(flag.type).name} on wins`);
+  dropFlag(flag);
 }
 
 // searchFlag(). The whole of the Identify flag: while a player carries `ID`,
@@ -2588,6 +2726,7 @@ function dropFlag(flag) {
   if (flag.status !== FLAG_STATUS.ON_TANK) return;
   const owner = getFlagOwner(flag);
   if (!owner) return;
+  flag.grabbedAt = 0;
 
   const half = GAME_CONFIG.MAP_SIZE / 2;
   const launch = {
@@ -2738,6 +2877,9 @@ function createFlagSlot(index, teamColorIndex) {
     endurance: teamColorIndex === null ? FLAG_ENDURANCE.UNSTABLE : FLAG_ENDURANCE.NORMAL,
     owner: null,
     grabs: 0,
+    // When the current carrier picked it up, which is the shake clock the
+    // server checks a sticky drop against. Zero whenever nobody holds it.
+    grabbedAt: 0,
     position: { x: 0, y: 0, z: 0 },
     launchPosition: { x: 0, y: 0, z: 0 },
     landingPosition: { x: 0, y: 0, z: 0 },
@@ -2784,7 +2926,8 @@ function createFlags() {
   const forbidden = getForbiddenFlags();
   log(
     `Jumping: ${ALLOW_JUMPING ? 'allowed' : 'flag only'};`
-    + ` ricochet: ${GAME_CONFIG.ALL_SHOTS_RICOCHET ? 'all shots' : 'flag only'}`
+    + ` ricochet: ${GAME_CONFIG.ALL_SHOTS_RICOCHET ? 'all shots' : 'flag only'};`
+    + ` bad flags shake off ${describeBadFlagRelease()}`
     + (forbidden.length > 0 ? `; forbidden flags ${forbidden.join(', ')}` : '')
   );
   if (getSuperFlagPool().includes('WG')) {
@@ -3692,6 +3835,7 @@ function simulateProjectilesStep(stepSeconds, now) {
           // being the same player.
           if (shooter && shooter.id !== player.id) {
             shooter.kills++;
+            recordShakeWin(shooter);
           }
           recordTeamScoreForKill(shooter, player);
 
@@ -4273,6 +4417,7 @@ wss.on('connection', (ws, req) => {
             broadcast(pmPacket, ws);
 
             searchFlag(player);
+            checkAntidote(player);
           } else {
             // Validation failed - jumpDirection unchanged (no update needed)
             // Send correction back to client
@@ -4402,9 +4547,23 @@ wss.on('connection', (ws, req) => {
           if (!player.joined) break;
           if (player.health <= 0) break;
           const flag = getPlayerFlag(player.id);
+          if (!flag) break;
           // A sticky flag cannot be dropped on request; only its shake timeout
-          // or a kill gets rid of it.
-          if (!flag || flag.endurance === FLAG_ENDURANCE.STICKY) break;
+          // or a kill gets rid of it. The client runs the countdown, as upstream
+          // does, so the server runs the same clock against the moment it saw
+          // the grab -- otherwise a modified client sheds a bad flag on contact.
+          if (flag.endurance === FLAG_ENDURANCE.STICKY) {
+            const held = (Date.now() - flag.grabbedAt) / 1000;
+            if (!canShakeFlag(flag.type, FLAG_SHAKE_TIMEOUT, held)) {
+              log(
+                `[ANTICHEAT:${ANTICHEAT_CONFIG.mode.toUpperCase()}] Player "${player.name}" ` +
+                `SHAKE REJECTED ${getFlagType(flag.type).name} held ${held.toFixed(2)}s ` +
+                `of ${FLAG_SHAKE_TIMEOUT}s`
+              );
+              break;
+            }
+            log(`Player "${player.name}" shook off ${getFlagType(flag.type).name} after ${held.toFixed(2)}s`);
+          }
           dropFlag(flag);
           break;
         }

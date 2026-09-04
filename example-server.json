@@ -47,9 +47,13 @@
       "ID",
       "US",
       "JP",
-      "WG"
+      "WG",
+      "NJ"
     ]
   },
+  "flagShakeTimeout": 0,
+  "flagShakeWins": 0,
+  "antidoteFlags": false,
   "teamFlagTimeout": 30,
   "flagsOnBuildings": false,
   "voiceNearbyRadius": 60,

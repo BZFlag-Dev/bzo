@@ -160,7 +160,9 @@ import {
   normalizeVoiceChannel,
 } from './voice-channels.mjs';
 import {
+  ANTIDOTE_FLAG_COLOR,
   BZFLAG_TANK_RADIUS,
+  FLAG_ENDURANCE,
   FLAG_GRAB_INTERVAL_MS,
   FLAG_GRAB_LEVEL_TOLERANCE,
   FLAG_GRAB_RADIUS,
@@ -169,6 +171,7 @@ import {
   FLAG_TYPES,
   SUPER_FLAG_COLOR,
   canJump,
+  getFlagEndurance,
   getFlagFlightState,
   getFlagTeamIndex,
   getFlagType,
@@ -177,6 +180,8 @@ import {
   getWingsSlideVelocity,
   hasAirControl,
   isTeamFlag,
+  normalizeShakeTimeout,
+  normalizeShakeWins,
   rememberFlagIdentity,
   shotRicochets,
 } from './flags.mjs';
@@ -332,6 +337,12 @@ const IDENTIFY_ALERT_SECONDS = 2;
 // and bzo keeps slot 0 for the death and kill notices, which a player has four
 // seconds to read and cannot ask for again.
 const NEAR_FLAG_ALERT_SECONDS = 5;
+// playing.cxx:1455 names the flag you just took on slot 2 for three seconds, in
+// the warning colour when it is one you cannot put down. bzo keeps both the slot
+// and the rule, and holds the slot for as long as a sticky flag lasts so the
+// shake countdown has somewhere upstream-shaped to live.
+const CARRIED_FLAG_ALERT_SECONDS = 3;
+const FLAG_SHAKE_ALERT_SLOT = 2;
 const RADAR_ZOOM_LEVELS = [0.25, 0.5, 1.0];
 const RADAR_ZOOM_LABELS = ['Short', 'Medium', 'Long'];
 // BZFlag's displayRadarRange default (defaultBZDB.cxx). The level is deliberately
@@ -3807,6 +3818,10 @@ function handleServerMessage(message) {
       handleNearFlag(message);
       break;
 
+    case 'antidoteFlag':
+      handleAntidoteFlag(message);
+      break;
+
     case 'dropFlag': {
       const flag = setFlagState(message.flag);
       const label = describeFlag(flag);
@@ -6807,8 +6822,22 @@ const knownFlagTypes = new Map();
 // the server says so, and until then the condition stays true every frame.
 let lastGrabRequestAt = 0;
 let lastCaptureRequestAt = 0;
+let lastShakeRequestAt = 0;
 // Drop is an event, but every non-keyboard source reports a held button.
 let dropWasHeld = false;
+// LocalPlayer::flagShakingTime. The countdown belongs to one carried flag, so it
+// is keyed on the slot as well as the seconds: taking a different sticky flag
+// starts a fresh clock rather than inheriting what was left of the last one.
+let shakeFlagIndex = null;
+let shakeSecondsLeft = 0;
+// LocalPlayer::flagAntidotePos and antidoteFlag. Where this client's antidote
+// stands while it carries a bad flag, or null. The server picks the spot and
+// decides when driving onto it counts; the client draws it and points at it.
+let antidotePosition = null;
+// The flag node pool is keyed by flag index, and the antidote is not a flag in
+// the world, so it takes a key of its own and gets the cloth, the billboarding
+// and the ripple for free -- which is what upstream's FlagSceneNode gives it.
+const ANTIDOTE_FLAG_KEY = 'antidote';
 // Shared so a frame with no team flag to point at allocates nothing.
 const EMPTY_HEADING_MARKERS = Object.freeze([]);
 let teamFlagMarkerStyle = '#ffffff';
@@ -6819,6 +6848,9 @@ const FLAG_CARRY_HEIGHT = 2;
 function clearFlags() {
   flags.clear();
   knownFlagTypes.clear();
+  // clearFlags() disposes the antidote's node with every other flag's, so the
+  // position it was drawn from has to go with it or the next frame recreates it.
+  antidotePosition = null;
   renderManager.clearFlags();
 }
 
@@ -6980,8 +7012,89 @@ function getFlagRadarStyle(abbreviation) {
 function requestFlagDrop() {
   const flag = getMyFlag();
   if (!flag) return false;
+  // A sticky flag does not answer the drop control at all: only the shake
+  // countdown or a kill gets rid of it. Saying so beats sending a request the
+  // server will refuse, and beats a control that silently does nothing.
+  if (getFlagEndurance(flag.type) === FLAG_ENDURANCE.STICKY) {
+    showMessage(`${describeFlag(flag)} ${describeBadFlagRelease()}`);
+    return false;
+  }
   sendToServer({ type: 'dropFlag' });
   return true;
+}
+
+// LocalPlayer::doUpdate's shake timeout, upstream's -st. The client owns the
+// countdown and asks the server to take the flag when it runs out; the server
+// runs the same clock against its own record of the grab, so a request that
+// arrives before that clock agrees is refused and simply asked again -- which
+// is why this does not latch at zero the way upstream's does. Upstream has no
+// refusal to recover from.
+function updateFlagShake(deltaTime) {
+  const timeout = normalizeShakeTimeout(gameConfig?.FLAG_SHAKE_TIMEOUT);
+  const flag = getMyFlag();
+  if (!flag || timeout === 0 || getFlagEndurance(flag.type) !== FLAG_ENDURANCE.STICKY) {
+    shakeFlagIndex = null;
+    shakeSecondsLeft = 0;
+    return;
+  }
+  if (flag.index !== shakeFlagIndex) {
+    shakeFlagIndex = flag.index;
+    shakeSecondsLeft = timeout;
+  }
+  shakeSecondsLeft = Math.max(0, shakeSecondsLeft - deltaTime);
+  // HUDRenderer.cxx:998 draws the time left to a tenth while a bad flag is in
+  // hand. It is re-set each frame with barely more than a frame to live, so the
+  // slot clears itself the moment the flag is gone or the loop stops.
+  setHudAlert(
+    FLAG_SHAKE_ALERT_SLOT,
+    `${describeFlag(flag)} ${shakeSecondsLeft.toFixed(1)}`,
+    Math.max(0.25, deltaTime * 4),
+    true
+  );
+  if (shakeSecondsLeft > 0) return;
+
+  const now = performance.now();
+  if (now - lastShakeRequestAt < FLAG_GRAB_INTERVAL_MS) return;
+  lastShakeRequestAt = now;
+  sendToServer({ type: 'dropFlag' });
+}
+
+// The ways this world lets a bad flag go, for the message a player gets when
+// they take one. With none of them on, dying is the only way out, which is what
+// upstream's defaults leave you with.
+function describeBadFlagRelease() {
+  const ways = [];
+  const timeout = normalizeShakeTimeout(gameConfig?.FLAG_SHAKE_TIMEOUT);
+  const wins = normalizeShakeWins(gameConfig?.FLAG_SHAKE_WINS);
+  if (timeout > 0) ways.push(`in ${timeout}s`);
+  if (wins > 0) ways.push(`after ${wins} ${wins === 1 ? 'kill' : 'kills'}`);
+  if (gameConfig?.ANTIDOTE_FLAGS === true) ways.push('on the antidote');
+  return ways.length > 0 ? `shakes off ${ways.join(' or ')}` : 'stays until it kills you';
+}
+
+// The antidote flag's position, sent to its owner alone the way `nearFlag` is,
+// and null when the bad flag it belongs to is gone. Upstream's client picks the
+// spot itself; bzo's server picks it so that driving onto it is a server-side
+// decision rather than a drop request the server would have to take on trust.
+function handleAntidoteFlag(message) {
+  const position = message.position;
+  antidotePosition = position && Number.isFinite(position.x) && Number.isFinite(position.z)
+    ? { x: position.x, y: Number.isFinite(position.y) ? position.y : 0, z: position.z }
+    : null;
+  if (!antidotePosition) renderManager.hideFlag(ANTIDOTE_FLAG_KEY);
+}
+
+// A yellow flag standing where the antidote is (LocalPlayer.cxx:1695). It rides
+// the ordinary flag node pool under a key of its own, so it ripples and turns to
+// face the camera like every other flag without a second code path.
+function updateAntidoteFlag() {
+  if (!antidotePosition) return;
+  renderManager.showFlag(ANTIDOTE_FLAG_KEY, {
+    x: antidotePosition.x,
+    y: antidotePosition.y,
+    z: antidotePosition.z,
+    color: ANTIDOTE_FLAG_COLOR,
+  });
 }
 
 // MsgGrabFlag on the client. Taking a flag is a local sound for whoever took it,
@@ -6989,7 +7102,17 @@ function requestFlagDrop() {
 function handleFlagGrabbedAlerts(grabberId, flag) {
   if (grabberId === myPlayerId) {
     renderManager.playLocalSound('flagGrab');
-    showMessage(`Grabbed ${describeFlag(flag)} flag`);
+    // A bad flag is the one grab where what happens next matters more than what
+    // was taken, so it says how this world lets you put it down.
+    const sticky = getFlagEndurance(flag?.type) === FLAG_ENDURANCE.STICKY;
+    showMessage(sticky
+      ? `Grabbed ${describeFlag(flag)} flag - ${describeBadFlagRelease()}`
+      : `Grabbed ${describeFlag(flag)} flag`);
+    // The flag you are carrying, in the warning colour when it is one you cannot
+    // put down. A sticky flag with a shake timeout running takes the slot over
+    // from here for its countdown, so this is what it looks like for the moment
+    // before the first tick.
+    setHudAlert(FLAG_SHAKE_ALERT_SLOT, describeFlag(flag), CARRIED_FLAG_ALERT_SECONDS, sticky);
     return;
   }
 
@@ -7067,26 +7190,35 @@ function handleFlagCaptured(message) {
 
 // prepareTheHUD() (playing.cxx:6820). One marker per flag of my own team, unless
 // I am the one carrying it -- an enemy carrying it off is exactly when knowing
-// which way it went matters most. The marker takes the team's tank colour, not
-// its radar colour, because the heading tape is not the radar.
-function getTeamFlagHeadingMarkers() {
-  if (!myTank || flags.size === 0) return EMPTY_HEADING_MARKERS;
-  const myTeamIndex = getMyTeamColorIndex();
-  if (myTeamIndex === null) return EMPTY_HEADING_MARKERS;
-
+// which way it went matters most -- and then the antidote, which upstream adds
+// straight after them in yellow (playing.cxx:6847). The team marker takes the
+// team's tank colour, not its radar colour, because the heading tape is not the
+// radar.
+//
+// bzo's rotation faces -Z at 0 and turns toward -X, so a direction (dx, dz) is
+// the rotation atan2(-dx, -dz). The tape reads the same units.
+function getFlagHeadingMarkers() {
+  if (!myTank) return EMPTY_HEADING_MARKERS;
   const markers = [];
-  flags.forEach((flag) => {
-    if (getFlagTeamIndex(flag.type) !== myTeamIndex) return;
-    if (flag.status === FLAG_STATUS.NO_EXIST) return;
-    if (flag.owner === myPlayerId) return;
-    // bzo's rotation faces -Z at 0 and turns toward -X, so a direction (dx, dz)
-    // is the rotation atan2(-dx, -dz). The tape reads the same units.
-    markers.push({
-      heading: Math.atan2(-(flag.position.x - playerX), -(flag.position.z - playerZ)),
-      color: teamFlagMarkerStyle,
+  const headingTo = (position) => Math.atan2(-(position.x - playerX), -(position.z - playerZ));
+
+  const myTeamIndex = getMyTeamColorIndex();
+  if (myTeamIndex !== null) {
+    flags.forEach((flag) => {
+      if (getFlagTeamIndex(flag.type) !== myTeamIndex) return;
+      if (flag.status === FLAG_STATUS.NO_EXIST) return;
+      if (flag.owner === myPlayerId) return;
+      markers.push({ heading: headingTo(flag.position), color: teamFlagMarkerStyle });
     });
-  });
-  return markers;
+  }
+
+  if (antidotePosition) {
+    markers.push({
+      heading: headingTo(antidotePosition),
+      color: colorToCSS(ANTIDOTE_FLAG_COLOR),
+    });
+  }
+  return markers.length > 0 ? markers : EMPTY_HEADING_MARKERS;
 }
 
 // checkEnvironment(). Carrying a team flag onto a base is a capture: either an
@@ -7142,7 +7274,7 @@ function checkFlagGrab() {
 // World::updateFlag plus updateFlags(): advance each flight, park carried flags
 // on top of their tanks, and hand the result to the renderer.
 function updateFlags(deltaTime) {
-  if (flags.size === 0) return;
+  if (flags.size === 0 && !antidotePosition) return;
   const gravity = Number.isFinite(gameConfig?.GRAVITY) ? gameConfig.GRAVITY : 9.8;
 
   flags.forEach((flag) => {
@@ -7203,6 +7335,7 @@ function updateFlags(deltaTime) {
     });
   });
 
+  updateAntidoteFlag();
   renderManager.updateFlagVisuals(deltaTime);
 }
 
@@ -8251,6 +8384,22 @@ function updateRadar() {
       if (getFlagTeamIndex(flag.type) !== null) drawRadarFlag(flag);
     });
     flushRadarFlags();
+    // RadarRenderer.cxx:715 draws the antidote last and in flat yellow, over
+    // every flag in the world, because it is the one you are looking for.
+    if (antidotePosition) {
+      const rel = toRadarRelative(antidotePosition.x, antidotePosition.z);
+      if (!isOutsideRadarSquare(rel.x, rel.y)) {
+        const pos = radarToCanvas(rel.x, rel.y);
+        radarCtx.globalAlpha = 1;
+        radarCtx.strokeStyle = colorToCSS(ANTIDOTE_FLAG_COLOR);
+        radarCtx.beginPath();
+        radarCtx.moveTo(pos.x - crossHalf, pos.y);
+        radarCtx.lineTo(pos.x + crossHalf, pos.y);
+        radarCtx.moveTo(pos.x, pos.y - crossHalf);
+        radarCtx.lineTo(pos.x, pos.y + crossHalf);
+        radarCtx.stroke();
+      }
+    }
     radarCtx.restore();
 
     // drawFlagOnTank(): carrying a flag puts a larger cross on your own blip.
@@ -8817,7 +8966,7 @@ function animate(frameTime) {
   updateChatWindow();
   updateAltitudeTape();
   updateAltimeter({ myTank });
-  updateDegreeBar({ myTank, playerRotation, markers: getTeamFlagHeadingMarkers() });
+  updateDegreeBar({ myTank, playerRotation, markers: getFlagHeadingMarkers() });
   updateShotStatus({ myPlayerId, myTank, projectiles, gameConfig, now: Date.now() });
   markFramePhase('hud');
 
@@ -8899,6 +9048,7 @@ function animate(frameTime) {
 
   updateProjectiles(deltaTime);
   checkFlagGrab();
+  updateFlagShake(deltaTime);
   updateFlags(deltaTime);
   updateTankDimensions(deltaTime);
   renderManager.updateExplosions(deltaTime);

@@ -119,8 +119,22 @@ These are deliberate. Do not "fix" them without being asked.
 - **Jumping is on by default.** bzfs needs `-j` before any tank can jump; bzo
   has had jumping since before there was a switch, so `jumping` defaults to on
   and `jumping: false` in `server.json` is what turns it off. The rest follows
-  upstream: a map's `-j` can still turn it back on, the `JP` flag is forbidden
-  while it is on, and `WG` never consults it. See `docs/flags-plan.md`.
+  upstream: a map's `-j` can still turn it back on, exactly one of `JP` and `NJ`
+  is ever in the flag pool -- `JP` forbidden while jumping is on, `NJ` while it
+  is off -- and `WG` never consults it. See `docs/flags-plan.md`.
+
+- **A bad flag is shed by dying unless one of the three switches says
+  otherwise.** Upstream's `-st`, `-sw` and `-sa` are all off by default and so
+  are bzo's `flagShakeTimeout`, `flagShakeWins` and `antidoteFlags`; each is
+  also reachable from a map's `options` block, and the more generous of the two
+  settings wins. The timeout is client-counted and server-validated through
+  `canShakeFlag`, because a modified client would otherwise shed a bad flag on
+  contact. Shake wins is counted entirely on the server, since the server is
+  what decides a kill happened. **The antidote's spot is picked by the server**,
+  which upstream's client picks: a client-placed antidote would mean accepting
+  every sticky drop on a server with `-sa` on, which would undo the timeout's
+  validation. It travels to its owner alone as `antidoteFlag`, and arrival is
+  detected off position updates the way Identify's sweep is.
 
 - **A game style may be switched while the server runs.** Upstream settles
   `gameOptions` from the command line at startup and never revisits it. bzo's
@@ -333,8 +347,14 @@ altitude once per map.
 data model, the protocol, which phase each piece belongs to, and the full list
 of the superflags still missing. Read it before extending flags. Phases 1 to 3
 and 9 are implemented -- the Useless superflag with its flight animation and drop
-key, team flags and capture, Identify, and Ricochet. Phases 4 to 8 and 10 onward
-are not.
+key, team flags and capture, Identify, and Ricochet -- along with the jumping
+switch, its three flags (`JP`, `NJ`, `WG`) and all three of upstream's ways out
+of a bad flag. Phase 4's own four flags, phases 5 to 8, and 10 onward are not.
+
+**A flag needs an answer in XR before its row is added.** bzo ships one client
+for desktop, mobile and the headset, so a flag whose effect is a desktop-camera
+or 2D-HUD trick -- `WA` Wide Angle is the type case -- is held back and given its
+own XR design rather than shipped doing nothing in VR.
 
 **The `FLAG_TYPES` table holds only the flags bzo implements.** Adding a row is
 the last step of implementing a flag, not the first: the row is what puts the

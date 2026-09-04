@@ -28,6 +28,7 @@ import {
   BZFLAG_TANK_RADIUS,
   FLAG_ALTITUDE,
   FLAG_CLEARANCE,
+  FLAG_ENDURANCE,
   FLAG_GRAB_RADIUS,
   FLAG_POLE_SIZE,
   FLAG_RADIUS,
@@ -37,9 +38,21 @@ import {
   MAX_FLAG_GRABS,
   DEFAULT_WINGS_JUMP_COUNT,
   DEFAULT_WINGS_SLIDE_TIME,
+  ANTIDOTE_CTF_WORLD_FRACTION,
+  BASE_SIZE,
+  SHAKE_DROP_GRACE_SECONDS,
+  SHAKE_TIMEOUT_MAX_SECONDS,
+  SHAKE_TIMEOUT_MIN_SECONDS,
+  SHAKE_WINS_MAX,
+  SHAKE_WINS_MIN,
   SUPER_FLAG_COLOR,
   canJump,
+  canShakeFlag,
   computeFlagFlight,
+  getAntidoteCoordinate,
+  getFlagEndurance,
+  normalizeShakeTimeout,
+  normalizeShakeWins,
   getFlagFlightHeight,
   getFlagFlightState,
   getFlagHoverHeight,
@@ -130,6 +143,87 @@ assert.equal(DEFAULT_WINGS_SLIDE_TIME, 0, '_wingsSlideTime');
   assert.equal(canJump('WG', false, true, flaps), true, 'Wings flaps in the air');
   assert.equal(canJump('WG', true, true, 0), false, 'a spent Wings has nothing left');
   assert.equal(canJump('WG', false, false, 0), false, 'not even from the ground');
+}
+
+// Flag.cxx:175 -- No Jumping, the other end of the jumping switch. Sticky and
+// bad, and the one flag that answers no from a surface on a world that says yes.
+{
+  const noJumping = getFlagType('NJ');
+  assert.equal(noJumping.name, 'No Jumping');
+  assert.equal(noJumping.endurance, FLAG_ENDURANCE.STICKY);
+  assert.equal(noJumping.quality, 1);
+  assert.equal(noJumping.team, null);
+  const flaps = DEFAULT_WINGS_JUMP_COUNT;
+  assert.equal(canJump('NJ', true, false, flaps), false, 'No Jumping outranks the world switch');
+  assert.equal(canJump('NJ', false, false, flaps), false, 'and has nothing to take on a world without it');
+  assert.equal(canJump('NJ', true, true, flaps), false, 'still nothing in the air');
+}
+
+// FlagInfo::addFlag reads endurance off the FlagType rather than deriving it.
+assert.equal(getFlagEndurance('NJ'), FLAG_ENDURANCE.STICKY, 'a bad flag is sticky');
+assert.equal(getFlagEndurance('US'), FLAG_ENDURANCE.UNSTABLE, 'a good superflag is unstable');
+assert.equal(getFlagEndurance('B*'), FLAG_ENDURANCE.NORMAL, 'a team flag is normal');
+assert.equal(getFlagEndurance(null), FLAG_ENDURANCE.UNSTABLE, 'an empty slot holds nothing sticky');
+
+// CmdLineOptions.cxx:1268 -- -st, in seconds, clamped and stored to the tenth.
+{
+  assert.equal(SHAKE_TIMEOUT_MIN_SECONDS, 0.1);
+  assert.equal(SHAKE_TIMEOUT_MAX_SECONDS, 300.0);
+  assert.equal(normalizeShakeTimeout(20), 20, 'a plain value survives');
+  assert.equal(normalizeShakeTimeout(0.02), 0.1, 'under the minimum takes the minimum');
+  assert.equal(normalizeShakeTimeout(1000), 300, 'over the maximum takes the maximum');
+  assert.equal(normalizeShakeTimeout(3.14159), 3.1, 'rounded to the tenth both sides send');
+  assert.equal(normalizeShakeTimeout(0), 0, 'zero is the switch being off');
+  assert.equal(normalizeShakeTimeout(-5), 0, 'and so is anything below it');
+  assert.equal(normalizeShakeTimeout(undefined), 0, 'and so is saying nothing');
+  assert.equal(normalizeShakeTimeout('20'), 20, 'a map option arrives as text');
+}
+
+// The shake clock the client counts down and the server re-asks. Only a sticky
+// flag shakes, only when the world has a timeout, and only once it has run.
+{
+  assert.equal(canShakeFlag('NJ', 20, 25), true, 'a bad flag held past its timeout');
+  assert.equal(canShakeFlag('NJ', 20, 5), false, 'and not before');
+  assert.equal(canShakeFlag('NJ', 20, 20 - SHAKE_DROP_GRACE_SECONDS), true, 'the grace absorbs clock drift');
+  assert.equal(canShakeFlag('NJ', 20, 20 - SHAKE_DROP_GRACE_SECONDS - 0.01), false, 'and no more than that');
+  assert.equal(canShakeFlag('NJ', 0, 1e6), false, 'no timeout, no shaking it off');
+  assert.equal(canShakeFlag('US', 20, 25), false, 'a good flag is dropped, not shaken');
+  assert.equal(canShakeFlag('B*', 20, 25), false, 'and a team flag is never sticky');
+  assert.equal(canShakeFlag(null, 20, 25), false, 'nor is nothing at all');
+}
+
+// CmdLineOptions.cxx:1288 -- -sw, a whole number of kills, clamped 1..20.
+{
+  assert.equal(SHAKE_WINS_MIN, 1);
+  assert.equal(SHAKE_WINS_MAX, 20);
+  assert.equal(normalizeShakeWins(3), 3, 'a plain count survives');
+  assert.equal(normalizeShakeWins(50), 20, 'over the maximum takes the maximum');
+  assert.equal(normalizeShakeWins(2.7), 2, 'a fraction of a kill is not a kill');
+  assert.equal(normalizeShakeWins(0.5), 0, 'and rounds down to the switch being off');
+  assert.equal(normalizeShakeWins(0), 0, 'zero is the switch being off');
+  assert.equal(normalizeShakeWins(-4), 0, 'and so is anything below it');
+  assert.equal(normalizeShakeWins(undefined), 0, 'and so is saying nothing');
+  assert.equal(normalizeShakeWins('3'), 3, 'a map option arrives as text');
+}
+
+// LocalPlayer::setFlag's antidote square: half the world on a CTF map, and the
+// world less a base width otherwise, centred either way.
+{
+  const worldSize = 800;
+  const ctfHalfSpan = ANTIDOTE_CTF_WORLD_FRACTION * worldSize * 0.5;
+  assert.equal(getAntidoteCoordinate(worldSize, BASE_SIZE, true, 0.5), 0, 'the middle of the square is the world centre');
+  close(getAntidoteCoordinate(worldSize, BASE_SIZE, true, 1), ctfHalfSpan, 'a CTF map keeps to half the world');
+  close(getAntidoteCoordinate(worldSize, BASE_SIZE, true, 0), -ctfHalfSpan, 'in both directions');
+  const openHalfSpan = (worldSize - BASE_SIZE) * 0.5;
+  close(getAntidoteCoordinate(worldSize, BASE_SIZE, false, 1), openHalfSpan, 'without team flags it is the world less a base');
+  close(getAntidoteCoordinate(worldSize, BASE_SIZE, false, 0), -openHalfSpan, 'in both directions');
+  // Whatever the roll, the answer is inside the world.
+  for (let roll = 0; roll <= 1; roll += 0.05) {
+    for (const ctf of [true, false]) {
+      const value = getAntidoteCoordinate(worldSize, BASE_SIZE, ctf, roll);
+      assert.ok(Math.abs(value) <= worldSize / 2, `roll ${roll} stays in the world`);
+    }
+  }
 }
 
 // Only Wings drives off the ground.

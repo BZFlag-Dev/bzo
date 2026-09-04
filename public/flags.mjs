@@ -66,6 +66,38 @@ export const SUPER_FLAG_HALF_LIFE_SECONDS = 10.0;
 // flag on the ground (searchFlag, bzfs.cxx:3631).
 export const IDENTIFY_RANGE = 50.0;
 
+// -st upstream, the shake timeout: how long a bad flag sticks before it falls
+// off on its own. CmdLineOptions.cxx:1268 reads seconds and clamps them to this
+// range, then stores tenths of a second, which is the resolution the client is
+// told about -- so both sides quantize to a tenth and neither can be a fraction
+// of a frame ahead of the other. Zero is the switch being off, which is
+// upstream's default: a bad flag is then carried until it kills you.
+export const SHAKE_TIMEOUT_MIN_SECONDS = 0.1;
+export const SHAKE_TIMEOUT_MAX_SECONDS = 300.0;
+// The client runs the countdown and asks the server to take the flag, exactly as
+// upstream does (LocalPlayer.cxx:159). The server has to run the same clock or a
+// modified client sheds a bad flag the moment it takes one, so it re-asks -- and
+// allows this much slack, because the client's countdown is a sum of frame
+// deltas and its request still has to cross the network. Lag only ever makes the
+// request late, so the slack is for clock drift and nothing else.
+export const SHAKE_DROP_GRACE_SECONDS = 0.25;
+
+// -sw upstream, the shake win count: how many kills it takes to shed a bad flag.
+// CmdLineOptions.cxx:1288 clamps to this range; zero is the switch being off.
+export const SHAKE_WINS_MIN = 1;
+export const SHAKE_WINS_MAX = 20;
+
+// -sa upstream, the antidote flag: a yellow flag dropped somewhere in the world
+// that shakes a bad flag off when you drive onto it. `LocalPlayer::setFlag`
+// (LocalPlayer.cxx:1668) picks the spot inside a square centred on the world,
+// smaller on a CTF map so the flag does not land on somebody's base, and rejects
+// a spot a tank could not stand in. It tries this many times before it gives up
+// and takes what it has, which is upstream's own "if it takes this long, just
+// screw it".
+export const ANTIDOTE_CTF_WORLD_FRACTION = 0.5;
+export const ANTIDOTE_PLACEMENT_ATTEMPTS = 100;
+export const ANTIDOTE_FLAG_COLOR = 0xffff00;
+
 // Wings' four BZDB variables. All are Locked upstream, which means a server may
 // set them and a client may not, so they are world configuration and reach the
 // client with the rest of it -- they are not constants the way _flagRadius is.
@@ -175,6 +207,14 @@ export const FLAG_TYPES = Object.freeze({
     team: null,
     help: 'Tank can drive in air.',
   }),
+  NJ: Object.freeze({
+    abbreviation: 'NJ',
+    name: 'No Jumping',
+    endurance: FLAG_ENDURANCE.STICKY,
+    quality: FLAG_QUALITY.BAD,
+    team: null,
+    help: 'Tank can\'t jump.',
+  }),
 });
 
 export const FLAG_ABBREVIATIONS = Object.freeze(Object.keys(FLAG_TYPES));
@@ -187,14 +227,65 @@ export function isTeamFlag(abbreviation) {
   return getFlagTeamIndex(abbreviation) !== null;
 }
 
+// FlagInfo::addFlag, which reads the endurance off the FlagType rather than
+// deriving it: upstream declares every bad flag FlagSticky and every good
+// superflag FlagUnstable, and the table carries both fields, so ask the table.
+// A slot with nothing in it yet is unstable, which is what an empty superflag
+// slot is worth.
+export function getFlagEndurance(abbreviation) {
+  const type = getFlagType(abbreviation);
+  return type ? type.endurance : FLAG_ENDURANCE.UNSTABLE;
+}
+
 // LocalPlayer::doJump. Who may leave a surface, and who may do it again without
 // touching one first. Wings never consults the world switch -- a flap is a flap,
 // whatever the map says about jumping -- and it is the only flag that answers
-// true while the tank is already in the air.
+// true while the tank is already in the air. No Jumping is the other end of the
+// same switch: it refuses on a world that allows jumping, which is the whole of
+// what the flag does, and upstream forbids it on a world that does not.
 export function canJump(abbreviation, allowJumping, airborne, flapsLeft) {
   if (abbreviation === 'WG') return flapsLeft > 0;
   if (airborne) return false;
+  if (abbreviation === 'NJ') return false;
   return allowJumping || abbreviation === 'JP';
+}
+
+// CmdLineOptions.cxx:1268. Seconds in, seconds out, clamped and rounded to the
+// tenth upstream sends on the wire. Anything that is not a positive number is
+// the switch being off.
+export function normalizeShakeTimeout(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  const clamped = Math.min(SHAKE_TIMEOUT_MAX_SECONDS, Math.max(SHAKE_TIMEOUT_MIN_SECONDS, value));
+  return Math.round(clamped * 10) / 10;
+}
+
+// CmdLineOptions.cxx:1288. A whole number of kills, clamped, and zero for off.
+export function normalizeShakeWins(count) {
+  const value = Math.floor(Number(count));
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(SHAKE_WINS_MAX, Math.max(SHAKE_WINS_MIN, value));
+}
+
+// LocalPlayer::setFlag's antidote square. Upstream picks x and y inside it and
+// leaves z at 0, so this answers one coordinate and is called twice. `random` is
+// passed in rather than called here so the pair stays pure and the test can pin
+// it.
+export function getAntidoteCoordinate(worldSize, baseSize, ctf, random) {
+  const span = ctf
+    ? ANTIDOTE_CTF_WORLD_FRACTION * worldSize
+    : worldSize - baseSize;
+  return span * (random - 0.5);
+}
+
+// Whether a sticky flag has been held long enough to fall off. The client counts
+// down from the timeout and sends the drop; this is what the server asks of the
+// request before it agrees, and what the client asks before it bothers to send.
+export function canShakeFlag(abbreviation, shakeTimeout, heldSeconds) {
+  if (getFlagEndurance(abbreviation) !== FLAG_ENDURANCE.STICKY) return false;
+  const timeout = normalizeShakeTimeout(shakeTimeout);
+  if (timeout === 0) return false;
+  return heldSeconds >= timeout - SHAKE_DROP_GRACE_SECONDS;
 }
 
 // LocalPlayer::doUpdateMotion. Wings is the one flag that drives and steers off

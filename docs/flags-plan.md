@@ -5,9 +5,11 @@ as **GitHub issue #6**; reference it from every flag commit and changelog entry.
 Upstream references are paths under `$HOME/bzflag/`.
 
 Phases 1 (the Useless superflag, animation, and the drop key), 2 (team flags and
-capture), 3 (Identify) and 9 (Ricochet) are **implemented**, as are the jumping
-switch and the two flags that turn on it, `JP` and `WG` -- see "Jumping, and the
-flags that carry it". Phases 4 to 8 and 10 onwards are not.
+capture), 3 (Identify) and 9 (Ricochet) are **implemented**, as is the jumping
+switch and all three flags that hang off it -- `JP`, `WG` and `NJ` -- see
+"Jumping, and the flags that carry it". All three of phase 4's ways out of a bad
+flag -- the **shake timeout**, **shake wins** and **antidote flags** -- are in;
+its four client-side bad flags are not. Phases 5 to 8 and 10 onwards are not.
 
 The flag table in `public/flags.mjs` carries only the flags bzo implements, so
 **this document is the list of what is missing** -- see "What is left to add".
@@ -84,6 +86,12 @@ neither side has a handler for the other's copy.
 | `captureFlag` | to client | `{ playerId, index, flagTeam, baseTeam }` | `MsgCaptureFlag` |
 | `flagUpdate` | to client | `{ flags: [...] }`, also embedded in `init` | `MsgFlagUpdate` |
 | `nearFlag` | to client | `{ index, flagType, position }`, to one player | `MsgNearFlag` |
+| `antidoteFlag` | to client | `{ position }` or `{ position: null }`, to one player | none |
+
+`antidoteFlag` has no upstream counterpart because upstream has no packet to
+have: its client picks its own antidote spot and asks for the drop when it gets
+there. bzo's server picks the spot and decides the arrival, so it has to say
+where -- see "Antidote flags" for why the authority moved.
 
 Two deliberate departures from upstream's packets, neither a behaviour change:
 
@@ -178,8 +186,8 @@ worse than trusting a modified client about a base it still had to drive to.
 ## What is left to add
 
 Upstream carries 47 flag types: a Null type, four team flags, and 42
-superflags. bzo has the four team flags, Useless, Identify, Jumping, Wings and
-Ricochet, so **37 superflags remain** -- 23 good and 14 bad. The table below is the whole list,
+superflags. bzo has the four team flags, Useless, Identify, Jumping, Wings,
+Ricochet and No Jumping, so **36 superflags remain** -- 23 good and 13 bad. The table below is the whole list,
 grouped by the machinery each group needs rather than by name, because the
 machinery is what decides the order. `src/common/Flag.cxx` is the authority for
 every name, abbreviation, endurance, quality and help string;
@@ -187,8 +195,8 @@ every name, abbreviation, endurance, quality and help string;
 
 | Phase | Flags | What it needs that bzo does not have |
 |---|---|---|
-| 4 | `B` `JM` `CB` `WA` | shake timeout, shake wins, antidote flags |
-| 5 | `V` `QT` `A` `M` `RC` `FO` `RO` `LT` `RT` `NJ` `BY` `TR` | the effect resolver, in the shared pair |
+| 4 | `B` `JM` `CB` `WA` | shake wins, antidote flags |
+| 5 | `V` `QT` `A` `M` `RC` `FO` `RO` `LT` `RT` `BY` `TR` | the effect resolver, in the shared pair |
 | 6 | `SR` `SH` `G` | damage rules, and a shot that remembers its flag |
 | 7 | `T` `N` `O` | per-player tank dimensions |
 | 8 | `F` `MG` `L` `IB` `SB` | per-shot rate, life, velocity and obstacle rules |
@@ -200,8 +208,8 @@ every name, abbreviation, endurance, quality and help string;
 
 Phases 4 to 8 are each a small hook on machinery the phase before it built.
 Phases 10 to 14 are each their own feature and can be taken in any order once 8
-is done. Phase 9 was taken out of order for the same reason `JP` and `WG` were:
-it hangs off a world switch rather than off the phases before it.
+is done. Phase 9 was taken out of order for the same reason `JP`, `NJ` and `WG`
+were: it hangs off a world switch rather than off the phases before it.
 
 ## Phase 3 -- Identify (implemented)
 
@@ -285,8 +293,8 @@ counts are worth adding only when there are enough flags for the mix to matter.
 
 ## Jumping, and the flags that carry it (implemented)
 
-`JP` and `WG` out of order, because both hang off one thing the world did not
-have: a switch that says whether an ordinary tank may leave the ground.
+`JP`, `NJ` and `WG` out of order, because all three hang off one thing the world
+did not have: a switch that says whether an ordinary tank may leave the ground.
 
 **The switch.** `World::allowJumping`, upstream's `-j`, reaches bzo as a
 `jumping` key in `server.json` and as `-j` in a map's `options` block. Upstream
@@ -300,8 +308,20 @@ as `ALLOW_JUMPING` in the `init` config.
 (`CmdLineOptions.cxx:1705`): a flag that grants what every tank already has is
 worse than absent, because it looks like it does something. `superFlags.allowed`
 may name it either way and the server drops it from the pool when it cannot
-matter, and says so in the log. Upstream forbids `NJ` the other way round; bzo
-has no `NJ` yet.
+matter, and says so in the log.
+
+**`NJ` No Jumping.** Sticky, bad, and forbidden the other way round from `JP`:
+upstream drops it from the pool on a world that does not allow jumping
+(`CmdLineOptions.cxx:1710`), because there it takes away what no tank had.
+Exactly one of `JP` and `NJ` is ever in the pool, which is why
+`getForbiddenFlags` forbids one or the other rather than testing each. The flag
+itself is one clause in `canJump`: no jump from a surface, whatever the world
+says. It came in with the shake timeout because it is the cheapest bad flag
+there is -- the jump gate already asks the shared pair, on both sides -- and
+because it finishes the switch that `JP` only half-answered.
+
+Upstream leaves the altitude tape up under `NJ` (`playing.cxx:1465` tests only
+`JP` and the world switch), and so does bzo.
 
 **`WG` Wings.** Unstable, good, and never gated on the switch at all -- a flap
 is a flap, whatever the map says. Wings is the one flag that drives and steers
@@ -382,37 +402,130 @@ The altitude tape follows upstream's own rule (`playing.cxx:1465`): it is up
 while the world allows jumping or `JP` is in hand. Upstream does not list Wings
 there and neither does bzo.
 
-## Phase 4 -- shaking a bad flag off
+## Getting rid of a bad flag (implemented)
 
-No bad flag is playable until you can get rid of it, so the machinery comes
-before the flags. Sticky endurance is already plumbed: `addFlag` sets it from
-`quality` (`server.js:2278`), the drop key refuses it (`:4092`), and
-`dropPlayerFlag` zaps rather than throws it (`:2570`). What is missing is every
-way upstream lets you shed one.
+Upstream's three ways out, taken ahead of the bad flags they exist for, because
+no bad flag is playable without at least one of them. All three are off by
+default as upstream has them, and each may be turned on from `server.json` or
+from a map's `options` block; with none of them on, dying is the only way out.
+`describeBadFlagRelease` on each side answers "how does this world let me put it
+down", for the startup log on the server and for the message a player gets on
+picking one up.
 
-- **Shake timeout** (`LocalPlayer.cxx:159`). A client-side countdown, reset on
-  pickup; at zero the client sends `dropFlag`. Upstream's `-st` takes tenths of
-  a second, clamped to 0.1s..300s (`CmdLineOptions.cxx:1268`). The server must
-  accept a drop request for a sticky flag when the countdown is the reason,
-  which means the server runs the same clock -- otherwise a modified client
-  drops a bad flag instantly. Put the countdown in the shared pair and have the
-  server refuse a sticky drop that arrives early.
-- **Shake wins** (`LocalPlayer.cxx:1714`). A kill count, upstream's `-sw`,
-  clamped 1..20. Decrement on each win; at zero, drop. Same shared-clock
-  reasoning -- the server owns the score, so let the server decide and tell the
-  client, rather than the client asking.
-- **Antidote flags** (`-sa`, `LocalPlayer.cxx:1668`). Entirely client-side
-  upstream, and worth keeping that way: on picking up a sticky flag the client
-  picks a random spot clear of buildings, draws a yellow flag there, and sends
-  `dropFlag` when you drive within `tankRadius + flagRadius` of it. The radar
-  draws it (`RadarRenderer.cxx:715`) and the HUD points at it -- bzo already
-  has a heading-tape marker for its own team flag, so the antidote marker is a
-  second entry in the same list. The server side is only the switch and, again,
-  accepting the drop.
-- `flagShakeTimeout`, `flagShakeWins` and `antidoteFlags` in `server.json`,
-  reaching the client in `init` the way the rest of the game config does.
+### The shake timeout
 
-Then the four bad flags that need nothing else, because they change only what
+`-st` upstream, and the first of the three, because it is the one that makes a
+bad flag playable by itself and needs nothing from the others. Reached as
+`flagShakeTimeout` in `server.json`
+and as `-st <seconds>` in a map's `options` block -- the one map switch that
+takes a value -- and, as with every bzfs switch, a map may turn it on where
+nothing turns it back off, so the larger of the two wins. Off by default, as
+upstream has it: with no timeout a bad flag is carried until it kills you.
+
+Both sides normalize through `normalizeShakeTimeout` in the flags pair, which
+clamps to 0.1s..300s and rounds to the tenth of a second upstream stores on the
+wire (`CmdLineOptions.cxx:1268`). Rounding matters because both sides count the
+same number down and neither may be a frame ahead of the other.
+
+**The client owns the countdown and the server owns the clock.** The client
+resets `shakeSecondsLeft` when it takes a sticky flag, subtracts each frame
+delta, and sends `dropFlag` at zero -- upstream's `LocalPlayer::doUpdate`
+(`LocalPlayer.cxx:159`) exactly. The server records `flag.grabbedAt` at the grab
+and puts the drop request through `canShakeFlag` before it agrees, because
+without that a modified client sheds a bad flag on contact. A refusal is logged
+as `[ANTICHEAT:...] SHAKE REJECTED`.
+
+Two differences from upstream fall out of that, both in the shared pair:
+
+- `SHAKE_DROP_GRACE_SECONDS` 0.25. The server's `grabbedAt` is when it *saw* the
+  grab, which is later than the client's, so the server's clock is always a
+  little behind and would refuse an honest request. Lag only ever makes the
+  request late, never early, so the grace is for that gap and for clock drift,
+  nothing more.
+- The client does not latch at zero the way upstream does. Upstream's server
+  never refuses, so upstream never has to ask twice; bzo's can, so a countdown
+  that has run out re-asks on the same 200ms throttle the grab uses, and the
+  drop lands the moment the server's clock agrees.
+
+A shaken flag goes through the ordinary `dropFlag`, and a sticky flag has one
+grab in it (`FlagInfo.cxx:135`), so shaking one off spends its last grab and it
+leaves the world rather than lying in wait for the next tank.
+
+**The display is upstream's, in upstream's own slot.** `playing.cxx:1455` names
+the flag you just took on HUD alert slot 2 for three seconds, in the warning
+colour when it is one you cannot put down, and `HUDRenderer.cxx:998` replaces
+the status line with the time left to a tenth while a bad flag is in hand. bzo
+has no status line, so the countdown holds slot 2 for as long as the flag lasts
+-- which is the same information in the same place, and it reaches the XR panel
+for free because `getActiveHudAlerts` is shared. Pressing the drop control on a
+sticky flag says how this world lets you put it down rather than sending a
+request the server will refuse.
+
+### Shake wins
+
+`-sw` upstream: a count of kills, clamped 1..20 by `normalizeShakeWins`
+(`CmdLineOptions.cxx:1288`), armed when a sticky flag is taken and counted down
+by each kill until it drops.
+
+**This one lives entirely on the server**, which is where it differs from
+upstream. `LocalPlayer::changeScore` (`LocalPlayer.cxx:1714`) counts it down on
+the client and asks for the drop, because upstream's client is told its own
+score and upstream's bzfs accepts any drop request. bzo's server is what decides
+a kill happened, so counting anywhere else would mean shipping the count out and
+taking the answer back on trust. `recordShakeWin` hangs off the one place a kill
+is credited, and the client simply sees the flag go.
+
+Upstream counts a win and only a win -- never a loss, never a teamkill -- and so
+does bzo, because the hook is inside the `shooter.id !== player.id` branch that
+guards `kills++`.
+
+Nothing is displayed while it counts down. Upstream shows nothing either, and
+the grab message already said how many kills it would take.
+
+### Antidote flags
+
+`-sa` upstream: while you carry a bad flag, a yellow flag stands somewhere in
+the world, and driving onto it sheds what you are carrying.
+
+The spot is `LocalPlayer::setFlag`'s (`LocalPlayer.cxx:1668`) -- a random point
+inside a square centred on the world, half the world wide on a CTF map and the
+world less a base width otherwise, rejected and re-rolled up to a hundred times
+while a tank would not fit there. `getAntidoteCoordinate` in the flags pair
+answers one axis and is called twice; the clearance test is the server's own
+`checkCollision` at tank radius, which is upstream's
+`inBuilding(pos, tankRadius, tankHeight)`.
+
+**The server picks the spot and decides the arrival, which upstream's client
+does.** This is the one real departure in the group, and the shake timeout is
+the reason for it: bzo's server refuses a sticky drop it has not agreed to, so
+an antidote the client placed would mean accepting *every* sticky drop from
+anyone on a server with `-sa` on, which would undo that validation entirely.
+Moving it costs one message -- `antidoteFlag`, sent to its owner alone the way
+`nearFlag` is -- and makes the antidote as server-authoritative as the timeout.
+
+Arrival is `checkAntidote`, which runs off each accepted position update as
+`searchFlag` does, and asks the two questions the flag grab asks: on the same
+level, and within `FLAG_GRAB_RADIUS`. Upstream's own test is a 2D distance
+against `getRadius() + flagRadius` gated on `location == OnGround`, which is the
+same pair of questions in the other order.
+
+The client draws it three ways, which are upstream's three:
+
+- **The flag itself**, yellow (`LocalPlayer.cxx:1695`). It takes a key of its
+  own in the flag node pool -- a string rather than a flag index -- so it gets
+  the cloth, the ripple and the billboarding without a second code path, which
+  is what upstream gets from reusing `FlagSceneNode`.
+- **The radar**, in flat yellow over every flag in the world
+  (`RadarRenderer.cxx:715`), because it is the one you are looking for.
+- **The heading tape**, a yellow marker beside the team flag markers
+  (`playing.cxx:6847`). `getFlagHeadingMarkers` returns both, and it no longer
+  gives up early on a world with no teams, since the antidote does not need one.
+
+## Phase 4 -- the four bad flags that only change your own view
+
+The machinery this phase was built around is done -- sticky endurance, and all
+three of upstream's ways out; see "Getting rid of a bad flag". What is left is
+the four bad flags that need nothing beyond it, because they change only what
 the carrier sees:
 
 - **`B` Blindness** -- no out-the-window view; the radar still works. Upstream
@@ -426,7 +539,9 @@ the carrier sees:
   projection, so this one has nothing to do there and should say so rather than
   fighting it.
 
-**Test:** each of these plus a shake timeout short enough to watch.
+**Test:** each of these plus a shake timeout short enough to watch. `WA` is the
+one held back on the XR rule below -- the headset owns the projection, so a
+field-of-view change has nothing to do there and it needs its own answer first.
 
 ## Phase 5 -- the effect resolver, and the movement flags
 
@@ -468,14 +583,12 @@ Upstream applies these in `LocalPlayer::getMaxSpeed` (`LocalPlayer.cxx:1100`),
 | `RO` Reverse Only | forward speed clamped to 0 | bad |
 | `LT` Left Turn Only | right turn clamped to 0 | bad |
 | `RT` Right Turn Only | left turn clamped to 0 | bad |
-| `NJ` No Jumping | may not jump | bad |
 | `BY` Bouncy | jumps continuously on landing (`LocalPlayer.cxx:877`) | bad |
 | `TR` Trigger Happy | fires continuously (`LocalPlayer.cxx:1308`) | bad |
 
-`NJ` is the other half of the jumping switch, which is already in -- see
-"Jumping, and the flags that carry it". It is the one flag in this group whose
-answer `canJump` does not yet carry, because a bad flag is unplayable until
-phase 4 gives you a way to shake it off.
+`NJ` is out of this group and in already: it is a clamp on the jump gate rather
+than on the motion resolver, and the gate has asked the shared pair since the
+jumping switch landed. See "Jumping, and the flags that carry it".
 
 `TR` is a firing rule rather than a motion one, but it belongs here: it is an
 input clamp, and the resolver is where input clamps live.
@@ -730,6 +843,14 @@ have tests that need to keep passing.
   Blindness is client-side; Velocity is not.
 - Ship no setting for a flag's presentation. Where upstream offers variants,
   implement the default one.
+- **Do not add a flag whose effect has no clear implementation in XR.** bzo
+  ships one client for desktop, mobile and the headset, so a flag that quietly
+  does nothing in VR is worse than an absent one: it looks like it works and the
+  player cannot tell. `WA` Wide Angle is the type case -- the headset owns the
+  projection, so changing the field of view has nothing to do there. Flags like
+  that are held back and given their own XR answer rather than shipped with a
+  desktop-only effect, and this is what decides the order within a phase as much
+  as the machinery does.
 - **Add the flag's row to `FLAG_TYPES` last.** The row is what puts the flag in
   `superFlags.allowed`'s default and in the help panel, so a row landing ahead
   of its behaviour is a flag in the world that lies about what it does and a
