@@ -289,6 +289,21 @@ function getTeamScoreDeltasForCapture(cappingTeam, cappedTeam) {
   return deltas;
 }
 
+// How far a team mate's shade may sit from the team colour, for
+// getInitialPlayerColor below. The hue spread is bounded by the closest pair of
+// team colours -- red at 0 and purple at 300, 60 degrees apart -- so ten degrees
+// either side leaves 40 of clearance and no red is ever within reach of a
+// purple. `check:team-shade-bands` asserts that against the table above rather
+// than trusting this comment. Most of the separation comes from lightness for
+// that reason, and because the team colours are already fully saturated and can
+// only move down.
+const TEAM_SHADE_HUE_SPREAD = 10;
+const TEAM_SHADE_HUE_STEP = 5;
+const TEAM_SHADE_SAT_SPREAD = 12;
+const TEAM_SHADE_LIGHT_SPREAD = 14;
+// Below this there is no hue to shade: observer's white would only go grey.
+const TEAM_SHADE_MIN_SATURATION = 15;
+
 function getPlayerTeamRadarColor(team) {
   return PLAYER_TEAM_RADAR_COLORS[normalizePlayerTeam(team)];
 }
@@ -297,11 +312,24 @@ function getPlayerTeamColor(team) {
   return PLAYER_TEAM_COLORS[normalizePlayerTeam(team)];
 }
 
-function getInitialPlayerColor(teamMode, team, pickRandomColor) {
-  return teamMode.enabled ? getPlayerTeamColor(team) : pickRandomColor();
+// Upstream gives every tank on a team the one team colour (Team::getTankColor,
+// Team.cxx:30) and has nothing per player -- do not go looking for it there.
+// bzo shades team mates apart inside a band around that colour, for the same
+// reason it gives every player a distinct colour outside team mode: so a player
+// can tell two team mates apart at a range where the labels are unreadable. The
+// team is still what the colour says first; the band is narrow enough that no
+// shade of one team reads as another.
+function getInitialPlayerColor(teamMode, team, pickDistinctColor) {
+  return pickDistinctColor(teamMode.enabled ? team : null);
 }
 
 module.exports = {
+  PLAYER_TEAM_COLORS,
+  TEAM_SHADE_HUE_SPREAD,
+  TEAM_SHADE_HUE_STEP,
+  TEAM_SHADE_SAT_SPREAD,
+  TEAM_SHADE_LIGHT_SPREAD,
+  TEAM_SHADE_MIN_SATURATION,
   PLAYER_TEAM,
   PLAYER_TEAMS,
   BZFLAG_TEAM_ORDER,

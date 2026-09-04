@@ -17,6 +17,8 @@ const {
   selectPlayerTeam,
   getPlayerTeamColor,
   getInitialPlayerColor,
+  PLAYER_TEAM_COLORS,
+  TEAM_SHADE_HUE_SPREAD,
 } = require('../server/teams.cjs');
 
 assert.deepEqual(normalizeServerTeamMode(false), {
@@ -151,14 +153,51 @@ assert.equal(selectPlayerTeam('red', manualTeams, { ...teamCounts, red: 10 }), n
 assert.equal(getPlayerTeamColor('rogue'), 0xffff00);
 assert.equal(getPlayerTeamColor('observer'), 0xffffff);
 assert.equal(getPlayerTeamColor('blue'), 0x1a33ff);
-let randomColorCalls = 0;
-const pickRandomColor = () => {
-  randomColorCalls += 1;
-  return 0xabcdef;
+// Both modes go through the picker; what differs is the argument. In team mode
+// it is the team, so the picker can shade inside that team's band. Outside it is
+// null, so the picker has the whole wheel to work with.
+const pickedTeams = [];
+const pickDistinctColor = (team) => {
+  pickedTeams.push(team);
+  return team ? 0x111111 : 0xabcdef;
 };
-assert.equal(getInitialPlayerColor({ enabled: true }, 'blue', pickRandomColor), 0x1a33ff);
-assert.equal(randomColorCalls, 0);
-assert.equal(getInitialPlayerColor({ enabled: false }, 'rogue', pickRandomColor), 0xabcdef);
-assert.equal(randomColorCalls, 1);
+assert.equal(getInitialPlayerColor({ enabled: true }, 'blue', pickDistinctColor), 0x111111);
+assert.deepEqual(pickedTeams, ['blue']);
+assert.equal(getInitialPlayerColor({ enabled: false }, 'rogue', pickDistinctColor), 0xabcdef);
+assert.deepEqual(pickedTeams, ['blue', null]);
+
+// The shade bands must never let one team's colour reach another's. This is the
+// property the band width is chosen for, so it is asserted against the colour
+// table rather than left to the comment beside the constant.
+const hueOf = (color) => {
+  const r = ((color >> 16) & 0xff) / 255;
+  const g = ((color >> 8) & 0xff) / 255;
+  const b = (color & 0xff) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const span = max - min;
+  if (span === 0) return null; // observer's white has no hue to shade
+  let hue;
+  if (max === r) hue = ((g - b) / span) % 6;
+  else if (max === g) hue = ((b - r) / span) + 2;
+  else hue = ((r - g) / span) + 4;
+  hue *= 60;
+  return (hue + 360) % 360;
+};
+const hueGap = (left, right) => {
+  const gap = Math.abs(left - right) % 360;
+  return gap > 180 ? 360 - gap : gap;
+};
+const shadedHues = Object.values(PLAYER_TEAM_COLORS).map(hueOf).filter((hue) => hue !== null);
+for (const left of shadedHues) {
+  for (const right of shadedHues) {
+    if (left === right) continue;
+    assert.ok(
+      hueGap(left, right) > 2 * TEAM_SHADE_HUE_SPREAD,
+      `team hues ${left} and ${right} are ${hueGap(left, right)} apart, which two `
+      + `${TEAM_SHADE_HUE_SPREAD} degree bands would overlap`
+    );
+  }
+}
 
 console.log('team mode tests passed');

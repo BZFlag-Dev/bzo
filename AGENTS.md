@@ -329,8 +329,18 @@ BZFlag keeps a second colour table for the radar (`Team::radarColor`,
 `Team.cxx:30`), lifted from the tank colours so a team reads against a dark
 panel. bzo uses it for **flags** -- `getFlagRadarColor` -- and not for tank
 blips, which keep the colour the server assigned the player: bzo gives every
-player a distinct colour outside team mode, which upstream has no equivalent of
-and no radar entry for. Do not "fix" that.
+player a colour of their own, which upstream has no equivalent of and no radar
+entry for. Do not "fix" that -- telling two team mates apart on the radar is
+the same job as telling them apart at a distance in the world, and the blip is
+the easier of the two to read a colour off.
+
+Outside team mode that colour comes from the whole wheel. Inside it, the server
+shades team mates apart within a band around the team colour
+(`TEAM_SHADE_HUE_SPREAD` and friends in `server/teams.cjs`), so a red tank is
+still unmistakably red. Nothing is rebalanced when a player leaves: the gap they
+free is the one the next joiner is most likely to take, and a tank that changed
+colour mid-match would undo the only thing the shade is for. A restart starts
+over, which is a fresh set of players to learn in any case.
 
 Depth dimming mirrors upstream's two functions, which differ only in their floor:
 `colorScale` fades objects to 0.35 and `transScale` fades the obstacles they

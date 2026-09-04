@@ -66,6 +66,11 @@ const {
   selectPlayerTeam,
   getPlayerTeamColor,
   getInitialPlayerColor,
+  TEAM_SHADE_HUE_SPREAD,
+  TEAM_SHADE_HUE_STEP,
+  TEAM_SHADE_SAT_SPREAD,
+  TEAM_SHADE_LIGHT_SPREAD,
+  TEAM_SHADE_MIN_SATURATION,
   isColorTeam,
   isObserverTeam,
   isColorTeamIndex,
@@ -1414,7 +1419,7 @@ class Player {
     this.tankModel = 'bzflag';
     // Teams are server-authoritative. Observer is receive-only and non-combatant.
     this.team = 'rogue';
-    this.color = getInitialPlayerColor(TEAM_MODE, this.team, () => Player.pickDistinctColor());
+    this.color = getInitialPlayerColor(TEAM_MODE, this.team, (team) => Player.pickDistinctColor(team));
     this.joined = false;
     // PlayerInfo::restartOnBase. Set for every CTF spawn and after a capture.
     this.restartOnBase = false;
@@ -1543,8 +1548,33 @@ class Player {
   }
 
   // Pick a pastel-ish color that is as far as practical from current players.
-  static pickDistinctColor() {
+  // Without a team, the whole wheel: every player gets a colour of their own.
+  // With one, a band around the team's colour and only team mates to stay clear
+  // of, so a red tank is still unmistakably red. See getInitialPlayerColor in
+  // server/teams.cjs for why bzo does this and upstream does not.
+  //
+  // Nothing is rebalanced when a player leaves. The gap they free is the one the
+  // next joiner is most likely to take, and a tank that changed colour mid-match
+  // would undo the only thing the shade is for. A restart starts over, which is
+  // a new set of players to learn in any case.
+  static pickDistinctColor(team = null, exclude = null) {
+    const teamColor = team === null || team === undefined
+      ? null
+      : getPlayerTeamColor(team);
+    // A team with no colour to shade -- observer's white -- keeps it as it is.
+    const teamHsl = Number.isFinite(teamColor)
+      ? (() => {
+        const rgb = Player.colorIntToRgb(teamColor);
+        return Player.rgbToHsl(rgb.r, rgb.g, rgb.b);
+      })()
+      : null;
+    if (teamHsl && teamHsl.sat < TEAM_SHADE_MIN_SATURATION) return teamColor;
+
     const existingColors = Array.from(players.values())
+      .filter((player) => player !== exclude)
+      // Team mates are the only ones worth staying clear of: a red tank has no
+      // reason to avoid looking like a particular blue one.
+      .filter((player) => (teamHsl ? player.team === team : true))
       .map((player) => player.color)
       .filter((color) => Number.isFinite(color))
       .map((color) => {
@@ -1558,13 +1588,35 @@ class Player {
         };
       });
 
-    const saturationOptions = [58, 66, 74];
-    const lightnessOptions = [58, 64, 70];
-    const hueStep = 12;
+    const clampPercent = (value) => Math.max(0, Math.min(100, value));
+    const hues = [];
+    const saturationOptions = [];
+    const lightnessOptions = [];
+    let hueStep;
+    if (teamHsl) {
+      hueStep = TEAM_SHADE_HUE_STEP;
+      for (let offset = -TEAM_SHADE_HUE_SPREAD; offset <= TEAM_SHADE_HUE_SPREAD; offset += hueStep) {
+        hues.push((teamHsl.hue + offset + 360) % 360);
+      }
+      // The team colours are fully saturated already, so saturation only has
+      // room downwards; lightness has room both ways.
+      for (const offset of [0, -TEAM_SHADE_SAT_SPREAD, -2 * TEAM_SHADE_SAT_SPREAD]) {
+        saturationOptions.push(clampPercent(teamHsl.sat + offset));
+      }
+      for (const offset of [0, -TEAM_SHADE_LIGHT_SPREAD, TEAM_SHADE_LIGHT_SPREAD]) {
+        lightnessOptions.push(clampPercent(teamHsl.light + offset));
+      }
+    } else {
+      hueStep = 12;
+      for (let hue = 0; hue < 360; hue += hueStep) hues.push(hue);
+      saturationOptions.push(58, 66, 74);
+      lightnessOptions.push(58, 64, 70);
+    }
+
     const scoredCandidates = [];
     let bestScore = -1;
 
-    for (let hue = 0; hue < 360; hue += hueStep) {
+    for (const hue of hues) {
       for (const sat of saturationOptions) {
         for (const light of lightnessOptions) {
           const rgb = Player.hslToRgb(hue, sat, light);
@@ -1579,6 +1631,7 @@ class Player {
     }
 
     if (scoredCandidates.length === 0) {
+      if (teamHsl) return teamColor;
       const fallbackRgb = Player.hslToRgb(Math.floor(Math.random() * 360), 66, 64);
       return Player.rgbToColorInt(fallbackRgb);
     }
@@ -4680,7 +4733,10 @@ wss.on('connection', (ws, req) => {
             : 'bzflag';
           player.team = assignedTeam;
           if (TEAM_MODE.enabled) {
-            player.color = getPlayerTeamColor(player.team);
+            // A shade inside the new team's band, not the flat team colour:
+            // the player is already in the roster here, so they are excluded
+            // from the colours to stay clear of.
+            player.color = Player.pickDistinctColor(player.team, player);
             // bzfs.cxx:2377 resets a team the moment its size becomes one.
             // `teamCounts` excludes this player, so a lone player rejoining
             // their own team resets it too, as a leave and join would upstream.
