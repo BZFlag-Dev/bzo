@@ -39,7 +39,16 @@ These are deliberate. Do not "fix" them without being asked.
   confirm before respawning; bzo respawns automatically after the same 5 second
   delay.
 - **Clients reconnect directly when the server restarts**, rather than dropping
-  to a menu.
+  to a menu -- unless the client code itself changed, in which case they reload.
+  The server hashes `public/` and Three's build directory by content at boot and
+  sends that id in the `init` message; a page keeps the id it booted with and
+  reloads on any `init` carrying a different one. Without it a tab reconnects
+  across restart after restart and can run code from before the edit
+  indefinitely, which is how an unattended test client ends up reporting stats
+  nobody can attribute. Editing `server.json` or a map does not change the id,
+  so those restarts stay silent. The same id keys the service worker's cache, so
+  a reload reaches new textures and audio rather than the copies a cache keyed
+  to the release version would have kept alive.
 
 - **bzo does not mirror BZFlag's client display options.** Upstream exposes
   `useFancyEffects`, `spawnEffect`, `shotEffect`, `deathEffect`, `landEffect`,
@@ -234,7 +243,7 @@ version appears.
 | `public/*.mjs` | Client-side copies of logic shared with the server |
 | `scripts/*.mjs` | Release tooling, doc checks, tests, OBJ generators |
 | `maps/*.bzw` | Map files |
-| `docs/` | Design plans and manual validation checklists |
+| `docs/` | Design plans, manual validation checklists, and asset notes |
 
 ### Shared client/server modules
 
@@ -827,6 +836,55 @@ packet. The only rounded values that come back into the local state are
 server-authored ones -- `positionCorrection` and teleport echoes -- and those
 are events, not something every frame pays.
 
+### Reading a `renderer.stats` line
+
+`public/perf.js` splits each frame into phases and averages them over a second.
+The phases run in frame order -- `xr`, `hud`, `input`, `matrix`, `shadows`,
+`sim`, `radar`, `worldfx`, `draw` -- and `outside` is everything between one
+frame callback ending and the next starting: waiting for the GPU and the
+display, the browser laying out and painting the HUD's DOM, socket handlers,
+collection. The phases plus `outside` are the whole frame, so they sum to
+1000/fps.
+
+That split is the point. A client can be slow with every phase small, and then
+nothing bzo controls is the work to cut -- measured on t5810, `outside` of 60ms
+against a `draw` of 10ms, which turned out to be Chrome compositing its WebGL
+canvas through a readback path. Only adapt the phases bzo owns, and only when
+they are the majority of the frame.
+
+**Frame rate on its own decides nothing.** It is quantised by the display: a
+client pinned at exactly 30 or 60 is telling you its refresh interval, not its
+headroom, and every saving below the threshold reads as "no difference". That is
+what `fastest` is for -- the shortest frame in the window, which bounds the
+refresh interval from below, because there is no web API for it. `fastest=33`
+is a 30Hz panel; `fastest=16.7` is not. To A/B anything, take vsync out first
+(`--disable-gpu-vsync --disable-frame-rate-limit` in Chrome).
+
+The other fields: `drawbuf` is the drawing buffer, which moves with the window
+and with `renderScale`; `programsWindow` is the low-high program count over the
+window, and a count that moves during play is Three recompiling rather than a
+bigger scene, since its program cache key includes the light count.
+
+### Measurement knobs
+
+Two URL parameters exist to tell costs apart on hardware nobody here owns, since
+a player can be asked to load a link:
+
+- `?renderScale=0.5` -- draw into a buffer that fraction of the window on each
+  axis, presented across the whole window. Separates the pixels bzo draws from
+  the surface the browser presents, which resizing the window cannot, because
+  that moves both at once.
+- `?antialias=0` -- drop MSAA. Chrome carries a driver workaround saying MSAA is
+  not acceptable on Intel GPUs, so its cost has to be measurable rather than
+  assumed.
+
+Both are prototypes of settings bzo may one day pick from measurement, which is
+the other reason to keep them. A knob added here follows the same rules: URL
+only, never persisted, never in the UI, clamped on the way in, and **visible in
+the log** -- `renderScale` in `renderer.init.ok`, `antialias` in
+`renderer.capabilities`. A knob a sample does not record is a knob that produces
+data nobody can attribute later.
+
 ## Chat entry owns the keyboard, not the mouse
 
 The chat panel sits along the bottom of the screen, which is exactly where mouse
@@ -871,7 +929,8 @@ standings.
 ## Audio
 
 Gameplay samples live in `public/audio/` and come from upstream BZFlag
-(`$HOME/bzflag/data/*.wav`), so bzo sounds like the game it mirrors. The
+(`$HOME/bzflag/data/*.wav`), so bzo sounds like the game it mirrors;
+`docs/audio.md` lists which sample answers which `SFX_*` code. The
 manifest in `public/audio.js` maps each logical name to its file, its BZFlag
 `SFX_*` code, and its distance/volume; `render.js` plays everything through
 `playSound()` / `playLocalSound()` rather than bespoke per-sound methods.

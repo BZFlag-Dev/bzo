@@ -76,6 +76,40 @@ const {
 } = require('./server/teams.cjs');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+
+// One short hash over everything the client is served. A tab reconnects across
+// a server restart rather than reloading -- deliberately, so multi-device
+// testing stays cheap -- which means a restart that brought new client code
+// would otherwise leave that tab running the old code indefinitely. The id
+// rides in the init message and the client reloads when it changes.
+//
+// Hashed by content, not by mtime, so a rebuild or a checkout that changed
+// nothing does not reload every client. `public/` is walked, so editing
+// `server.json` or a map restarts the server without disturbing anyone -- plus
+// Three's build directory, which is served from `node_modules` rather than from
+// `public/` and would otherwise let a dependency bump slip past unnoticed.
+function computeClientBuild() {
+  const hash = crypto.createHash('sha256');
+  const hashTree = (root) => {
+    const walk = (dir) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.isFile()) {
+          hash.update(path.relative(root, full));
+          hash.update(fs.readFileSync(full));
+        }
+      }
+    };
+    if (fs.existsSync(root)) walk(root);
+  };
+  hashTree(path.join(__dirname, 'public'));
+  hashTree(threeBuildDir);
+  return hash.digest('hex').slice(0, 12);
+}
 const { isHeadsetBrowserUA } = require('./server/headset.cjs');
 const {
   DEFAULT_VOICE_CHANNEL,
@@ -145,6 +179,9 @@ app.use('/vendor/three', express.static(threeBuildDir, {
   setHeaders: (res) => res.setHeader('Cache-Control', REVALIDATE),
 }));
 
+// After threeBuildDir, which it hashes.
+const CLIENT_BUILD = computeClientBuild();
+
 // index.html is rendered per request so the page is named after the host before
 // any script runs. iOS reads `apple-mobile-web-app-title` for a home screen
 // label, so it has to be in the markup that Safari parses, not added later by
@@ -153,6 +190,9 @@ app.use('/vendor/three', express.static(threeBuildDir, {
 const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
 const INDEX_TITLE = '<title>Battlezone Online</title>';
 const INDEX_APPLE_TITLE = '<meta name="apple-mobile-web-app-title" content="Battlezone Online">';
+// The client needs the build id before it opens a socket, because the service
+// worker's cache is keyed to it and registration happens at load.
+const INDEX_BUILD = '<meta name="bzo-build" content="dev">';
 let indexTemplate = null;
 let indexTemplateMtime = 0;
 
@@ -160,7 +200,7 @@ function readIndexTemplate() {
   const { mtimeMs } = fs.statSync(INDEX_PATH);
   if (indexTemplate === null || mtimeMs !== indexTemplateMtime) {
     const html = fs.readFileSync(INDEX_PATH, 'utf8');
-    for (const marker of [INDEX_TITLE, INDEX_APPLE_TITLE]) {
+    for (const marker of [INDEX_TITLE, INDEX_APPLE_TITLE, INDEX_BUILD]) {
       if (!html.includes(marker)) {
         throw new Error(`public/index.html is missing the marker: ${marker}`);
       }
@@ -177,7 +217,8 @@ function renderIndex(host) {
     .replace(
       INDEX_APPLE_TITLE,
       `<meta name="apple-mobile-web-app-title" content="${escapeHtml(shortHostName(host))}">`
-    );
+    )
+    .replace(INDEX_BUILD, `<meta name="bzo-build" content="${CLIENT_BUILD}">`);
 }
 
 // The browser sets Host from the address the player typed, so it is the name
@@ -337,6 +378,7 @@ process.on('unhandledRejection', (reason) => {
 
 const server = app.listen(PORT, '::', () => {
   log(`Server running on http://[::]:${PORT}`);
+  log(`Client build ${CLIENT_BUILD}`);
 });
 
 server.on('error', (err) => {
@@ -4069,6 +4111,7 @@ wss.on('connection', (ws, req) => {
   const clouds = generateClouds(OBSTACLES);
   ws.send(JSON.stringify({
     type: 'init',
+    clientBuild: CLIENT_BUILD,
     player: player.getState(),
     players: getRosterFor(player),
     config: GAME_CONFIG,

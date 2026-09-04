@@ -5,10 +5,10 @@
  * See LICENSE or https://www.gnu.org/licenses/agpl-3.0.html
  */
 import * as THREE from 'three';
-import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { AnaglyphEffect } from './anaglyph.js';
 import { xrState } from './webxr.js';
+import { markFramePhase, noteProgramCount } from './perf.js';
 import {
   collectDeviceHints,
   detectRenderCapabilities,
@@ -168,6 +168,9 @@ const BZFLAG_FLAG_RIPPLE_DAMP = 0.1;                       // damp
 // Flags are drawn after the world so their cloth blends against it, and they
 // never write depth to each other.
 const FLAG_RENDER_ORDER = 5;
+// Shots ride over the flags they pass, and their explosions over the shots.
+const SHOT_RENDER_ORDER = 16;
+const SHOT_EXPLOSION_RENDER_ORDER = 17;
 // The warp a flag arrives and leaves through, from FlagWarpSceneNode.cxx:28.
 // Seven horizontal twelve-sided discs in a fixed rainbow at half alpha, each
 // one step smaller than the last and a hair further along the stack.
@@ -194,6 +197,29 @@ const PROJECTED_SHADOW_CASTER_Y = 0.01;
 // airborne tanks. Sizes the darkening pass, not the shadows themselves.
 const PROJECTED_SHADOW_CASTER_HEADROOM = 20;
 const PROJECTED_SHADOW_OVERLAY_Y = 0.03;
+// A measurement knob, not a setting: `?renderScale=0.5` draws into a buffer half
+// the window on each axis and lets the browser scale it up to fill the window
+// unchanged. Resizing the window cannot answer the same question, because it
+// moves the pixels bzo draws and the surface the browser presents together --
+// this moves only the first. No UI and no persistence: it exists to tell those
+// two costs apart on a machine that is slow, and the answer decides whether any
+// renderer setting could have helped it.
+function readRenderScale() {
+  const raw = Number(new URLSearchParams(window.location.search).get('renderScale'));
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.min(1, Math.max(0.25, raw));
+}
+
+// The same kind of knob, for the same reason: `?antialias=0` drops MSAA. Chrome
+// carries a driver workaround saying MSAA is not acceptable on Intel GPUs, and
+// the machines that read slowest here are the ones it applies to, so the cost of
+// the samples has to be measurable rather than assumed. The context reports what
+// it was given, so `renderer.capabilities` in the log says which run is which.
+function readAntialias() {
+  const raw = new URLSearchParams(window.location.search).get('antialias');
+  return raw !== '0' && raw !== 'false';
+}
+
 const GROUND_GRID_Y = 0.02;
 // How big the sun and moon look and how far away they sit, from
 // makeCelestialLists (BackgroundRenderer.cxx:1706 for the sun, :483 for the
@@ -233,7 +259,11 @@ const GROUND_STRIPS = [
   [2, 3, 6, 7],
   [3, 0, 7, 4],
 ];
-const GROUND_GRID_RENDER_ORDER = 15;
+// First in the transparent pass, before the flags, shots and explosions that
+// blend over the world without writing depth. Those cannot depth-reject a grid
+// line standing behind them, so the grid has to be underneath them in draw
+// order instead.
+const GROUND_GRID_RENDER_ORDER = 1;
 // Ground light receivers, mirroring BackgroundRenderer::drawGroundReceivers
 // (BackgroundRenderer.cxx:1312): a small additive fan on the ground under every
 // dynamic light, its falloff computed per vertex on the CPU rather than by a
@@ -511,7 +541,6 @@ class RenderManager {
     this.scene = null;
     this.camera = null;
     this.renderer = null;
-    this.labelRenderer = null;
     this.audioListener = null;
     this.gameVolumeLevel = DEFAULT_VOLUME_LEVEL;
     // Gameplay sample buffers, keyed by GAME_SOUNDS name.
@@ -550,6 +579,7 @@ class RenderManager {
     this.dynamicLightingEnabled = true;
     this.renderCapabilities = null;
     this.showGroundGrid = false;
+    this.renderScale = 1;
 
     // Tank geometry loaded from public/obj/simple.obj (keyed by object name)
     this._tankGeoCache = null;
@@ -576,11 +606,11 @@ class RenderManager {
         scene: this.scene,
         camera: this.camera,
         renderer: this.renderer,
-        labelRenderer: this.labelRenderer,
       };
     }
 
     this.container = container;
+    this.renderScale = readRenderScale();
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
@@ -599,7 +629,7 @@ class RenderManager {
     this.scene.add(this.camera);
 
     try {
-      this.renderer = new THREE.WebGLRenderer({ antialias: true, xrCompatible: true, stencil: true });
+      this.renderer = new THREE.WebGLRenderer({ antialias: readAntialias(), xrCompatible: true, stencil: true });
     } catch (error) {
       const probeCanvas = document.createElement('canvas');
       const hasWebGL = !!(
@@ -621,17 +651,11 @@ class RenderManager {
     // effect draws three passes per frame, and Three resets on every one.
     this.renderer.info.autoReset = false;
     this.renderCapabilities = detectRenderCapabilities(this.renderer, collectDeviceHints());
-    this.renderer.setSize(viewport.width, viewport.height);
+    this._applyRendererSize(viewport);
     // Disable real-time shadow mapping for performance
     this.renderer.shadowMap.enabled = false;
     container.appendChild(this.renderer.domElement);
 
-    this.labelRenderer = new CSS2DRenderer();
-    this.labelRenderer.setSize(viewport.width, viewport.height);
-    this.labelRenderer.domElement.style.position = 'absolute';
-    this.labelRenderer.domElement.style.top = '0';
-    this.labelRenderer.domElement.style.pointerEvents = 'none';
-    container.appendChild(this.labelRenderer.domElement);
 
     // Anaglyph effect setup (not enabled by default)
     this.anaglyphEffect = new AnaglyphEffect(this.renderer);
@@ -652,7 +676,6 @@ class RenderManager {
       scene: this.scene,
       camera: this.camera,
       renderer: this.renderer,
-      labelRenderer: this.labelRenderer,
     };
   }
 
@@ -767,7 +790,12 @@ class RenderManager {
   getRenderStats() {
     if (!this.renderer) return null;
     const { render, memory, programs } = this.renderer.info;
+    // The buffer, not the window: a client that is bound on pixels reads the
+    // same at every frame rate unless this is next to the timings. It moves
+    // whenever the window does, so the one logged at init does not answer it.
+    const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     return {
+      drawbuf: `${buffer.x}x${buffer.y}`,
       calls: render.calls,
       triangles: render.triangles,
       programs: programs ? programs.length : 0,
@@ -1032,6 +1060,12 @@ class RenderManager {
     }
 
     this.worldGroup.updateMatrixWorld(true);
+    // Everything up to here is the pass getting ready, and almost all of it is
+    // that walk: a matrix composed for every node in the world, visible or not,
+    // shadow caster or not. It scales with how much is in the world rather than
+    // with how much casts, which is a different cost from the projection below
+    // and has to be read separately from it.
+    markFramePhase('matrix');
     this._setProjectedShadowFlattenMatrix(this._projectedShadowFlatten, dir);
     this._projectedShadowWorldToLocal.copy(this.worldGroup.matrixWorld).invert();
     // Flatten in worldGroup space, whatever the world is doing in XR.
@@ -1231,21 +1265,30 @@ class RenderManager {
     return true;
   }
 
+  // Three's own pixel ratio is the scale: it sizes the buffer to
+  // window * ratio and the element to the window, which is exactly the split
+  // wanted here. Doing it by hand, sizing the buffer and the element
+  // separately, left the element at the buffer's size on the machine this was
+  // built to measure.
+  _applyRendererSize(viewport) {
+    this.renderer.setPixelRatio(this.renderScale);
+    this.renderer.setSize(viewport.width, viewport.height);
+  }
+
   handleResize() {
-    if (!this.camera || !this.renderer || !this.labelRenderer) return;
+    if (!this.camera || !this.renderer) return;
     const viewport = this._getViewportSize();
     this.camera.aspect = viewport.width / viewport.height;
     this.camera.fov = this._getVerticalFovForAspect(this.camera.aspect);
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(viewport.width, viewport.height);
-    this.labelRenderer.setSize(viewport.width, viewport.height);
+    this._applyRendererSize(viewport);
     if (this.anaglyphEffect) {
       this.anaglyphEffect.setSize(viewport.width, viewport.height);
     }
   }
 
   renderFrame() {
-    if (!this.renderer || !this.scene || !this.camera || !this.labelRenderer) return;
+    if (!this.renderer || !this.scene || !this.camera) return;
 
     this.renderer.info.reset();
     this.updateGroundCenter();
@@ -1261,18 +1304,22 @@ class RenderManager {
 
     // After the lights have been moved, so a receiver never trails its shot.
     this.updateGroundReceivers();
+    // The ground patch, the teleporters and the receivers all rebuild geometry
+    // on the CPU every frame, before a single triangle is submitted. Reported
+    // apart from the draw so a frame spent building is not read as a frame
+    // spent drawing.
+    markFramePhase('worldfx');
 
     if (this.anaglyphEnabled && this.anaglyphEffect) {
       this.anaglyphEffect.render(this.scene, this.camera);
-      this.labelRenderer.render(this.scene, this.camera);
     } else {
       // In XR mode, Three.js handles stereo automatically when we call renderer.render()
       this.renderer.render(this.scene, this.camera);
-      // Note: labelRenderer may not work properly in XR; skip it for now
-      if (!xrState.enabled) {
-        this.labelRenderer.render(this.scene, this.camera);
-      }
     }
+
+    // Read after the draw, which is where a program that was missing from the
+    // cache would have been compiled.
+    noteProgramCount(this.renderer.info.programs?.length ?? 0);
   }
 
   setAnaglyphEnabled(enabled) {
@@ -3192,7 +3239,7 @@ class RenderManager {
     const sprite = new THREE.Sprite(material);
     sprite.position.copy(position);
     sprite.scale.set(BZFLAG_SHOT_EXPLOSION_SIZE, BZFLAG_SHOT_EXPLOSION_SIZE, 1);
-    sprite.renderOrder = GROUND_GRID_RENDER_ORDER + 2;
+    sprite.renderOrder = SHOT_EXPLOSION_RENDER_ORDER;
     this.worldGroup.add(sprite);
 
     let light = null;
@@ -3528,7 +3575,7 @@ class RenderManager {
 
     const head = new THREE.Sprite(headMaterial);
     head.scale.set(1.35, 1.35, 1);
-    head.renderOrder = GROUND_GRID_RENDER_ORDER + 1;
+    head.renderOrder = SHOT_RENDER_ORDER;
 
     const dir = new THREE.Vector3(data.dirX || 0, 0, data.dirZ || -1);
     if (dir.lengthSq() < 0.0001) {
@@ -3560,13 +3607,13 @@ class RenderManager {
       const segment = new THREE.Sprite(segmentMaterial);
       const scale = 0.78 - (i * 0.08);
       segment.scale.set(scale, scale, 1);
-      segment.renderOrder = GROUND_GRID_RENDER_ORDER + 1;
+      segment.renderOrder = SHOT_RENDER_ORDER;
       const distance = 0.34 + (i * 0.28);
       segment.position.set(-dir.x * distance, 0, -dir.z * distance);
       projectile.add(segment);
       tailSegments.push(segment);
     }
-    projectile.renderOrder = GROUND_GRID_RENDER_ORDER + 1;
+    projectile.renderOrder = SHOT_RENDER_ORDER;
     projectile.add(head);
     projectile.userData = {
       dirX: data.dirX,

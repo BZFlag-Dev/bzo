@@ -113,6 +113,14 @@ import {
 } from './hud.js';
 import { renderManager, DEFAULT_MUZZLE_HEIGHT } from './render.js';
 import { describeMeasurements, describeRenderCapabilities } from './capabilities.mjs';
+import {
+  getFramePhaseReport,
+  getFastestFrame,
+  getFrameProgramRange,
+  markFramePhase,
+  rollFramePhases,
+  startFramePhases,
+} from './perf.js';
 import * as THREE from 'three';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import {
@@ -216,12 +224,53 @@ import {
 import { resolveTankMotion } from './motion.mjs';
 
 // Register the service worker that makes the game installable and serves its
-// assets from disk. The version rides in the script URL, so a release changes
-// the worker's identity and forces a fresh install of its cache.
+// assets from disk. The build id rides in the script URL, so any change to what
+// the client is served changes the worker's identity and forces a fresh install
+// of its cache. Keyed to the build rather than to the release, because the
+// release version does not move between releases: during development a new
+// texture or sound would otherwise keep being served from a cache the reload
+// below cannot clear.
+const swVersion = document.querySelector('meta[name="bzo-build"]')?.content || CLIENT_VERSION;
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`/sw.js?v=${CLIENT_VERSION}`).catch(() => {});
+    navigator.serviceWorker.register(`/sw.js?v=${swVersion}`).catch(() => {});
   });
+}
+
+// The build the page booted with, from the first init message it saw. A server
+// restart on its own is not a reason to reload -- bzo reconnects across those on
+// purpose -- but a restart that brought new client code is, because this tab
+// would otherwise keep running the old code for as long as it stays open. That
+// is how an unattended test client ends up reporting stats from a build nobody
+// is looking at any more.
+const RELOADED_FOR_KEY = 'bzoReloadedFor';
+let bootClientBuild = null;
+
+// Returns false when the page is on its way out, so the caller stops handling a
+// message meant for code that is about to be replaced.
+function checkClientBuild(build) {
+  if (!build) return true;
+  if (bootClientBuild === null) {
+    bootClientBuild = build;
+    // Booted on this build, so whatever reload got us here worked. Forgetting
+    // it lets a later return to the same build reload again.
+    if (sessionStorage.getItem(RELOADED_FOR_KEY) === build) {
+      sessionStorage.removeItem(RELOADED_FOR_KEY);
+    }
+    return true;
+  }
+  if (build === bootClientBuild) return true;
+  if (sessionStorage.getItem(RELOADED_FOR_KEY) === build) {
+    // Reloading did not pick up the new code, so stop rather than loop. Says so
+    // in server.log, which is the only place an unattended client can say it.
+    debugLog(`client.build stale boot=${bootClientBuild} server=${build} reload did not help`);
+    return true;
+  }
+  sessionStorage.setItem(RELOADED_FOR_KEY, build);
+  debugLog(`client.build stale boot=${bootClientBuild} server=${build} reloading`);
+  // Long enough for that line to reach the socket, short enough not to be seen.
+  setTimeout(() => window.location.reload(), 250);
+  return false;
 }
 
 // FPS
@@ -230,40 +279,6 @@ let frameCount = 0;
 let lastFpsUpdate = performance.now();
 // How long after a map is built the one automatic renderer.stats line waits.
 const RENDER_STATS_SAMPLE_DELAY_MS = 10000;
-
-// Where the frame's time goes, in milliseconds per frame averaged over a second.
-// One saturated core is the budget on the machines that matter, so the split
-// between world simulation, HUD painting and draw submission is what decides
-// which cost is worth attacking -- a figure no frame rate can give on its own.
-// Sampled with performance.now() on purpose: this measures work done, not the
-// display cadence the frame timestamp carries.
-const FRAME_PHASE_WINDOW_MS = 1000;
-const FRAME_PHASES = Object.freeze(['xr', 'hud', 'input', 'shadows', 'sim', 'radar', 'render']);
-const framePhaseTotals = new Map();
-let framePhaseMark = 0;
-let framePhaseWindowStart = performance.now();
-let framePhaseFrames = 0;
-let framePhaseReport = null;
-
-function markFramePhase(name) {
-  const mark = performance.now();
-  framePhaseTotals.set(name, (framePhaseTotals.get(name) || 0) + (mark - framePhaseMark));
-  framePhaseMark = mark;
-}
-
-function rollFramePhases() {
-  framePhaseFrames += 1;
-  if ((performance.now() - framePhaseWindowStart) < FRAME_PHASE_WINDOW_MS) return;
-
-  const report = {};
-  for (const name of FRAME_PHASES) {
-    report[name] = Number(((framePhaseTotals.get(name) || 0) / framePhaseFrames).toFixed(2));
-  }
-  framePhaseReport = report;
-  framePhaseTotals.clear();
-  framePhaseFrames = 0;
-  framePhaseWindowStart = performance.now();
-}
 
 function updateFps() {
   frameCount++;
@@ -2558,10 +2573,23 @@ function updateDebugGeometryVisibility() {
 // machines a render level would be for -- a headset, a phone -- are the ones
 // nobody opens the debug HUD on. So one line lands when the HUD closes, and one
 // a while into every map, which is the only sample those devices ever send.
+// The program count as it stands, plus how far it moved over the last window.
+// A count that moves during play is programs being recompiled, which is a cost
+// no other counter shows.
+function withProgramWindow(stats) {
+  if (!stats) return stats;
+  const programRange = getFrameProgramRange();
+  if (programRange) stats.programsWindow = programRange;
+  const fastest = getFastestFrame();
+  if (fastest !== null) stats.fastest = fastest;
+  return stats;
+}
+
 function logRenderStats(reason) {
-  const stats = renderManager.getRenderStats();
+  const stats = withProgramWindow(renderManager.getRenderStats());
   if (!stats) return;
-  const phases = framePhaseReport ? ` ${describeMeasurements(framePhaseReport)}` : '';
+  const report = getFramePhaseReport();
+  const phases = report ? ` ${describeMeasurements(report)}` : '';
   debugLog(`renderer.stats reason=${reason} fps=${fps} ${describeMeasurements(stats)}${phases}`);
 }
 
@@ -2592,8 +2620,8 @@ function getDebugState() {
     worldTime,
     gamepadConnected: isGamepadConnected(),
     gamepadInfo: getGamepadInfo(),
-    renderStats: renderManager.getRenderStats(),
-    framePhases: framePhaseReport,
+    renderStats: withProgramWindow(renderManager.getRenderStats()),
+    framePhases: getFramePhaseReport(),
     voice: getVoiceDebugState()
   };
 }
@@ -3159,7 +3187,7 @@ function init() {
       const rendererSize = renderer.getSize(new THREE.Vector2());
       const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
       debugLog(
-        `renderer.init.ok viewport=${window.innerWidth}x${window.innerHeight} canvas=${renderer.domElement.width}x${renderer.domElement.height} css=${rendererSize.x}x${rendererSize.y} drawbuf=${drawingBufferSize.x}x${drawingBufferSize.y}`,
+        `renderer.init.ok viewport=${window.innerWidth}x${window.innerHeight} canvas=${renderer.domElement.width}x${renderer.domElement.height} css=${rendererSize.x}x${rendererSize.y} shown=${renderer.domElement.clientWidth}x${renderer.domElement.clientHeight} drawbuf=${drawingBufferSize.x}x${drawingBufferSize.y} renderScale=${renderManager.renderScale}`,
       );
       const capabilities = renderManager.getRenderCapabilities();
       if (capabilities) debugLog(`renderer.capabilities ${describeRenderCapabilities(capabilities)}`);
@@ -3431,6 +3459,7 @@ function handleServerMessage(message) {
 
   switch (message.type) {
     case 'init': {
+      if (!checkClientBuild(message.clientBuild)) return;
       const sequenceId = ++initSequence;
       activeInitSequence = sequenceId;
       // A fresh world clears every tank, so anything queued against the old one
@@ -8933,7 +8962,7 @@ function runFallbackAnimationLoop(frameTime) {
 // slightly too long or too short, which reads as the ground jittering -- worst
 // at low speed, where the eye tracks the motion and expects it to be even.
 function animate(frameTime) {
-  framePhaseMark = performance.now();
+  startFramePhases();
   selectedFaceDebugTouchedThisFrame = false;
   supportSurfaceDebugTouchedThisFrame = false;
   supportFootprintDebugTouchedThisFrame = false;
@@ -9082,8 +9111,10 @@ function animate(frameTime) {
   updateRadar();
   markFramePhase('radar');
 
+  // renderManager marks 'worldfx' from inside renderFrame, once it has finished
+  // rebuilding geometry and before it submits anything; the rest is the draw.
   renderManager.renderFrame();
-  markFramePhase('render');
+  markFramePhase('draw');
   rollFramePhases();
 }
 

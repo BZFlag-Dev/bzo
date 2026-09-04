@@ -1,8 +1,13 @@
 # Audio
 
-These sound effects come from upstream BZFlag (`bzflag/data/*.wav`) so that bzo
-sounds like the game it mirrors. See `AGENTS.md` for the mapping between BZFlag's
-`SFX_*` codes and the events bzo plays them for.
+The sound effects in `public/audio/` come from upstream BZFlag
+(`bzflag/data/*.wav`) so that bzo sounds like the game it mirrors. See
+`AGENTS.md` for the mapping between BZFlag's `SFX_*` codes and the events bzo
+plays them for.
+
+This lives here rather than beside the samples because everything under
+`public/` is a document root: a README next to the assets it describes is served
+to every client, and every edit to it changes the build id and reloads them.
 
 | file | BZFlag SFX | bzo event |
 |---|---|---|

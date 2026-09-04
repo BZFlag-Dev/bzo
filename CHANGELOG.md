@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+### Added
+- Where a frame's time goes is split further: the forced world-tree walk the shadow pass does (`matrix`), the geometry rebuilt on the CPU before anything is submitted (`worldfx`), the draw itself, and `outside` -- everything between one frame callback ending and the next starting, which is the wait for the GPU and the display, the browser painting the HUD's DOM, socket handlers and collection. The phases and `outside` are the whole frame, so a client that is slow with every phase small is saying that nothing bzo controls is the work to cut.
+- `renderer.stats` carries `drawbuf`, the drawing buffer the sample was measured at; `fastest`, the shortest frame of the window, which bounds the display's refresh interval from below because no web API reports it -- a client pinned at 30fps by a 30Hz panel and one pinned there by its own cost are otherwise identical in the log; and `programsWindow`, the low-high program count, because Three keys its program cache on the light count and a count that moves during play is a recompile rather than a bigger scene.
+- Two measurement knobs, `?renderScale=` and `?antialias=`, to tell the cost of the pixels bzo draws from the cost of the surface the browser presents on hardware nobody here owns. URL only, never persisted, never in the UI, and recorded in the log so a sample says which configuration produced it.
+- Clients reload when the client code changes. The server hashes `public/` and Three's build directory by content at boot and sends that id when a client joins; a page keeps the id it booted with and reloads on any that differs. A tab reconnects across a server restart on purpose, so without this it can go on running code from before the edit for as long as it stays open. Editing `server.json` or a map does not change the id, and those restarts stay silent.
+
+### Changed
+- The debug grid draws before the flags rather than after. Flag cloth, poles and warp discs blend without writing depth, so a grid line standing behind one could not be depth-rejected and drew straight through it.
+- The service worker's cache is keyed to that same build id rather than to the release version, and a cache miss revalidates rather than trusting the seven day `max-age` an asset carries. An edited texture used to survive the reload meant to replace it. Over HTTP/2 a full revalidation is a few tens of kilobytes of 304s rather than megabytes of assets that did not change.
+
+### Removed
+- The CSS2D label pass. Nothing in bzo ever created a `CSS2DObject` -- every label is a sprite -- so it walked the whole scene graph three times a frame to produce nothing.
+- `public/test.html`, a minimal XR page that has served its purpose. `public/audio/README.md` moved to `docs/audio.md`: everything under `public/` is sent to clients, and documentation does not need to be.
+
 ## [1.0.56] - 2026-09-04
 
 Getting rid of a bad flag, and No Jumping, are part of #6.

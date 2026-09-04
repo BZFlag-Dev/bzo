@@ -11,12 +11,18 @@
 // The client/server protocol is lockstep, so code is fetched network-first and
 // the cache is only an offline fallback. Textures, audio, models and Three.js
 // cannot desync anything, so those are served cache-first out of a cache keyed
-// to the client version: a release changes the key and refills it.
+// to the build the server is serving: any change to it changes the key and
+// refills the cache.
 //
-// The version arrives in the worker's own script URL (`/sw.js?v=1.0.39`).
-// Because the registration URL is part of the worker's identity, a release
+// The build id arrives in the worker's own script URL (`/sw.js?v=abdf5ccd7c45`).
+// Because the registration URL is part of the worker's identity, a change
 // installs a genuinely new worker with no build step and no ES module support
 // required in workers.
+//
+// Keyed to the build rather than to the release version, which only moves when
+// a release is cut. An edited texture during development is served cache-first,
+// so under a release key it would outlive the reload the build check triggers --
+// the client would fetch new code and old art.
 
 const VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
 const CACHE = `bzo-v${VERSION}`;
@@ -92,10 +98,16 @@ async function networkFirst(request) {
   }
 }
 
+// A miss revalidates rather than trusting the HTTP cache. Assets are served
+// with a seven day max-age, so a plain fetch on a miss would be answered from
+// the HTTP cache without a request reaching the server -- and an edited texture
+// would survive the new build, the new worker and the reload, all of which
+// exist to get rid of it. Revalidating costs one conditional request per asset
+// on a build change, and the unchanged ones answer 304 with no body.
 async function cacheFirst(request) {
   const cached = await matchThisVersion(request);
   if (cached) return cached;
-  const response = await fetch(request);
+  const response = await fetch(request, { cache: 'no-cache' });
   if (response.ok) {
     const cache = await caches.open(CACHE);
     cache.put(request, response.clone());

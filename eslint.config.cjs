@@ -64,6 +64,8 @@ module.exports = [
         requestAnimationFrame: "readonly",
         cancelAnimationFrame: "readonly",
         screen: "readonly",
+        sessionStorage: "readonly",
+        URLSearchParams: "readonly",
         window: "readonly",
         WebSocket: "readonly",
       },

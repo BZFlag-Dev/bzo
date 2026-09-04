@@ -326,7 +326,12 @@ export function updateDebugDisplay({
   html += `<div><span class="label">Obs/Clouds:</span><span class="value">${OBSTACLES?.length ?? ''}/${clouds?.length ?? ''}</span></div>`;
   if (renderStats) {
     html += `<div><span class="label">Draws/Tris:</span><span class="value">${formatCount(renderStats.calls)}/${formatCount(renderStats.triangles)}</span></div>`;
-    html += `<div><span class="label">Prog/Tex/Geo:</span><span class="value">${formatCount(renderStats.programs)}/${formatCount(renderStats.textures)}/${formatCount(renderStats.geometries)}</span></div>`;
+    // The window in brackets is what the program count did over the last
+    // second. A moving count is a recompile, not a bigger scene.
+    const programs = renderStats.programsWindow
+      ? `${formatCount(renderStats.programs)} [${renderStats.programsWindow}]`
+      : formatCount(renderStats.programs);
+    html += `<div><span class="label">Prog/Tex/Geo:</span><span class="value">${programs}/${formatCount(renderStats.textures)}/${formatCount(renderStats.geometries)}</span></div>`;
   }
   if (framePhases) {
     // Dearest phase first: the row is read to find what to attack.
