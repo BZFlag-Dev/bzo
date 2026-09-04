@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.57] - 2026-09-04
+
 ### Added
 - Where a frame's time goes is split further: the forced world-tree walk the shadow pass does (`matrix`), the geometry rebuilt on the CPU before anything is submitted (`worldfx`), the draw itself, and `outside` -- everything between one frame callback ending and the next starting, which is the wait for the GPU and the display, the browser painting the HUD's DOM, socket handlers and collection. The phases and `outside` are the whole frame, so a client that is slow with every phase small is saying that nothing bzo controls is the work to cut.
 - `renderer.stats` carries `drawbuf`, the drawing buffer the sample was measured at; `fastest`, the shortest frame of the window, which bounds the display's refresh interval from below because no web API reports it -- a client pinned at 30fps by a 30Hz panel and one pinned there by its own cost are otherwise identical in the log; and `programsWindow`, the low-high program count, because Three keys its program cache on the light count and a count that moves during play is a recompile rather than a bigger scene.
