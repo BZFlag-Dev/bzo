@@ -4656,15 +4656,24 @@ class RenderManager {
     pole.renderOrder = FLAG_RENDER_ORDER;
     group.add(pole);
 
-    const warp = this._createFlagWarp();
-
     const worldGroup = this.getWorldGroup();
     worldGroup.add(group);
-    worldGroup.add(warp.group);
 
-    const node = { group, cloth, clothMaterial, pole, poleMaterial, warp };
+    // The warp is built the first time this flag actually warps, the way the
+    // label is. A world of 200 flags would otherwise carry 1600 discs that draw
+    // nothing: invisible costs no draw call, but `updateMatrixWorld` composes a
+    // matrix for every node whether it is visible or not, and it walks the tree
+    // twice a frame.
+    const node = { group, cloth, clothMaterial, pole, poleMaterial, warp: null };
     this.flagNodes.set(index, node);
     return node;
+  }
+
+  _ensureFlagWarp(node) {
+    if (node.warp) return node.warp;
+    node.warp = this._createFlagWarp();
+    this.getWorldGroup().add(node.warp.group);
+    return node.warp;
   }
 
   // The debug label over a flag, created the first time that flag has anything
@@ -4709,8 +4718,11 @@ class RenderManager {
       node.label.visible = false;
     }
 
-    node.warp.group.visible = warp > 0;
-    node.warp.group.position.set(x, y, z);
+    if (warp > 0 || node.warp) {
+      const flagWarp = this._ensureFlagWarp(node);
+      flagWarp.group.visible = warp > 0;
+      flagWarp.group.position.set(x, y, z);
+    }
     if (warp > 0) {
       node.warp.rings.forEach((ring, index2) => {
         const size = warp - (BZFLAG_FLAG_WARP_STEP * index2);
@@ -4724,7 +4736,7 @@ class RenderManager {
     const node = this.flagNodes?.get(index);
     if (!node) return;
     node.group.visible = false;
-    node.warp.group.visible = false;
+    if (node.warp) node.warp.group.visible = false;
     if (node.label) node.label.visible = false;
   }
 
@@ -4734,7 +4746,7 @@ class RenderManager {
       // The cloth geometry is shared by every flag, so only the per-flag
       // geometry and materials are disposed here.
       node.group.parent?.remove(node.group);
-      node.warp.group.parent?.remove(node.warp.group);
+      node.warp?.group.parent?.remove(node.warp.group);
       if (node.label) {
         node.label.parent?.remove(node.label);
         node.label.material.map?.dispose();
@@ -4743,8 +4755,8 @@ class RenderManager {
       node.clothMaterial.dispose();
       node.poleMaterial.dispose();
       node.pole.geometry.dispose();
-      node.warp.geometry.dispose();
-      node.warp.rings.forEach((ring) => ring.material.dispose());
+      node.warp?.geometry.dispose();
+      node.warp?.rings.forEach((ring) => ring.material.dispose());
     });
     this.flagNodes.clear();
   }
@@ -4761,7 +4773,7 @@ class RenderManager {
     const cameraQuaternion = this.camera.quaternion;
     this.flagNodes.forEach((node) => {
       if (node.group.visible) node.group.quaternion.copy(cameraQuaternion);
-      if (node.warp.group.visible) this._perturbFlagWarp(node.warp);
+      if (node.warp?.group.visible) this._perturbFlagWarp(node.warp);
     });
   }
 
