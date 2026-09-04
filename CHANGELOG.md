@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.56] - 2026-09-04
+
 Getting rid of a bad flag, and No Jumping, are part of #6.
 
 ### Added
