@@ -6,6 +6,13 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.58] - 2026-09-04
+
+### Changed
+- A box is two draw calls rather than six, and a teleporter four rather than fourteen. `BoxGeometry` gives every face its own material slot, and the tiling rode on each face's own texture, so one box asked for six draws and six copies of the same two images. The tiling is baked into the geometry's UVs instead, which leaves nothing size-dependent in the material and lets every box in the world share one wall material and one cap material; a teleporter's fourteen quads accumulate per material and become one mesh each. On `hix.bzw` that takes the boxes, boundary walls and teleporters from 484 draw calls to 156, which is the cost that matters on a client that runs out of one core long before it runs out of GPU.
+- The help panel scrolls on the arrow keys rather than moving focus between its links. Cycling a document's handful of links left most of the text unreachable, and in XR there is no Page Up or Page Down to reach the rest with instead. Arrows step a line, the Page keys a screen, Home and End the ends. Left and right still move focus, which is how a controller reaches the close button without a Tab key.
+- Scrollbars follow the theme rather than the platform's grey, in the debug HUD, the help and every other panel that scrolls.
+
 ## [1.0.57] - 2026-09-04
 
 ### Added
