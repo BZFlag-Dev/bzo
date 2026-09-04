@@ -760,6 +760,13 @@ body {
   gap: 6px;
 }
 
+.operatorToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
 #operatorOverlay input[type="number"] {
   width: 100%;
   padding: 10px;

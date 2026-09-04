@@ -5,9 +5,9 @@ as **GitHub issue #6**; reference it from every flag commit and changelog entry.
 Upstream references are paths under `$HOME/bzflag/`.
 
 Phases 1 (the Useless superflag, animation, and the drop key), 2 (team flags and
-capture) and 3 (Identify) are **implemented**, as are the jumping switch and the
-two flags that turn on it, `JP` and `WG` -- see "Jumping, and the flags that
-carry it". Phase 4 and later are not.
+capture), 3 (Identify) and 9 (Ricochet) are **implemented**, as are the jumping
+switch and the two flags that turn on it, `JP` and `WG` -- see "Jumping, and the
+flags that carry it". Phases 4 to 8 and 10 onwards are not.
 
 The flag table in `public/flags.mjs` carries only the flags bzo implements, so
 **this document is the list of what is missing** -- see "What is left to add".
@@ -178,8 +178,8 @@ worse than trusting a modified client about a base it still had to drive to.
 ## What is left to add
 
 Upstream carries 47 flag types: a Null type, four team flags, and 42
-superflags. bzo has the four team flags, Useless, Identify, Jumping and Wings,
-so **38 superflags remain** -- 24 good and 14 bad. The table below is the whole list,
+superflags. bzo has the four team flags, Useless, Identify, Jumping, Wings and
+Ricochet, so **37 superflags remain** -- 23 good and 14 bad. The table below is the whole list,
 grouped by the machinery each group needs rather than by name, because the
 machinery is what decides the order. `src/common/Flag.cxx` is the authority for
 every name, abbreviation, endurance, quality and help string;
@@ -192,7 +192,6 @@ every name, abbreviation, endurance, quality and help string;
 | 6 | `SR` `SH` `G` | damage rules, and a shot that remembers its flag |
 | 7 | `T` `N` `O` | per-player tank dimensions |
 | 8 | `F` `MG` `L` `IB` `SB` | per-shot rate, life, velocity and obstacle rules |
-| 9 | `R` | shot reflection off obstacle normals |
 | 10 | `SW` | a shot with no path -- an expanding sphere |
 | 11 | `TH` | flag stealing |
 | 12 | `GM` | a steerable shot, and a lock-on target |
@@ -200,8 +199,9 @@ every name, abbreviation, endurance, quality and help string;
 | 14 | `OO` `BU` `PZ` | movement through and under geometry |
 
 Phases 4 to 8 are each a small hook on machinery the phase before it built.
-Phases 9 to 14 are each their own feature and can be taken in any order once 8
-is done.
+Phases 10 to 14 are each their own feature and can be taken in any order once 8
+is done. Phase 9 was taken out of order for the same reason `JP` and `WG` were:
+it hangs off a world switch rather than off the phases before it.
 
 ## Phase 3 -- Identify (implemented)
 
@@ -573,18 +573,78 @@ and obstacle behaviour come from the firing flag instead of from
 `L` is the one with real client work in it: an instant beam has no travel to
 interpolate, so it wants its own draw path.
 
-## Phase 9 -- Ricochet
+## Phase 9 -- Ricochet (implemented)
 
-`R`, one flag, and bzo has nothing to build on -- a shot that hits an obstacle
-ends. Upstream reflects the velocity about the surface normal and keeps going
-until the lifetime runs out. The normal is the piece bzo already has:
-`motion.mjs` takes a `getNormal` callback for exactly this, and
-`findProjectileImpactPoint` already finds the impact point. Reflect there, both
-on the server and in the client's own drawing of the shot, and keep the
-lifetime running.
+The first shot that does not travel in a straight line, and like `JP` it hangs
+off a world switch rather than off the phases before it, which is why it came
+out of order.
 
-Worth its own phase because it is the first shot that does not travel in a
-straight line, and because `SB` and `L` both interact with it.
+**The switch.** `RicochetGameStyle`, upstream's `+r`, reaches bzo as a
+`ricochet` key in `server.json`, as `+r` in a map's `options` block, and as a
+checkbox on the Operator panel. Off by default, as upstream has it, and a map
+may turn it on where nothing turns it back off -- the rule every bzfs switch
+follows. It goes to the client as `ALL_SHOTS_RICOCHET` in the `init` config, and
+again in `serverConfigUpdate` when an operator flips it. Upstream settles the
+game style at startup and never revisits it; bzo lets an operator change it, so
+the superflag pool is filtered per draw rather than at startup and an `R` flag
+standing in a world that has just forbidden it is zapped.
+
+**`R` Ricochet.** Unstable, good, and forbidden outright while the switch is on
+(`CmdLineOptions.cxx:1957`), exactly as `JP` is under `-j`: a flag that grants
+what every shot already does looks like it does something and does not. The help
+panel says which of the two rules the world is playing by, because on such a
+server the flag list would otherwise promise a flag nobody can find.
+
+**The bounce.** `SegmentedShotStrategy::makeSegments(Reflect)` builds the whole
+bounce path once, at the moment of firing, because each upstream client owns the
+shots it fires. bzo integrates a shot a fixed step at a time on both sides, so
+the reflection happens inside a step: `traceShotStep` in the `collision` pair
+finds where the step meets solid geometry, takes the surface normal there, and
+reflects with `reflectShotDirection`, which is `ShotStrategy::reflect` including
+its refraction branch for a normal that faces the wrong way. The shot keeps its
+lifetime, so a bounce costs range and nothing else.
+
+Both sides run that same function. The server is authoritative as ever and the
+client draws its own copy, because a bounce that waited for the server would
+arrive a round trip after the shot had already gone through the wall. Nothing
+new goes over the wire for it: `shotBegin` gained `flag` and `ricochet`, which
+is what FiringInfo carries upstream, and the client predicts both for its own
+shot so the first bounce is not late on the one screen it has to look right on.
+
+The surfaces it bounces off:
+
+- **Buildings**, by `Obstacle::get3DNormal`. Upstream reads the face off the
+  exact ray/surface intersection; bzo stops the shot at the last point that was
+  still outside, so the flat top and bottom of a box are named by the same
+  vertical tests that let that point stay outside, and everything else falls
+  through to the cross-section's horizontal normal.
+- **Pyramids**, whose sloped faces are what put a vertical component into a shot
+  that was fired flat -- which is what makes the ground and the tops of boxes
+  reachable at all.
+- **The world border**, which bzo models as four boxes, so it needs nothing of
+  its own. The obstacle test now runs before the out-of-bounds test for that
+  reason.
+- **The ground**, which upstream treats as a surface of its own
+  (`ShotStrategy::getGround`) rather than as an obstacle, and so does
+  `traceShotStep`.
+
+**Teleporter frames still stop a bouncing shot**, and are the one surface that
+does not reflect. Frames are decided by the teleporter trace, which the client
+does not run for shots at all -- it has no frame hit to bounce off -- so
+bouncing them on the server alone would put the two copies of the shot on
+different paths. Doing it properly means the frame test joining the shared pair.
+
+**A ricocheted shot can kill the tank that fired it**, which is the flag's own
+help text. `LocalPlayer::checkHit` tests a player's own shots like anyone
+else's; before it bounces a shot cannot reach its shooter, because it leaves the
+muzzle further out than the hit radius and outruns the tank, but bzo samples a
+shot once a step rather than testing the whole segment, so it says that outright
+rather than trusting the sampling to agree. Killing yourself is a loss and
+nothing else, as self-destruct is.
+
+`SB` and `L` both interact with this when they land: a super bullet ignores
+buildings and so never reflects off one, and Laser and Ricochet together halve
+the reload rate (`_lRAdRate`).
 
 ## Phase 10 -- Shock Wave
 

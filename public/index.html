@@ -32,6 +32,12 @@
           <button id="setShotMaxActiveBtn" class="btn">Update Shot Limit</button>
         </div>
         <div class="operatorRow">
+          <label class="operatorToggle" for="ricochetInput">
+            <input type="checkbox" id="ricochetInput">
+            All shots ricochet
+          </label>
+        </div>
+        <div class="operatorRow">
           <label for="mapList">Map:</label>
           <select id="mapList"></select>
           <button id="restartBtn" class="btn">Restart with Map</button>
@@ -266,6 +272,7 @@
         A superflag on the ground is white and tells you nothing about itself
         until somebody picks it up.</p>
       <div id="helpFlags"></div>
+      <p id="helpRicochet"></p>
 
       <h2>Mobile On-Screen Controls</h2>
       <ul>

@@ -178,6 +178,7 @@ import {
   hasAirControl,
   isTeamFlag,
   rememberFlagIdentity,
+  shotRicochets,
 } from './flags.mjs';
 import { normalizeShotSlotCount } from './shots.mjs';
 import { CLIENT_VERSION } from './version.mjs';
@@ -193,6 +194,7 @@ import {
 } from './volume.mjs';
 import { setupInstallPrompt } from './install.js';
 import {
+  SHOT_COLLISION_RADIUS,
   getBaseTeamAtPoint,
   getColliderLocalPoint,
   getOrigRectNormal,
@@ -204,6 +206,7 @@ import {
   isWithinPyramidFootprint,
   pyramidIntersectsTank,
   testOrigRectTank,
+  traceShotStep,
 } from './collision.mjs';
 import { resolveTankMotion } from './motion.mjs';
 
@@ -345,6 +348,24 @@ let renderReadyForJoin = false;
 let gameplayJoinConfirmed = false;
 let initSequence = 0;
 let activeInitSequence = 0;
+// The roster in `init` is a snapshot, and it is applied only once the models,
+// textures and audio it names have loaded -- a window seconds wide on a cold
+// start. When several clients reconnect together, the others are still joining
+// through that window, and their real names arrive in it. Applying the snapshot
+// afterwards would put back the `Player n` each of them was called at the
+// moment it was taken, and nothing later would correct it: movement packets
+// carry no name. So the messages that arrive in the window are held and
+// replayed over the snapshot in the order they came.
+let rosterSnapshotPending = false;
+let queuedRosterMessages = [];
+// Everything that carries a player's identity or their place in the world.
+const ROSTER_MESSAGE_TYPES = new Set([
+  'playerJoined',
+  'playerUpdated',
+  'playerLeft',
+  'playerRespawned',
+  'playerList',
+]);
 let xrSettingsShortcutLatched = false;
 let xrSettingsShortcutInFlight = false;
 let xrSettingsMenuOpen = false;
@@ -1049,9 +1070,7 @@ async function prepareInitialRender(message, sequenceId) {
     detail: 'Creating player vehicles',
   });
 
-  message.players.forEach((player) => {
-    addPlayer(player);
-  });
+  applyRosterSnapshot(message.players);
   myTank = tanks.get(myPlayerId);
   callUpdateScoreboard();
   await waitForAnimationFrame();
@@ -1065,6 +1084,11 @@ async function prepareInitialRender(message, sequenceId) {
     detail: pendingJoinRequest ? 'Joining game' : 'Waiting for player name',
   });
   maybeSendPendingJoinRequest();
+  // Ready to draw everyone, so ask who everyone is. Anything the snapshot and
+  // its replay missed -- a message that raced the socket, a join that landed in
+  // a gap -- is settled here, and it costs one round trip per map entry. It
+  // goes after the join request so the answer already counts this player in.
+  sendToServer({ type: 'queryPlayers' });
   window.setTimeout(() => {
     if (sequenceId === activeInitSequence && renderReadyForJoin) {
       hideLoadingOverlay();
@@ -1076,6 +1100,35 @@ async function prepareInitialRender(message, sequenceId) {
     if (sequenceId === activeInitSequence) logRenderStats('mapEntry');
   }, RENDER_STATS_SAMPLE_DELAY_MS);
   return true;
+}
+
+// The snapshot goes down first, then everything that happened while it was
+// waiting for its models, in order -- so the last word about any player is
+// whichever message actually came last, which is what a stale snapshot applied
+// on top of live updates was getting wrong.
+function applyRosterSnapshot(players) {
+  players.forEach((player) => addPlayer(player));
+  const queued = queuedRosterMessages;
+  rosterSnapshotPending = false;
+  queuedRosterMessages = [];
+  queued.forEach((message) => handleServerMessage(message));
+}
+
+// The roster this client should be showing, asked for rather than assumed.
+// bzfs answers MsgQueryPlayers with the whole list; anyone the answer does not
+// name is gone, so this reconciles in both directions.
+function applyPlayerList(players) {
+  const known = new Set();
+  players.forEach((player) => {
+    known.add(player.id);
+    addPlayer(player);
+  });
+  Array.from(tanks.keys()).forEach((id) => {
+    if (id === myPlayerId || known.has(id)) return;
+    removePlayer(id);
+  });
+  myTank = tanks.get(myPlayerId);
+  callUpdateScoreboard();
 }
 
 function isDebugHudVisible() {
@@ -2772,6 +2825,19 @@ window.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+
+  // A checkbox says what it did the moment it is ticked, so it applies itself
+  // rather than waiting for an Update button the way the typed rows do.
+  const ricochetInput = document.getElementById('ricochetInput');
+  if (ricochetInput) {
+    ricochetInput.addEventListener('change', () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      sendToServer({
+        type: 'setOperatorConfig',
+        ricochet: ricochetInput.checked,
+      });
+    });
+  }
   const btn = document.getElementById('debugLabelsBtn');
   if (btn) {
     btn.addEventListener('click', () => {
@@ -3347,10 +3413,19 @@ function handleServerMessage(message) {
     return;
   }
 
+  if (rosterSnapshotPending && ROSTER_MESSAGE_TYPES.has(message.type)) {
+    queuedRosterMessages.push(message);
+    return;
+  }
+
   switch (message.type) {
     case 'init': {
       const sequenceId = ++initSequence;
       activeInitSequence = sequenceId;
+      // A fresh world clears every tank, so anything queued against the old one
+      // is about players who no longer exist here.
+      rosterSnapshotPending = true;
+      queuedRosterMessages = [];
       renderReadyForJoin = false;
       gameplayJoinConfirmed = false;
       updatePlayerTeamSelectorAvailability();
@@ -3409,6 +3484,7 @@ function handleServerMessage(message) {
       // The initial handshake describes the temporary connection player.
       updateVoiceIdentity();
       renderManager._applyFogConfig(gameConfig);
+      applyRicochetSetting(gameConfig.ALL_SHOTS_RICOCHET === true);
       refreshCollisionColliders();
       playerX = message.player.x;
       playerZ = message.player.z;
@@ -3759,6 +3835,10 @@ function handleServerMessage(message) {
       handlePlayerRespawn(message);
       break;
 
+    case 'playerList':
+      applyPlayerList(message.players || []);
+      break;
+
     case 'pauseCountdown':
       if (message.playerId === myPlayerId) {
         pauseCountdownStart = Date.now();
@@ -3967,6 +4047,8 @@ function createProjectile(data) {
       localProjectile.userData.createdAt = data.createdAt;
       localProjectile.userData.shotSlot = Number.isInteger(data.shotSlot) ? data.shotSlot : 0;
       localProjectile.userData.pendingServerAck = false;
+      localProjectile.userData.flag = data.flag ?? null;
+      localProjectile.userData.ricochet = data.ricochet === true;
       localProjectile.userData.teleportReentryBlockTeleporterIndex = null;
       localProjectile.userData.teleportReentryBlockDistance = 0;
       projectiles.set(data.id, localProjectile);
@@ -3989,6 +4071,10 @@ function createProjectile(data) {
   projectile.userData.dirY = Number.isFinite(data.dirY) ? data.dirY : 0;
   projectile.userData.shotSlot = Number.isInteger(data.shotSlot) ? data.shotSlot : 0;
   projectile.userData.radarColor = `#${shotColor.getHexString()}`;
+  // The flag a shot was fired with, as upstream's FiringInfo carries it, and the
+  // one thing bzo reads off it so far: whether the shot bounces.
+  projectile.userData.flag = data.flag ?? null;
+  projectile.userData.ricochet = data.ricochet === true;
   projectile.userData.teleportReentryBlockTeleporterIndex = null;
   projectile.userData.teleportReentryBlockDistance = 0;
   projectiles.set(data.id, projectile);
@@ -4018,6 +4104,13 @@ function createLocalProjectile({ x, y, z, dirX, dirZ, dirY = 0 }) {
   projectile.userData.shotSlot = null;
   projectile.userData.radarColor = `#${shotColor.getHexString()}`;
   projectile.userData.pendingServerAck = true;
+  // The server decides this too, and says so in shotBegin; predicting it here is
+  // what keeps a bounce from arriving a round trip late on the shooter's own
+  // screen, which is the one screen it has to look right on.
+  projectile.userData.flag = getMyFlag()?.type ?? null;
+  projectile.userData.ricochet = shotRicochets(
+    projectile.userData.flag, gameConfig?.ALL_SHOTS_RICOCHET
+  );
   projectile.userData.teleportReentryBlockTeleporterIndex = null;
   projectile.userData.teleportReentryBlockDistance = 0;
   projectiles.set(localId, projectile);
@@ -4253,6 +4346,10 @@ function handleMapsList(message) {
       shotMaxActiveInput.value = String(message.shotMaxActive);
     }
   }
+
+  if (typeof message.ricochet === 'boolean') {
+    applyRicochetSetting(message.ricochet);
+  }
 }
 
 function handleServerConfigUpdate(message) {
@@ -4283,6 +4380,21 @@ function handleServerConfigUpdate(message) {
       shotMaxActiveInput.value = String(message.shotMaxActive);
     }
   }
+
+  if (typeof message.ricochet === 'boolean') {
+    applyRicochetSetting(message.ricochet);
+  }
+}
+
+// The ricochet game style reaches the client twice over: in the `init` config
+// with the rest of the world's rules, and again whenever an operator changes it.
+// Both land here, because the help panel and the shots the client predicts have
+// to move with it.
+function applyRicochetSetting(allShotsRicochet) {
+  if (gameConfig) gameConfig.ALL_SHOTS_RICOCHET = allShotsRicochet;
+  const ricochetInput = document.getElementById('ricochetInput');
+  if (ricochetInput) ricochetInput.checked = allShotsRicochet;
+  updateRicochetHelp();
 }
 
 function showMessage(text) {
@@ -6816,6 +6928,19 @@ function buildFlagHelp() {
 
   addSection('Team Flags', teamAbbreviations, FLAG_TYPES[teamAbbreviations[0]]?.help);
   addSection('Superflags', superAbbreviations, null);
+  updateRicochetHelp();
+}
+
+// What the world's own ricochet rule is, said where the flag that grants it is
+// documented. bzfs forbids `R` outright once every shot already bounces, so on
+// such a server the help would otherwise still promise a flag nobody can find.
+function updateRicochetHelp() {
+  const note = document.getElementById('helpRicochet');
+  if (!note) return;
+  note.textContent = gameConfig?.ALL_SHOTS_RICOCHET
+    ? 'This server bounces every shot off walls, whatever flag fired it,'
+      + ' so the Ricochet flag is not in play here.'
+    : 'On this server only the Ricochet flag bounces shots off walls.';
 }
 
 // FlagType::getColor. Team flags take their team's colour and every superflag is
@@ -7125,6 +7250,45 @@ function updateProjectiles(deltaTime) {
           type: 'debug',
           message: `[SHOT_TP_CLIENT] id=${String(projectile?.userData?.pendingServerAck ? 'pending' : 'ack')} teleports=${traced.teleports} pos=(${projectile.position.x.toFixed(2)},${projectile.position.y.toFixed(2)},${projectile.position.z.toFixed(2)})`,
         });
+      }
+
+      // Only a bouncing shot is traced against solid geometry here. An ordinary
+      // one flies straight until the server says where it ended, and asking the
+      // question locally would only give it a second answer to disagree with.
+      if (!projectile.userData.ricochet) return;
+
+      // The segment to trace ends where the teleporter trace put the shot, so a
+      // step that crossed a portal is measured back from the far side of it.
+      const stepDistance = projectileSpeed * SHOT_SIM_STEP_SECONDS;
+      const startX = traced.point.x - (traced.direction.x * stepDistance);
+      const startY = traced.point.y - (traced.direction.y * stepDistance);
+      const startZ = traced.point.z - (traced.direction.z * stepDistance);
+      const step = traceShotStep({
+        obstacles: getCollisionColliders(),
+        x: startX,
+        y: startY,
+        z: startZ,
+        dirX: traced.direction.x,
+        dirY: traced.direction.y,
+        dirZ: traced.direction.z,
+        distance: stepDistance,
+        radius: SHOT_COLLISION_RADIUS,
+        ricochet: true,
+      });
+      projectile.position.x = step.x;
+      projectile.position.y = step.y;
+      projectile.position.z = step.z;
+      projectile.userData.dirX = step.dirX;
+      projectile.userData.dirY = step.dirY;
+      projectile.userData.dirZ = step.dirZ;
+      if (step.bounces > 0) {
+        // SegmentedShotStrategy plays SFX_RICOCHET at the start of the new
+        // segment and throws the effect along the change in direction.
+        renderManager.playSound('ricochet', projectile.position);
+        renderManager.createRicochetEffect(
+          projectile.position,
+          { x: step.dirX - traced.direction.x, y: step.dirY - traced.direction.y, z: step.dirZ - traced.direction.z }
+        );
       }
     });
     projectileSimAccumulator -= SHOT_SIM_STEP_SECONDS;
@@ -8256,6 +8420,7 @@ function getXROperatorMenuItems() {
     { id: 'operatorRestartXR', label: 'Restart with Map', value: '', disabled: !mapList?.value },
     { id: 'operatorShotsXR', label: 'Shot Limit', value: shotInput?.value || String(gameConfig?.SHOT_MAX_ACTIVE || 5), adjustable: true },
     { id: 'operatorApplyShotsXR', label: 'Apply Shot Limit', value: '' },
+    { id: 'operatorRicochetXR', label: 'All Shots Ricochet', value: gameConfig?.ALL_SHOTS_RICOCHET ? 'On' : 'Off' },
     { id: 'operatorRefreshXR', label: 'Refresh Server Data', value: '' },
     { id: 'operatorDesktopXR', label: 'Upload Map', value: 'Desktop only', disabled: true },
     { id: 'backXR', label: 'Back', value: '' },
@@ -8376,6 +8541,7 @@ function activateXRSettingsMenuSelection(item) {
   }
   else if (item.id === 'operatorRestartXR') document.getElementById('restartBtn')?.click();
   else if (item.id === 'operatorApplyShotsXR') document.getElementById('setShotMaxActiveBtn')?.click();
+  else if (item.id === 'operatorRicochetXR') document.getElementById('ricochetInput')?.click();
   else if (item.id === 'operatorRefreshXR') setXRSettingsMenuScreen('operator');
   else activateXRSettingsMenuItem(item.id);
 }
@@ -8739,6 +8905,7 @@ function animate(frameTime) {
   updateShields();
   renderManager.updateTreads(tanks, deltaTime, gameConfig);
   renderManager.updateMuzzleFlashes(deltaTime);
+  renderManager.updateRicochetEffects(deltaTime);
   renderManager.updateShotTeleportEffects(deltaTime);
   renderManager.updateJumpJets(tanks, deltaTime, gameConfig);
   if (gameConfig) {

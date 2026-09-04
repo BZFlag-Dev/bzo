@@ -104,6 +104,17 @@ const BZFLAG_SHOT_FLASH_FLARE_GROWTH = 5.0;     // draw(): topsideOffset age ter
 const BZFLAG_SHOT_FLASH_START_ALPHA = 0.5;      // draw(): alpha = 0.5 - age/lifetime
 const BZFLAG_SHOT_FLASH_SEGMENTS = 32;          // drawRingYZ default
 const BZFLAG_SHOT_FLASH_UV_BOTTOM = 0.65;       // draw(): bottomUV
+// Ricochet, mirroring StdRicoEffect (effectsRenderer.cxx:1594). The same flared
+// cone the muzzle flash is, thrown at the point a shot bounced and aimed along
+// the change in its direction -- which is to say out of the surface it hit.
+const BZFLAG_RICO_LIFETIME = 0.5;               // ctor
+const BZFLAG_RICO_START_RADIUS = 0.25;          // ctor
+const BZFLAG_RICO_GROWTH = 6.5;                 // update(): radius += dt * 6.5
+const BZFLAG_RICO_LENGTH = 0.5;                 // draw(): drawRingYZ z argument
+const BZFLAG_RICO_FLARE = 0.5;                  // draw(): topsideOffset
+const BZFLAG_RICO_START_ALPHA = 0.5;            // draw(): alpha = 0.5 - age/lifetime
+const BZFLAG_RICO_SEGMENTS = 32;                // drawRingYZ default
+const BZFLAG_RICO_UV_BOTTOM = 0.5;              // draw(): bottomUV
 // Jump jets, mirroring TankSceneNode. Four downward flames under the tank fire
 // on a jump and fade as the tank rises.
 //   TankSceneNode.cxx:1430  jumpJetsModel[4][3], the jet offsets
@@ -4092,6 +4103,79 @@ class RenderManager {
       flash.mesh.geometry.dispose();
       flash.mesh.geometry = this._buildMuzzleFlashGeometry(flash.age);
       flash.material.opacity = alpha;
+    }
+  }
+
+  // StdRicoEffect::draw. drawRingYZ sweeps the same frustum the muzzle flash
+  // does, so only the figures differ: the ring grows and the cone keeps a fixed
+  // length rather than the flare growing with it.
+  _buildRicochetGeometry(age) {
+    const innerRadius = BZFLAG_RICO_START_RADIUS + (age * BZFLAG_RICO_GROWTH);
+    const geometry = new THREE.CylinderGeometry(
+      innerRadius + BZFLAG_RICO_FLARE,
+      innerRadius,
+      BZFLAG_RICO_LENGTH,
+      BZFLAG_RICO_SEGMENTS,
+      1,
+      true
+    );
+    geometry.rotateX(Math.PI / 2);
+    geometry.translate(0, 0, BZFLAG_RICO_LENGTH / 2);
+    const uv = geometry.attributes.uv;
+    for (let i = 0; i < uv.count; i += 1) {
+      const v = uv.getY(i);
+      uv.setY(i, BZFLAG_RICO_UV_BOTTOM + v * (1 - BZFLAG_RICO_UV_BOTTOM));
+    }
+    uv.needsUpdate = true;
+    return geometry;
+  }
+
+  // EffectsRenderer::addRicoEffect. `direction` is upstream's own aim for it:
+  // the new shot direction minus the old one, which points out of the surface.
+  createRicochetEffect(position, direction) {
+    if (!this.scene || !position || !direction) return;
+    const length = Math.hypot(direction.x, direction.y, direction.z);
+    if (length <= 0) return;
+
+    const material = new THREE.MeshBasicMaterial({
+      map: this._getFlashTexture(),
+      color: 0xffffff,
+      transparent: true,
+      opacity: BZFLAG_RICO_START_ALPHA,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(this._buildRicochetGeometry(0), material);
+    mesh.position.copy(position);
+    mesh.lookAt(
+      position.x + (direction.x / length),
+      position.y + (direction.y / length),
+      position.z + (direction.z / length)
+    );
+    this.worldGroup.add(mesh);
+
+    if (!this.ricochetEffects) this.ricochetEffects = [];
+    this.ricochetEffects.push({ mesh, material, age: 0 });
+  }
+
+  updateRicochetEffects(deltaTime) {
+    if (!this.ricochetEffects?.length || deltaTime <= 0) return;
+    for (let i = this.ricochetEffects.length - 1; i >= 0; i -= 1) {
+      const effect = this.ricochetEffects[i];
+      effect.age += deltaTime;
+
+      const alpha = BZFLAG_RICO_START_ALPHA - (effect.age / BZFLAG_RICO_LIFETIME);
+      if (alpha <= 0.001) {
+        this.worldGroup.remove(effect.mesh);
+        effect.mesh.geometry.dispose();
+        effect.material.dispose();
+        this.ricochetEffects.splice(i, 1);
+        continue;
+      }
+
+      effect.mesh.geometry.dispose();
+      effect.mesh.geometry = this._buildRicochetGeometry(effect.age);
+      effect.material.opacity = alpha;
     }
   }
 

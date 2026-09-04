@@ -50,6 +50,7 @@ import {
   getWingsJumpVelocity,
   getWingsSlideVelocity,
   hasAirControl,
+  shotRicochets,
   isTeamFlag,
   rememberFlagIdentity,
 } from '../public/flags.mjs';
@@ -135,6 +136,19 @@ assert.equal(DEFAULT_WINGS_SLIDE_TIME, 0, '_wingsSlideTime');
 assert.equal(hasAirControl('WG'), true);
 for (const abbreviation of ['JP', 'US', 'ID', 'B*', null]) {
   assert.equal(hasAirControl(abbreviation), false, `${abbreviation} coasts`);
+}
+
+// SegmentedShotStrategy::makeSegments. Ricochet is either the flag or the world.
+{
+  const ricochet = getFlagType('R');
+  assert.equal(ricochet.name, 'Ricochet');
+  assert.equal(ricochet.team, null);
+  assert.equal(shotRicochets('R', false), true, 'the flag bounces shots on its own');
+  assert.equal(shotRicochets(null, true), true, 'the world bounces every shot');
+  assert.equal(shotRicochets('US', true), true, 'including one fired with another flag');
+  assert.equal(shotRicochets(null, false), false, 'and otherwise nothing bounces');
+  assert.equal(shotRicochets('US', false), false);
+  assert.equal(shotRicochets('R', true), true, 'the flag adds nothing to a world that already does');
 }
 
 // A flap on the way up is worth taking only while you are climbing slower than

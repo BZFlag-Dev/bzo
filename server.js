@@ -30,6 +30,7 @@ const {
   canJump,
   computeFlagFlight,
   hasAirControl,
+  shotRicochets,
   getFlagType,
   getTeamFlagAbbreviation,
   isTeamFlag,
@@ -41,6 +42,7 @@ const {
   shortHostName,
 } = require('./server/server-name.cjs');
 const {
+  SHOT_COLLISION_RADIUS,
   getBaseTeamAtPoint,
   getBaseTopY,
   getColliderLocalPoint,
@@ -49,6 +51,7 @@ const {
   pyramidIntersectsCylinder,
   pyramidIntersectsTank,
   testOrigRectTank,
+  traceShotStep,
 } = require('./server/collision.cjs');
 const {
   normalizePlayerTeamSelection,
@@ -776,6 +779,8 @@ function parseBZWServerOptions(lines) {
     // -j: tanks may jump. bzo already defaults this on, so the switch only
     // matters on a server whose config has turned jumping off.
     if (option === '-j') options.jumping = true;
+    // +r: every shot ricochets, whatever flag fired it.
+    if (option === '+r') options.ricochet = true;
   }
 
   return options;
@@ -1665,10 +1670,15 @@ class Player {
 
 // Projectile class
 class Projectile {
-  constructor(id, playerId, shotSlot, x, y, z, dirX, dirZ, dirY = 0) {
+  constructor(id, playerId, shotSlot, x, y, z, dirX, dirZ, dirY = 0, flag = null) {
     this.id = id;
     this.playerId = playerId;
     this.shotSlot = shotSlot;
+    // FiringInfo carries the firing flag upstream, and every shot variant reads
+    // its behaviour off it. Ricochet is the first one bzo uses it for.
+    this.flag = flag;
+    this.ricochet = shotRicochets(flag, GAME_CONFIG.ALL_SHOTS_RICOCHET);
+    this.bounces = 0;
     this.x = x;
     this.y = y || 2.2; // Default height if not specified (tank height + barrel height)
     this.z = z;
@@ -1839,44 +1849,6 @@ function checkCollision(x, y, z, tankRadius = 2, options = {}) {
     }
   }
   return false;
-}
-
-function findProjectileImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, projectileRadius = 0.1, options = {}) {
-  const queryOptions = { ...options, suppressLog: true };
-  const prevHit = !!checkCollision(prevX, prevY, prevZ, projectileRadius, queryOptions);
-  const nextHit = !!checkCollision(nextX, nextY, nextZ, projectileRadius, queryOptions);
-
-  // Expected case: clear -> colliding. If not, fall back to the reported position.
-  if (prevHit || !nextHit) {
-    return { x: nextX, y: nextY, z: nextZ };
-  }
-
-  let lo = 0;
-  let hi = 1;
-
-  // Binary search first-contact on the segment. A tiny fixed iteration count
-  // keeps this inexpensive while producing stable impact points.
-  for (let i = 0; i < 8; i++) {
-    const mid = (lo + hi) * 0.5;
-    const mx = prevX + (nextX - prevX) * mid;
-    const my = prevY + (nextY - prevY) * mid;
-    const mz = prevZ + (nextZ - prevZ) * mid;
-    const midHit = !!checkCollision(mx, my, mz, projectileRadius, queryOptions);
-    if (midHit) {
-      hi = mid;
-    } else {
-      lo = mid;
-    }
-  }
-
-  // Return the last non-colliding point so the visual impact renders just
-  // outside obstacle geometry.
-  const t = lo;
-  return {
-    x: prevX + (nextX - prevX) * t,
-    y: prevY + (nextY - prevY) * t,
-    z: prevZ + (nextZ - prevZ) * t,
-  };
 }
 
 function findMapEdgeImpactPoint(prevX, prevY, prevZ, nextX, nextY, nextZ, halfMap) {
@@ -2243,10 +2215,23 @@ const CTF_ENABLED = TEAM_MODE.enabled && BASES_BY_TEAM.size > 0;
 // which never asks.
 const ALLOW_JUMPING = serverConfig.jumping !== false || mapServerOptions.jumping === true;
 GAME_CONFIG.ALLOW_JUMPING = ALLOW_JUMPING;
+// RicochetGameStyle upstream, `+r`. Every shot bounces off walls whatever flag
+// fired it. `ricochet` in `server.json` and `+r` in a map's `options` block both
+// reach it, and as with every bzfs switch a map may turn it on and nothing turns
+// it back off. Unlike upstream an operator may also flip it while the server
+// runs, which is why the flag pool is filtered per draw rather than at startup.
+GAME_CONFIG.ALL_SHOTS_RICOCHET = serverConfig.ricochet === true
+  || mapServerOptions.ricochet === true;
 // CmdLineOptions.cxx:1705. Upstream drops a flag that contradicts the game style
 // from the pool outright rather than leaving it to confuse people. It forbids
-// `NJ` the other way round; bzo has no `NJ` yet.
-const FORBIDDEN_FLAGS = ALLOW_JUMPING ? ['JP'] : [];
+// `NJ` the other way round; bzo has no `NJ` yet. `R` goes the same way as `JP`:
+// on a world where every shot already ricochets it grants nothing.
+function getForbiddenFlags() {
+  const forbidden = [];
+  if (ALLOW_JUMPING) forbidden.push('JP');
+  if (GAME_CONFIG.ALL_SHOTS_RICOCHET) forbidden.push('R');
+  return forbidden;
+}
 // -fb upstream. Whether a superflag may spawn on, and come to rest on, a
 // building. A map's `options` block may turn it on; nothing turns it back off,
 // which is how a bzfs switch behaves.
@@ -2283,15 +2268,22 @@ function normalizeSuperFlagConfig(value) {
   const requestedTypes = Array.isArray(value?.allowed) ? value.allowed : FLAG_ABBREVIATIONS;
   const allowed = requestedTypes
     .map((abbreviation) => (typeof abbreviation === 'string' ? abbreviation.trim().toUpperCase() : ''))
-    .filter((abbreviation) => getFlagType(abbreviation) && !isTeamFlag(abbreviation))
-    .filter((abbreviation) => !FORBIDDEN_FLAGS.includes(abbreviation));
+    .filter((abbreviation) => getFlagType(abbreviation) && !isTeamFlag(abbreviation));
   return {
     count: allowed.length > 0 ? count : 0,
-    allowed: allowed.length > 0 ? allowed : [],
+    allowed,
   };
 }
 
 const SUPER_FLAGS = normalizeSuperFlagConfig(serverConfig.superFlags);
+
+// What a slot is actually drawn from: everything the config allows, less
+// whatever the game style forbids right now. The game style can change while the
+// server runs, so this is asked per draw rather than settled at startup.
+function getSuperFlagPool() {
+  const forbidden = getForbiddenFlags();
+  return SUPER_FLAGS.allowed.filter((abbreviation) => !forbidden.includes(abbreviation));
+}
 
 // DropGeometry::dropFlag tests a tank-radius cylinder _flagHeight tall, so a
 // spawning flag never appears somewhere a tank could not drive to reach it.
@@ -2364,8 +2356,10 @@ function broadcastFlagUpdate(flag) {
 // a fixed identity and simply appears at its base. The flag enters the world
 // hovering at _flagAltitude, fades in, then falls to the ground.
 function addFlag(flag) {
+  const pool = getSuperFlagPool();
+  if (pool.length === 0) return;
   const flight = computeFlagFlight(FLAG_ALTITUDE, GAME_CONFIG.GRAVITY);
-  flag.type = SUPER_FLAGS.allowed[Math.floor(Math.random() * SUPER_FLAGS.allowed.length)];
+  flag.type = pool[Math.floor(Math.random() * pool.length)];
   flag.status = FLAG_STATUS.COMING;
   flag.owner = null;
   flag.launchPosition = { ...flag.position };
@@ -2416,6 +2410,20 @@ function zapFlag(flag) {
   flag.status = FLAG_STATUS.NO_EXIST;
   flag.flightStartedAt = 0;
   resetFlag(flag);
+}
+
+// An operator switching the ricochet game style has to clear whatever the old
+// style left behind. Upstream settles the style at startup and never revisits
+// it; the one thing that cannot simply be left alone is an `R` flag in a world
+// that now forbids it, because it would sit there granting nothing. Shots
+// already in flight keep the behaviour they were fired with, which is what
+// every client was told when they began.
+function applyRicochetGameStyle() {
+  if (!getForbiddenFlags().includes('R')) return;
+  flags.forEach((flag) => {
+    if (flag.type !== 'R') return;
+    zapFlag(flag);
+  });
 }
 
 // DropGeometry::dropIt with maxZ unbounded, which is what every drop passes: a
@@ -2769,15 +2777,17 @@ function createFlags() {
   if (teamFlagTeams.length > 0) log(`Flags: team flags for ${teamFlagTeams.join(', ')}`);
   if (SUPER_FLAGS.count > 0) {
     log(
-      `Flags: ${SUPER_FLAGS.count} superflag slots (${SUPER_FLAGS.allowed.join(', ')});` +
+      `Flags: ${SUPER_FLAGS.count} superflag slots (${getSuperFlagPool().join(', ')});` +
       ` flagsOnBuildings=${FLAGS_ON_BUILDINGS}`
     );
   }
+  const forbidden = getForbiddenFlags();
   log(
-    `Jumping: ${ALLOW_JUMPING ? 'allowed' : 'flag only'}`
-    + (FORBIDDEN_FLAGS.length > 0 ? `; forbidden flags ${FORBIDDEN_FLAGS.join(', ')}` : '')
+    `Jumping: ${ALLOW_JUMPING ? 'allowed' : 'flag only'};`
+    + ` ricochet: ${GAME_CONFIG.ALL_SHOTS_RICOCHET ? 'all shots' : 'flag only'}`
+    + (forbidden.length > 0 ? `; forbidden flags ${forbidden.join(', ')}` : '')
   );
-  if (SUPER_FLAGS.allowed.includes('WG')) {
+  if (getSuperFlagPool().includes('WG')) {
     log(
       `Wings: jumpCount=${GAME_CONFIG.WINGS_JUMP_COUNT},`
       + ` jumpVelocity=${GAME_CONFIG.WINGS_JUMP_VELOCITY},`
@@ -3533,6 +3543,7 @@ function logShotEnd(projectile, cause, point, details = '') {
 
 function simulateProjectilesStep(stepSeconds, now) {
   const stepDistance = GAME_CONFIG.SHOT_SPEED * stepSeconds;
+  const obstacles = getCollisionColliders();
 
   projectiles.forEach((proj, id) => {
     const deltaTime = (now - proj.createdAt) / 1000;
@@ -3547,9 +3558,6 @@ function simulateProjectilesStep(stepSeconds, now) {
       proj.teleportReentryBlockTeleporterIndex,
       proj.teleportReentryBlockDistance,
     );
-    proj.x = traced.point.x;
-    proj.y = traced.point.y;
-    proj.z = traced.point.z;
     proj.dirX = traced.direction.x;
     proj.dirY = traced.direction.y;
     proj.dirZ = traced.direction.z;
@@ -3566,56 +3574,96 @@ function simulateProjectilesStep(stepSeconds, now) {
       return;
     }
 
-    // Remove if out of bounds or lifetime budget exhausted.
-    // Match BZFlag semantics: shot lifetime is time-based and does not shrink
-    // from teleports based on straight-line displacement from spawn.
-    const halfMap = GAME_CONFIG.MAP_SIZE / 2;
-    const outOfBounds = Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap;
-    const timedOut = deltaTime > proj.lifetimeSeconds;
-    if (outOfBounds || timedOut) {
-      projectiles.delete(id);
-      const reason = outOfBounds ? 0 : 1;
-      const removalPoint = outOfBounds
-        ? findMapEdgeImpactPoint(prevX, prevY, prevZ, proj.x, proj.y, proj.z, halfMap)
-        : { x: proj.x, y: proj.y, z: proj.z };
-      broadcastAll({ type: 'shotEnd', id, reason, x: removalPoint.x, y: removalPoint.y, z: removalPoint.z });
-      if (outOfBounds) {
-        logShotEnd(proj, 'out_of_bounds', removalPoint, `lifetime=${deltaTime.toFixed(3)}/${proj.lifetimeSeconds.toFixed(3)}`);
-      } else {
-        logShotEnd(proj, 'timeout', removalPoint, `lifetime=${deltaTime.toFixed(3)}/${proj.lifetimeSeconds.toFixed(3)}`);
+    // The teleporter trace says where the step ends, not what the shot met on
+    // the way, and a step that crossed a portal ends on the far side of it. The
+    // segment to test is therefore measured back from that endpoint along the
+    // direction the shot is now travelling, which for a step with no teleport in
+    // it is exactly where the shot already was.
+    const stepStart = traced.teleports > 0
+      ? {
+        x: traced.point.x - (proj.dirX * stepDistance),
+        y: traced.point.y - (proj.dirY * stepDistance),
+        z: traced.point.z - (proj.dirZ * stepDistance),
       }
-      log(`Projectile ${id} removed (${outOfBounds ? 'out of bounds' : 'expired'})`);
+      : { x: prevX, y: prevY, z: prevZ };
+
+    const step = traceShotStep({
+      obstacles,
+      x: stepStart.x,
+      y: stepStart.y,
+      z: stepStart.z,
+      dirX: proj.dirX,
+      dirY: proj.dirY,
+      dirZ: proj.dirZ,
+      distance: stepDistance,
+      radius: SHOT_COLLISION_RADIUS,
+      ricochet: proj.ricochet,
+    });
+    proj.x = step.x;
+    proj.y = step.y;
+    proj.z = step.z;
+    proj.dirX = step.dirX;
+    proj.dirY = step.dirY;
+    proj.dirZ = step.dirZ;
+    proj.bounces += step.bounces;
+
+    // Lifetime is time-based and does not shrink from teleports or bounces
+    // based on straight-line displacement from spawn, which is BZFlag's rule.
+    if (deltaTime > proj.lifetimeSeconds) {
+      projectiles.delete(id);
+      const removalPoint = { x: proj.x, y: proj.y, z: proj.z };
+      broadcastAll({ type: 'shotEnd', id, reason: 1, x: removalPoint.x, y: removalPoint.y, z: removalPoint.z });
+      logShotEnd(proj, 'timeout', removalPoint, `lifetime=${deltaTime.toFixed(3)}/${proj.lifetimeSeconds.toFixed(3)}`);
+      log(`Projectile ${id} removed (expired)`);
       return;
     }
 
-    // Check collision with obstacles using checkCollision() with small projectile radius
-    const projectileRadius = 0.1;
-    const obstacleHit = checkCollision(proj.x, proj.y, proj.z, projectileRadius, { ignoreTeleporters: true });
-    if (obstacleHit) {
-      const impact = findProjectileImpactPoint(
-        prevX,
-        prevY,
-        prevZ,
-        proj.x,
-        proj.y,
-        proj.z,
-        projectileRadius,
-        { ignoreTeleporters: true },
-      );
-      if (obstacleHit.collisionKind === 'boundary') {
+    if (step.obstacle) {
+      const impact = { x: proj.x, y: proj.y, z: proj.z };
+      if (step.obstacle.collisionKind === 'boundary') {
         log(`Projectile ${id} hit boundary at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
       } else {
-        log(`Projectile ${id} hit obstacle "${obstacleHit.name || 'unnamed'}" at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
+        log(`Projectile ${id} hit obstacle "${step.obstacle.name || 'unnamed'}" at (${impact.x.toFixed(2)}, ${impact.y.toFixed(2)}, ${impact.z.toFixed(2)})`);
       }
-      logShotEnd(proj, 'obstacle', impact, `obstacle=${obstacleHit.name || obstacleHit.collisionKind || 'unknown'}`);
+      logShotEnd(proj, 'obstacle', impact, `obstacle=${step.obstacle.name || step.obstacle.collisionKind || 'unknown'}`);
       projectiles.delete(id);
       broadcastAll({ type: 'shotEnd', id, reason: 0, x: impact.x, y: impact.y, z: impact.z });
       return;
     }
 
+    if (step.ground) {
+      const impact = { x: proj.x, y: proj.y, z: proj.z };
+      logShotEnd(proj, 'ground', impact);
+      projectiles.delete(id);
+      broadcastAll({ type: 'shotEnd', id, reason: 0, x: impact.x, y: impact.y, z: impact.z });
+      return;
+    }
+
+    // The world border is an obstacle, so a ricocheting shot bounces off it and
+    // never reaches this. A shot that does not bounce meets it first as a
+    // boundary collider a shot radius short of the edge, and only leaves the
+    // world outright on a step that skipped past that.
+    const halfMap = GAME_CONFIG.MAP_SIZE / 2;
+    if (Math.abs(proj.x) > halfMap || Math.abs(proj.z) > halfMap) {
+      projectiles.delete(id);
+      const removalPoint = findMapEdgeImpactPoint(
+        stepStart.x, stepStart.y, stepStart.z, proj.x, proj.y, proj.z, halfMap
+      );
+      broadcastAll({ type: 'shotEnd', id, reason: 0, x: removalPoint.x, y: removalPoint.y, z: removalPoint.z });
+      logShotEnd(proj, 'out_of_bounds', removalPoint, `lifetime=${deltaTime.toFixed(3)}/${proj.lifetimeSeconds.toFixed(3)}`);
+      log(`Projectile ${id} removed (out of bounds)`);
+      return;
+    }
+
     // Check collision with players using extrapolated positions
     players.forEach((player) => {
-      if (player.id === proj.playerId) return; // Can't hit yourself
+      // LocalPlayer::checkHit tests a player's own shots too -- "Don't shoot
+      // yourself!" is the Ricochet flag's own help text. Before it bounces a
+      // shot cannot reach the tank that fired it, because it leaves the muzzle
+      // further out than the hit radius and outruns the tank; bzo samples the
+      // shot once a step rather than testing the whole segment, so it says that
+      // outright rather than relying on the sampling to agree.
+      if (player.id === proj.playerId && proj.bounces === 0) return;
       if (player.team === 'observer') return; // Observers are non-combatants
       if (player.paused) return; // Can't hit paused players
       if (player.health <= 0) return; // Can't hit dead players
@@ -3639,7 +3687,10 @@ function simulateProjectilesStep(stepSeconds, now) {
           player.deaths++;
 
           const shooter = players.get(proj.playerId);
-          if (shooter) {
+          // Killing yourself with your own ricochet is a loss and nothing else,
+          // as self-destruct is. getTeamScoreDeltasForKill already reads the two
+          // being the same player.
+          if (shooter && shooter.id !== player.id) {
             shooter.kills++;
           }
           recordTeamScoreForKill(shooter, player);
@@ -3810,7 +3861,18 @@ function sendMapList(ws) {
     maps: listAvailableMapFiles(),
     currentMap: MAP_SOURCE,
     shotMaxActive: GAME_CONFIG.SHOT_MAX_ACTIVE,
+    ricochet: GAME_CONFIG.ALL_SHOTS_RICOCHET,
   }));
+}
+
+// The roster a client is handed. bzfs sends one MsgAddPlayer per already-joined
+// player (`bzfs.cxx:2395`) and never mentions a connection still in limbo, so
+// neither does this -- except for the recipient itself, which needs its own
+// limbo state to know its id and the name the server would give it.
+function getRosterFor(recipient) {
+  return Array.from(players.values())
+    .filter((candidate) => candidate.joined || candidate.id === recipient.id)
+    .map((candidate) => candidate.getState());
 }
 
 // WebSocket connection handler
@@ -3837,11 +3899,12 @@ wss.on('connection', (ws, req) => {
     player.isAlive = true;
   });
 
-  // Notify all existing players (except the new one) about the new player (so they add to scoreboard/world, invisible)
-  broadcast({
-    type: 'playerJoined',
-    player: player.getState(),
-  }, ws);
+  // Nobody is told about this player yet. bzfs's sendPlayerUpdate returns
+  // early unless the player isPlaying() (`bzfs.cxx:518`), so a connection
+  // sitting in limbo before MsgEnter is never in anyone's roster -- and bzo's
+  // limbo player is named `Player n`, which is exactly the placeholder that
+  // used to appear on everyone else's scoreboard. The `joinGame` handler does
+  // the announcing, once there is a name to announce.
 
   // Get client IP and port
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -3863,7 +3926,7 @@ wss.on('connection', (ws, req) => {
   ws.send(JSON.stringify({
     type: 'init',
     player: player.getState(),
-    players: Array.from(players.values()).map(p => p.getState()),
+    players: getRosterFor(player),
     config: GAME_CONFIG,
     teamMode: TEAM_MODE,
     teamScores: getTeamScoreState(),
@@ -4269,13 +4332,15 @@ wss.on('connection', (ws, req) => {
             message.z,
             shotDirX,
             shotDirZ,
-            shotDirY
+            shotDirY,
+            getPlayerFlag(player.id)?.type ?? null
           );
           projectiles.set(id, proj);
           log(
             `[shotBegin] id=${proj.id} player=${proj.playerId} slot=${proj.shotSlot}` +
             ` pos=${formatShotPoint(proj.x, proj.y, proj.z)}` +
-            ` dir=(${proj.dirX.toFixed(4)},${proj.dirY.toFixed(4)},${proj.dirZ.toFixed(4)})`
+            ` dir=(${proj.dirX.toFixed(4)},${proj.dirY.toFixed(4)},${proj.dirZ.toFixed(4)})` +
+            ` flag=${proj.flag || 'none'}${proj.ricochet ? ' ricochet' : ''}`
           );
           broadcastAll({
             type: 'shotBegin',
@@ -4288,8 +4353,30 @@ wss.on('connection', (ws, req) => {
             dirX: proj.dirX,
             dirY: proj.dirY,
             dirZ: proj.dirZ,
+            flag: proj.flag,
+            ricochet: proj.ricochet,
             createdAt: proj.createdAt
           });
+          break;
+        }
+
+        // MsgQueryPlayers (`bzfs.cxx:3145`). Upstream answers it with the team
+        // table and one MsgAddPlayer per player -- the whole roster, on demand.
+        // Its game client never asks, because its world arrives before it
+        // enters and nothing can land in between; a bzo client builds the world
+        // after it is already receiving, so it asks once it is ready to draw
+        // everyone, and that is what guarantees a full scoreboard however the
+        // reconnects raced.
+        case 'queryPlayers': {
+          ws.send(JSON.stringify({
+            type: 'playerList',
+            players: getRosterFor(player),
+          }));
+          // sendQueryPlayers sends the team table with the roster, directed at
+          // the one player who asked rather than broadcast.
+          if (TEAM_MODE.enabled) {
+            ws.send(JSON.stringify({ type: 'teamUpdate', teams: getTeamScoreState() }));
+          }
           break;
         }
 
@@ -4474,10 +4561,15 @@ wss.on('connection', (ws, req) => {
 
           if (player.tankModel !== requestedTankModel) {
             player.tankModel = requestedTankModel;
-            broadcastAll({
-              type: 'playerUpdated',
-              player: player.getState(),
-            });
+            // Same rule as sendPlayerUpdate: nobody hears about a player who is
+            // not in the game. A tank picked in the entry dialog before joining
+            // travels with the join itself.
+            if (player.joined) {
+              broadcastAll({
+                type: 'playerUpdated',
+                player: player.getState(),
+              });
+            }
           }
           break;
         }
@@ -4588,13 +4680,15 @@ wss.on('connection', (ws, req) => {
         case 'setOperatorConfig': {
           const hasMotd = Object.prototype.hasOwnProperty.call(message, 'motd');
           const hasShotMaxActive = Object.prototype.hasOwnProperty.call(message, 'shotMaxActive');
-          if (!hasMotd && !hasShotMaxActive) {
+          const hasRicochet = Object.prototype.hasOwnProperty.call(message, 'ricochet');
+          if (!hasMotd && !hasShotMaxActive && !hasRicochet) {
             ws.send(JSON.stringify({ error: 'No supported operator setting provided' }));
             break;
           }
 
           let nextMotd = serverConfig.motd || '';
           let nextShotMaxActive = GAME_CONFIG.SHOT_MAX_ACTIVE;
+          let nextRicochet = GAME_CONFIG.ALL_SHOTS_RICOCHET;
 
           if (hasMotd) {
             if (typeof message.motd !== 'string') {
@@ -4617,10 +4711,19 @@ wss.on('connection', (ws, req) => {
             nextShotMaxActive = normalizeShotSlotCount(Math.round(requestedShotMaxActive));
           }
 
+          if (hasRicochet) {
+            if (typeof message.ricochet !== 'boolean') {
+              ws.send(JSON.stringify({ error: 'Invalid ricochet value' }));
+              break;
+            }
+            nextRicochet = message.ricochet;
+          }
+
           try {
             const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
             if (hasMotd) config.motd = nextMotd;
             if (hasShotMaxActive) config.shotMaxActive = nextShotMaxActive;
+            if (hasRicochet) config.ricochet = nextRicochet;
             fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
             if (hasMotd) serverConfig.motd = nextMotd;
@@ -4628,17 +4731,32 @@ wss.on('connection', (ws, req) => {
               serverConfig.shotMaxActive = nextShotMaxActive;
               GAME_CONFIG.SHOT_MAX_ACTIVE = nextShotMaxActive;
             }
+            if (hasRicochet && nextRicochet !== GAME_CONFIG.ALL_SHOTS_RICOCHET) {
+              serverConfig.ricochet = nextRicochet;
+              GAME_CONFIG.ALL_SHOTS_RICOCHET = nextRicochet;
+              applyRicochetGameStyle();
+              // A rule everyone is about to be shot by is worth saying out loud.
+              broadcastAll({
+                type: 'message',
+                src: -1,
+                dst: 0,
+                msgType: 'server',
+                text: nextRicochet ? 'All shots now ricochet' : 'Shots no longer ricochet',
+              });
+            }
 
             broadcastAll({
               type: 'serverConfigUpdate',
               motd: serverConfig.motd || '',
               shotMaxActive: GAME_CONFIG.SHOT_MAX_ACTIVE,
+              ricochet: GAME_CONFIG.ALL_SHOTS_RICOCHET,
             });
             sendMapList(ws);
             ws.send(JSON.stringify({ success: true }));
             log(
               `Operator updated config: motd=${hasMotd ? 'yes' : 'no'} ` +
-              `shotMaxActive=${hasShotMaxActive ? String(nextShotMaxActive) : 'unchanged'}`
+              `shotMaxActive=${hasShotMaxActive ? String(nextShotMaxActive) : 'unchanged'} ` +
+              `ricochet=${hasRicochet ? String(nextRicochet) : 'unchanged'}`
             );
           } catch (error) {
             logError(`Failed to update config at ${configPath}:`, error);
@@ -4659,6 +4777,7 @@ wss.on('connection', (ws, req) => {
     const playerKills = player.kills
     const playerDeaths = player.deaths;
     const cheatWarnings = player.cheatWarnings.totalWarnings;
+    const wasJoined = player.joined;
     player.voiceMicEnabled = false;
     player.joined = false;
     const leavingTeam = player.team;
@@ -4673,10 +4792,14 @@ wss.on('connection', (ws, req) => {
     logMsg += ` Players: ${players.size}`;
     log(logMsg);
 
-    broadcast({
-      type: 'playerLeft',
-      id: player.id,
-    });
+    // Nobody was told about a connection that never joined, so nobody needs
+    // telling that it went.
+    if (wasJoined) {
+      broadcast({
+        type: 'playerLeft',
+        id: player.id,
+      });
+    }
     broadcastTeamScores();
     refreshVoiceRosters(true);
   });

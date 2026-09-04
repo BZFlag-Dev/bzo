@@ -334,6 +334,259 @@ function isOverFlatTop(obs, x, z) {
   return Math.abs(localX) < obs.w / 2 && Math.abs(localZ) < obs.d / 2;
 }
 
+// --- Shots ------------------------------------------------------------------
+//
+// A shot occupies the world the way a tank does, but always as a cylinder:
+// upstream tests Obstacle::inCylinder for a projectile and keeps
+// Obstacle::inBox for a tank. Ricochet is
+// SegmentedShotStrategy::makeSegments(Reflect) -- the shot reflects about the
+// surface normal and keeps its lifetime running instead of ending at the wall.
+//
+// Upstream builds the whole bounce path once, when the shot is fired, because
+// each of its clients owns the shots it fires. bzo integrates a shot a fixed
+// step at a time on both sides, so a reflection happens inside a step; the
+// client draws the bounce and the server hits with it, and they agree because
+// this is the only copy of it.
+
+// checkCollision's vertical epsilon: an occupant resting exactly on a surface
+// is on it, not in it.
+const SHOT_VERTICAL_EPSILON = 0.15;
+// The cylinder a shot collides with, which is not the radius it is drawn at.
+// Upstream collides a shot as a ray, and a cylinder this thin is as near to one
+// as bzo's occupant test gets.
+const SHOT_COLLISION_RADIUS = 0.1;
+// Reflections resolved inside a single step. Upstream caps its segment list at
+// 100 for the same reason: a shot wedged into a corner must not spin the loop.
+// A step that spends them all forfeits whatever travel it had left.
+const MAX_SHOT_BOUNCES_PER_STEP = 4;
+
+// An obstacle-local normal in world space, normalized. The rotation is the
+// inverse of getColliderLocalPoint's, so the sign follows the same reasoning.
+function rotateNormalToWorld(obs, localX, localY, localZ) {
+  const cos = Math.cos(obs.rotation || 0);
+  const sin = Math.sin(obs.rotation || 0);
+  const worldX = localX * cos + localZ * sin;
+  const worldZ = -localX * sin + localZ * cos;
+  const length = Math.hypot(worldX, localY, worldZ) || 1;
+  return { x: worldX / length, y: localY / length, z: worldZ / length };
+}
+
+// True when a shot centred at (x, y, z) is inside this obstacle's solid volume.
+function shotInsideObstacle(obs, x, y, z, radius) {
+  const base = obs.baseY || 0;
+  const top = base + (obs.h || 4);
+  if (y + radius <= base + SHOT_VERTICAL_EPSILON) return false;
+  if (y >= top - SHOT_VERTICAL_EPSILON) return false;
+  if (obs.type === 'pyramid') {
+    return pyramidIntersectsCylinder(obs, x, y, z, radius, radius);
+  }
+  const local = getColliderLocalPoint(x, z, obs);
+  return testOrigRectCircle(obs.w / 2, obs.d / 2, local.x, local.z, radius);
+}
+
+// The obstacle a shot is inside, or null. Teleporters are never consulted here:
+// a portal teleports a shot and a frame stops one, and the teleporter trace
+// decides both before this runs.
+function findShotObstacle(obstacles, x, y, z, radius) {
+  for (const obs of obstacles) {
+    if (obs.kind === 'teleporter') continue;
+    if (shotInsideObstacle(obs, x, y, z, radius)) return obs;
+  }
+  return null;
+}
+
+// Where along a segment a shot first meets solid geometry, as a fraction of the
+// segment, together with what it met. Null when the segment ends clear.
+//
+// The search settles on the last sample still outside, which is where the
+// impact is drawn and where a bounce starts from. Eight bisections is a fixed
+// and deliberately small budget: it resolves the impact to a fraction of a
+// world unit, and the reflected shot leaves the surface anyway.
+function findShotImpact(obstacles, fromX, fromY, fromZ, toX, toY, toZ, radius) {
+  let obstacle = findShotObstacle(obstacles, toX, toY, toZ, radius);
+  if (!obstacle) return null;
+
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 8; i++) {
+    const mid = (lo + hi) * 0.5;
+    const hit = findShotObstacle(
+      obstacles,
+      fromX + (toX - fromX) * mid,
+      fromY + (toY - fromY) * mid,
+      fromZ + (toZ - fromZ) * mid,
+      radius
+    );
+    if (hit) {
+      hi = mid;
+      obstacle = hit;
+    } else {
+      lo = mid;
+    }
+  }
+  return { fraction: lo, obstacle };
+}
+
+// The outward unit normal of the surface a shot met, in world space.
+//
+// Upstream's Obstacle::get3DNormal reads the face off the exact ray/surface
+// intersection. bzo stops the shot at the last point that was still outside, so
+// the two flat faces are named by the same vertical tests that let that point
+// stay outside, and everything else falls through to the cross-section's
+// horizontal normal -- which, as getNormalOrigRect does, always answers.
+function getShotObstacleNormal(obs, x, y, z, radius) {
+  const base = obs.baseY || 0;
+  const top = base + (obs.h || 4);
+
+  if (obs.type === 'pyramid') {
+    // PyramidBuilding::get3DNormal names the flat end of the shape -- the base
+    // of an upright pyramid, the top of a flipped one -- before angling the
+    // normal by the slope of the wall.
+    const flip = isPyramidFlatTop(obs);
+    if (pyramidShrinkFactor(obs, y, radius) >= 1 - ZERO_TOLERANCE) {
+      return { x: 0, y: flip ? 1 : -1, z: 0 };
+    }
+    const face = getPyramidFaceLocalNormal(obs, x, y, z, radius);
+    return rotateNormalToWorld(obs, face.x, face.y, face.z);
+  }
+
+  // BoxBuilding::get3DNormal names the top and the bottom before falling
+  // through to the side.
+  if (y >= top - SHOT_VERTICAL_EPSILON) return { x: 0, y: 1, z: 0 };
+  if (y + radius <= base + SHOT_VERTICAL_EPSILON) return { x: 0, y: -1, z: 0 };
+  const local = getColliderLocalPoint(x, z, obs);
+  const side = getOrigRectNormal(obs.w / 2, obs.d / 2, local.x, local.z);
+  return rotateNormalToWorld(obs, side.x, 0, side.z);
+}
+
+// ShotStrategy::reflect (ShotStrategy.cxx:140). The normal is a unit vector; the
+// direction need not be. Upstream keeps a second branch for a normal that faces
+// the wrong way: rather than let the shot through the surface it refracts at
+// four times the factor and rescales to the incoming speed.
+function reflectShotDirection(dirX, dirY, dirZ, normal) {
+  let d = -2 * ((normal.x * dirX) + (normal.y * dirY) + (normal.z * dirZ));
+  if (d >= 0) {
+    return { x: dirX + d * normal.x, y: dirY + d * normal.y, z: dirZ + d * normal.z };
+  }
+
+  const oldSpeed = Math.hypot(dirX, dirY, dirZ);
+  d = -2 * d;
+  const x = dirX + d * normal.x;
+  const y = dirY + d * normal.y;
+  const z = dirZ + d * normal.z;
+  const scale = oldSpeed / (Math.hypot(x, y, z) || 1);
+  return { x: x * scale, y: y * scale, z: z * scale };
+}
+
+// One fixed simulation step of a shot against the world's solid geometry.
+//
+// Returns where the shot ends the step, the direction it is now travelling, how
+// many times it bounced, and what stopped it: `obstacle` for a building or the
+// world border, `ground` for the floor, which upstream treats as a surface of
+// its own rather than as an obstacle (ShotStrategy::getGround). A shot that
+// ricochets is never stopped by either.
+//
+// A shot that begins the step already inside something -- which is what a
+// teleport exit looks like from here -- is carried straight through rather than
+// bounced, because there is no surface between where it is and where it came
+// from to bounce off.
+function traceShotStep({
+  obstacles,
+  x,
+  y,
+  z,
+  dirX,
+  dirY,
+  dirZ,
+  distance,
+  radius,
+  ricochet,
+  groundLimit = 0,
+}) {
+  let posX = x;
+  let posY = y;
+  let posZ = z;
+  let dX = dirX;
+  let dY = dirY;
+  let dZ = dirZ;
+  let remaining = distance;
+  let bounces = 0;
+  let obstacle = null;
+  let ground = false;
+
+  for (let pass = 0; pass < MAX_SHOT_BOUNCES_PER_STEP && remaining > 0; pass++) {
+    const toX = posX + dX * remaining;
+    const toY = posY + dY * remaining;
+    const toZ = posZ + dZ * remaining;
+
+    // Upstream takes whichever of the ground and the first building the shot
+    // reaches first, so the two are compared rather than ordered.
+    const groundFraction = (dY < 0 && toY < groundLimit)
+      ? (groundLimit - posY) / (dY * remaining)
+      : Infinity;
+    const impact = findShotObstacle(obstacles, posX, posY, posZ, radius)
+      ? null
+      : findShotImpact(obstacles, posX, posY, posZ, toX, toY, toZ, radius);
+    const obstacleFraction = impact ? impact.fraction : Infinity;
+
+    if (obstacleFraction === Infinity && groundFraction === Infinity) {
+      posX = toX;
+      posY = toY;
+      posZ = toZ;
+      remaining = 0;
+      break;
+    }
+
+    if (obstacleFraction <= groundFraction) {
+      const hitX = posX + (toX - posX) * obstacleFraction;
+      const hitY = posY + (toY - posY) * obstacleFraction;
+      const hitZ = posZ + (toZ - posZ) * obstacleFraction;
+      posX = hitX;
+      posY = hitY;
+      posZ = hitZ;
+      if (!ricochet) {
+        obstacle = impact.obstacle;
+        remaining = 0;
+        break;
+      }
+      const normal = getShotObstacleNormal(impact.obstacle, hitX, hitY, hitZ, radius);
+      const reflected = reflectShotDirection(dX, dY, dZ, normal);
+      dX = reflected.x;
+      dY = reflected.y;
+      dZ = reflected.z;
+      remaining *= 1 - obstacleFraction;
+      bounces++;
+      continue;
+    }
+
+    posX += (toX - posX) * groundFraction;
+    posZ += (toZ - posZ) * groundFraction;
+    posY = groundLimit;
+    if (!ricochet) {
+      ground = true;
+      remaining = 0;
+      break;
+    }
+    // The ground's normal is straight up, so reflecting about it only flips the
+    // vertical component.
+    dY = -dY;
+    remaining *= 1 - groundFraction;
+    bounces++;
+  }
+
+  return {
+    x: posX,
+    y: posY,
+    z: posZ,
+    dirX: dX,
+    dirY: dY,
+    dirZ: dZ,
+    bounces,
+    obstacle,
+    ground,
+  };
+}
+
 module.exports = {
   BASE_TOP_TOLERANCE,
   getBaseTopY,
@@ -358,4 +611,14 @@ module.exports = {
   getPyramidFaceLocalNormal,
   pyramidIntersectsCylinder,
   pyramidIntersectsTank,
+  SHOT_VERTICAL_EPSILON,
+  SHOT_COLLISION_RADIUS,
+  MAX_SHOT_BOUNCES_PER_STEP,
+  rotateNormalToWorld,
+  shotInsideObstacle,
+  findShotObstacle,
+  findShotImpact,
+  getShotObstacleNormal,
+  reflectShotDirection,
+  traceShotStep,
 };

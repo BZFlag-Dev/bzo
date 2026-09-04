@@ -6,6 +6,26 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.55] - 2026-09-04
+
+Ricochet is part of #6.
+
+### Added
+- A ricochet switch, BZFlag's `+r`. `ricochet` in `server.json`, `+r` in a map's `options` block, and a checkbox on the Operator panel all reach it, and it defaults to off as upstream has it. A map may turn it on and nothing turns it back off, which is how a bzfs switch behaves. It reaches the client in the `init` config and again in `serverConfigUpdate`, so an operator can change the rules of a running game and everybody's shots change with them.
+- The Ricochet flag, `R`. Shots bounce off walls until their lifetime runs out; a bounce costs range and nothing else. With the server switch on, the server forbids the flag outright and says so in the log, as `CmdLineOptions.cxx` does -- a flag that grants what every shot already does looks like it does something and does not -- and the help panel says which of the two rules the world is playing by.
+- Shots reflect about real surface normals, on the client and on the server, out of one shared `traceShotStep` in the `collision` pair. It mirrors `SegmentedShotStrategy::makeSegments(Reflect)` and `ShotStrategy::reflect`, including the refraction branch upstream keeps for a normal that faces the wrong way. Buildings use `Obstacle::get3DNormal`'s rule, pyramids put a vertical component into a shot that was fired flat, the world border bounces because bzo models it as four boxes, and the ground is a surface of its own as it is upstream. A teleporter frame still stops a bouncing shot; see AGENTS.md.
+- A ricocheted shot can kill the tank that fired it, which is the flag's own help text. `LocalPlayer::checkHit` tests a player's own shots like anyone else's. Killing yourself that way is a loss and nothing else, as self-destruct is.
+- `SFX_RICOCHET`, with upstream's own `ricochet.wav`, and `StdRicoEffect` -- the flared cone thrown out of the surface at the point the shot bounced.
+- `shotBegin` carries the flag that fired the shot, which is what upstream's `FiringInfo` does. Ricochet is the first thing bzo reads off it; every shot variant still to come reads the same field.
+
+### Changed
+- The obstacle test for a shot runs before the out-of-bounds test, so the world border is a wall a shot can bounce off rather than an edge it falls past.
+
+### Fixed
+- A client that reconnected alongside others could keep showing them as `Player n` for the rest of the session. The roster in `init` is a snapshot, and it was applied only after the models, textures and audio it names had loaded -- a window seconds wide, during which the other clients were joining and their real names arrived and were applied. Replaying the snapshot afterwards put the placeholders back, and nothing corrected it, because movement packets carry no name. Roster messages that land in that window are now held and replayed over the snapshot in the order they came.
+- A connection is no longer a player on anyone else's scoreboard until it joins. bzfs's `sendPlayerUpdate` returns early unless the player `isPlaying()`, so a socket in limbo before `MsgEnter` is in nobody's roster; bzo was broadcasting one on connect, under the `Player n` name it had not yet replaced. It is not announced when it leaves either, and a tank chosen in the entry dialog before joining travels with the join instead of being broadcast on its own.
+- `queryPlayers`, BZFlag's `MsgQueryPlayers`. The client asks once on entering a map and the server answers with the whole roster, so a fully populated scoreboard no longer depends on every incremental message having arrived. Anyone the answer does not name is removed, so it reconciles in both directions.
+
 ## [1.0.54] - 2026-09-03
 
 Part of #6.

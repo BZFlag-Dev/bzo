@@ -27,6 +27,7 @@
   "turnAccel": 3.0,
   "turnDecel": 4.0,
   "jumping": true,
+  "ricochet": false,
   "jumpVelocity": 19,
   "gravity": 9.8,
   "wingsJumpCount": 1,
@@ -42,6 +43,7 @@
   "superFlags": {
     "count": 16,
     "allowed": [
+      "R",
       "ID",
       "US",
       "JP",

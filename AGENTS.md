@@ -122,6 +122,20 @@ These are deliberate. Do not "fix" them without being asked.
   upstream: a map's `-j` can still turn it back on, the `JP` flag is forbidden
   while it is on, and `WG` never consults it. See `docs/flags-plan.md`.
 
+- **A game style may be switched while the server runs.** Upstream settles
+  `gameOptions` from the command line at startup and never revisits it. bzo's
+  Operator panel carries the ricochet switch, so anything derived from a game
+  style is asked for rather than settled: the superflag pool is filtered per
+  draw, and a flag the new style forbids is zapped where it stands. Shots
+  already in flight keep the behaviour they were fired with, which is what every
+  client was told when they began.
+
+- **A bouncing shot does not bounce off a teleporter frame.** Frames are decided
+  by the teleporter trace, which the client does not run for shots -- it has no
+  frame hit to react to -- so bouncing them on the server alone would put the two
+  copies of the shot on different paths. A frame stops a shot however it was
+  fired. Doing it properly means moving the frame test into the shared pair.
+
 - **The one-tap VR button on the HUD is hidden on phones.** Chrome on Android
   reports `immersive-vr` support on any phone, through Cardboard, so support
   alone does not mean a headset is present. The Settings menu still offers VR
@@ -318,8 +332,9 @@ altitude once per map.
 `docs/flags-plan.md` is the design and staging plan: what upstream does, the
 data model, the protocol, which phase each piece belongs to, and the full list
 of the superflags still missing. Read it before extending flags. Phases 1 to 3
-are implemented -- the Useless superflag with its flight animation and drop key,
-team flags and capture, and Identify. Everything from phase 4 on is not.
+and 9 are implemented -- the Useless superflag with its flight animation and drop
+key, team flags and capture, Identify, and Ricochet. Phases 4 to 8 and 10 onward
+are not.
 
 **The `FLAG_TYPES` table holds only the flags bzo implements.** Adding a row is
 the last step of implementing a flag, not the first: the row is what puts the
@@ -363,10 +378,45 @@ the world from the roof rather than falling to the floor. bzo takes it from a
 map's `options` block as upstream's `-fb`, or from `flagsOnBuildings` in
 `server.json`; `maps/hix.bzw` turns it on. Team flags ignore it.
 
+### The roster
+
+**A connection is not a player until it joins.** bzfs's `sendPlayerUpdate`
+returns early unless the player `isPlaying()` (`bzfs.cxx:518`), so a socket
+sitting in limbo before `MsgEnter` is in nobody's roster. bzo names its limbo
+player `Player n`, which is exactly the placeholder that used to appear on
+everyone else's scoreboard, so it follows the same rule: `getRosterFor` gives a
+client the joined players plus itself, nothing is broadcast on connect, and a
+connection that never joined is not announced when it leaves either.
+
+**The `init` roster is a snapshot applied late, so it must not overwrite what
+arrived since.** `prepareInitialRender` waits for the models, textures and audio
+the roster names before it can build anyone's tank -- seconds on a cold start --
+and clients reconnecting alongside this one are joining through that window.
+`handleServerMessage` holds every roster message that lands in it and
+`applyRosterSnapshot` replays them over the snapshot in order, so the last word
+about a player is whichever message actually came last. Without that the
+snapshot put back the name each player had when it was taken, and nothing
+corrected it: movement packets carry no name.
+
+**`queryPlayers` is the backstop.** Upstream answers `MsgQueryPlayers`
+(`bzfs.cxx:3145`) with the team table and one `MsgAddPlayer` per player -- the
+whole roster on demand -- though its game client never asks, because its world
+arrives before it enters and nothing can land in between. A bzo client builds
+its world while already receiving, so it asks once, on entering a map, and
+reconciles in both directions: anyone the answer does not name is gone.
+
 A BZW `options` block is read twice: `parseBZWTeamMode` in the `teams` pair takes
 the switches both sides need, and `parseBZWServerOptions` in `server.js` takes
 the ones only the server acts on. Add a new switch to whichever of those matches
 who needs to know.
+
+Shots against solid geometry live in the `collision` pair, not in either
+`server.js` or `client.js`: `traceShotStep` advances a shot over one fixed step,
+finds what it met, and reflects it about the surface normal when the shot
+ricochets. Both sides call it, because a bounce the client draws one way and the
+server hits with the other way is worse than no bounce at all. Only a bouncing
+shot is traced on the client; an ordinary one still flies straight until the
+server says where it ended.
 
 Which team's base a point stands on is `getBaseTeamAtPoint` in the `collision`
 pair, because it is obstacle geometry both sides need: the client detects a
@@ -815,6 +865,7 @@ surface as an error, not a silent degradation.
 |---|---|---|---|
 | `fire` | `fire.wav` | `SFX_FIRE` | a shot is fired |
 | `shotBoom` | `boom.wav` | `SFX_SHOT_BOOM` | a shot expires or hits an obstacle |
+| `ricochet` | `ricochet.wav` | `SFX_RICOCHET` | a shot bounces off a building |
 | `explosion` | `explosion.wav` | `SFX_EXPLOSION`, `SFX_DIE` | a tank is destroyed |
 | `jump` | `jump.wav` | `SFX_JUMP` | a tank jumps |
 | `land` | `land.wav` | `SFX_LAND` | a tank lands |
@@ -840,7 +891,7 @@ though a bzo tank has radius 2. Tune `MASTER_VOLUME` in `public/audio.js`, not
 individual sounds.
 
 Every remaining BZFlag sound is gated on a feature bzo does not have yet:
-`ricochet` and `bounce` need bouncing shots, `thief` needs the Thief flag,
+`bounce` needs a tank bouncing off a wall, `thief` needs the Thief flag,
 `hunt`/`hunt_select` need hunting, `message_*` need per-kind chat sounds, and
 `laser`/`shock`/`missile`/`burrow`/`phantom`/`steamroller`/`lock` need superflag
 effects. When adding one of those features, take its sound from upstream

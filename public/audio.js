@@ -46,6 +46,8 @@ export const GAME_SOUNDS = Object.freeze({
   fire: { file: 'fire.wav', sfx: 'SFX_FIRE' },
   // A shot expires or hits an obstacle.
   shotBoom: { file: 'boom.wav', sfx: 'SFX_SHOT_BOOM' },
+  // A shot bounces off a building.
+  ricochet: { file: 'ricochet.wav', sfx: 'SFX_RICOCHET' },
   // A tank is destroyed.
   explosion: { file: 'explosion.wav', sfx: 'SFX_EXPLOSION' },
   // A tank jumps.

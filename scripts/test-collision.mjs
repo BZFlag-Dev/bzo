@@ -231,4 +231,103 @@ assert.ok(corner.x > 0 && corner.z > 0 && Math.abs(Math.hypot(corner.x, corner.z
 // Inside a long thin rib, resolve to the long face rather than the end cap.
 assert.deepEqual(client.getOrigRectNormal(8, 1, 1, 0.5), { x: 0, z: 1 });
 
+// --- Shots ------------------------------------------------------------------
+
+// ShotStrategy::reflect. A head-on bounce reverses; a 45 degree one turns the
+// shot through a right angle; both keep the speed they came in with.
+const wallNormal = { x: -1, y: 0, z: 0 };
+const headOn = client.reflectShotDirection(1, 0, 0, wallNormal);
+assert.ok(Math.abs(headOn.x + 1) < 1e-12 && Math.abs(headOn.z) < 1e-12, 'head-on bounce reverses');
+const glancing = client.reflectShotDirection(
+  Math.SQRT1_2, 0, Math.SQRT1_2, wallNormal
+);
+assert.ok(Math.abs(glancing.x + Math.SQRT1_2) < 1e-12, 'the component along the normal flips');
+assert.ok(Math.abs(glancing.z - Math.SQRT1_2) < 1e-12, 'the component along the surface is kept');
+assert.ok(Math.abs(Math.hypot(glancing.x, glancing.y, glancing.z) - 1) < 1e-12, 'speed is unchanged');
+
+// A normal facing the same way the shot travels is upstream's refraction case:
+// it must not leave the shot passing through the surface, and it keeps the
+// incoming speed.
+const refracted = client.reflectShotDirection(1, 0, 0, { x: 1, y: 0, z: 0 });
+assert.ok(refracted.x > 0, 'refraction pushes the shot along the inverted normal');
+assert.ok(Math.abs(Math.hypot(refracted.x, refracted.y, refracted.z) - 1) < 1e-12);
+
+// Both copies reflect identically. Same table, same numbers.
+for (const [dx, dy, dz, nx, ny, nz] of [
+  [1, 0, 0, -1, 0, 0],
+  [0.6, 0.2, -0.77, 0, 1, 0],
+  [-0.3, 0, 0.95, 0.7071067811865476, 0, -0.7071067811865476],
+  [1, 0, 0, 1, 0, 0],
+]) {
+  assert.deepEqual(
+    client.reflectShotDirection(dx, dy, dz, { x: nx, y: ny, z: nz }),
+    server.reflectShotDirection(dx, dy, dz, { x: nx, y: ny, z: nz }),
+    'client and server reflect a shot differently'
+  );
+}
+
+// A shot fired down the x axis into a box turns around and comes back, and it
+// stops at the wall instead when the shot does not ricochet.
+const shotBox = [{ type: 'box', name: 'wall', x: 20, z: 0, w: 4, d: 40, h: 10, baseY: 0, rotation: 0 }];
+const shotArgs = {
+  obstacles: shotBox,
+  x: 0,
+  y: 2.2,
+  z: 0,
+  dirX: 1,
+  dirY: 0,
+  dirZ: 0,
+  distance: 20,
+  radius: client.SHOT_COLLISION_RADIUS,
+};
+const bounced = client.traceShotStep({ ...shotArgs, ricochet: true });
+assert.equal(bounced.bounces, 1, 'the shot bounces off the box');
+assert.ok(bounced.dirX < 0, 'and comes back the way it came');
+assert.equal(bounced.obstacle, null, 'a ricocheting shot is never stopped');
+assert.ok(bounced.x < 18, 'the bounce turns the shot around before the wall');
+const stopped = client.traceShotStep({ ...shotArgs, ricochet: false });
+assert.equal(stopped.bounces, 0);
+assert.ok(stopped.obstacle, 'a shot that does not ricochet stops at the box');
+assert.ok(Math.abs(stopped.x - 17.9) < 0.2, `expected to stop at the near face, got ${stopped.x}`);
+assert.deepEqual(
+  server.traceShotStep({ ...shotArgs, obstacles: shotBox, ricochet: true }),
+  bounced,
+  'client and server trace a bouncing shot differently'
+);
+
+// A shot with somewhere to go passes straight through an empty step.
+const clear = client.traceShotStep({ ...shotArgs, obstacles: [], ricochet: true });
+assert.equal(clear.bounces, 0);
+assert.ok(Math.abs(clear.x - 20) < 1e-9);
+
+// The floor is a surface of its own. A shot on its way down bounces off it and
+// rises again, and it lands on it when it does not ricochet.
+const falling = {
+  obstacles: [],
+  x: 0,
+  y: 2,
+  z: 0,
+  dirX: 0.6,
+  dirY: -0.8,
+  dirZ: 0,
+  distance: 5,
+  radius: client.SHOT_COLLISION_RADIUS,
+};
+const offGround = client.traceShotStep({ ...falling, ricochet: true });
+assert.equal(offGround.bounces, 1, 'the shot bounces off the ground');
+assert.ok(offGround.dirY > 0 && offGround.y > 0, 'and is climbing again');
+const onGround = client.traceShotStep({ ...falling, ricochet: false });
+assert.equal(onGround.ground, true, 'a shot that does not ricochet stops at the floor');
+assert.equal(onGround.y, 0);
+
+// A shot cannot spend a step bouncing forever. A corridor two units wide, with
+// a step long enough to cross it several times over, is nothing but bounces.
+const corridor = [
+  { type: 'box', name: 'east', x: 51, z: 0, w: 100, d: 400, h: 10, baseY: 0, rotation: 0 },
+  { type: 'box', name: 'west', x: -51, z: 0, w: 100, d: 400, h: 10, baseY: 0, rotation: 0 },
+];
+const trapped = client.traceShotStep({ ...shotArgs, obstacles: corridor, ricochet: true });
+assert.equal(trapped.bounces, client.MAX_SHOT_BOUNCES_PER_STEP, 'the bounce loop runs to its cap');
+assert.ok(Math.abs(trapped.x) < 1, 'and leaves the shot inside the corridor');
+
 console.log(`collision geometry tests passed (${checked} fuzz samples, ${solidSamples} solid, seed ${SEED})`);

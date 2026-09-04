@@ -135,6 +135,14 @@ export const FLAG_TYPES = Object.freeze({
     team: 4,
     help: TEAM_FLAG_HELP,
   }),
+  R: Object.freeze({
+    abbreviation: 'R',
+    name: 'Ricochet',
+    endurance: FLAG_ENDURANCE.UNSTABLE,
+    quality: FLAG_QUALITY.GOOD,
+    team: null,
+    help: 'Shots bounce off walls.  Don\'t shoot yourself!',
+  }),
   JP: Object.freeze({
     abbreviation: 'JP',
     name: 'Jumping',
@@ -194,6 +202,15 @@ export function canJump(abbreviation, allowJumping, airborne, flapsLeft) {
 // lands.
 export function hasAirControl(abbreviation) {
   return abbreviation === 'WG';
+}
+
+// SegmentedShotStrategy::makeSegments. A shot that would stop at a wall
+// reflects off it instead when the world says every shot ricochets, and the
+// Ricochet flag makes one that reflects whatever the world says. With the world
+// switch on the flag has nothing left to offer, which is why the server forbids
+// it there.
+export function shotRicochets(abbreviation, allShotsRicochet) {
+  return allShotsRicochet === true || abbreviation === 'R';
 }
 
 // LocalPlayer::doJump's vertical component. A flap relaunches a tank that is on
