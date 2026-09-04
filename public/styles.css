@@ -42,6 +42,11 @@ html, body {
      5, where its effScale equals that scale. The mouse mapping reads its
      geometry back off these boxes, so the drawn edge is where the input
      saturates. */
+  /* The radar's own size, shared so the debug HUD can stop short of it rather
+     than guess. Matches what #radar asks for: square, and clamped at both ends. */
+  --radar-size: clamp(90px, min(52.5vw, 52.5vh), 360px);
+  --hud-edge-gap: 10px;
+
   --motion-unit: min(calc(100vw / 256), calc(100vh / 192));
   --motion-box: calc(74 * var(--motion-unit));
   --motion-dead-box: calc(10 * var(--motion-unit));
@@ -1158,7 +1163,14 @@ body {
   font-size: 12px;
   box-sizing: border-box;
   overflow-x: auto;
-  max-height: 90vh;
+  /* Both are pinned to the right edge and the radar is on top, so the HUD stops
+     below it instead of scrolling away underneath. It scrolls already, so the
+     rows this costs are still reachable. */
+  max-height: max(120px, calc(100vh
+    - max(10px, env(safe-area-inset-top))
+    - var(--radar-size)
+    - var(--hud-edge-gap)
+    - max(10px, env(safe-area-inset-bottom))));
   overflow-y: auto;
   display: none;
 }
@@ -1461,12 +1473,8 @@ body.observing #roamStatus {
   box-shadow: 0 0 16px #222b, 0 0 0 4px rgba(0,0,0,0.5);
   background: none;
   opacity: 1;
-  width: min(52.5vw, 52.5vh);
-  height: min(52.5vw, 52.5vh);
-  min-width: 90px;
-  min-height: 90px;
-  max-width: 360px;
-  max-height: 360px;
+  width: var(--radar-size);
+  height: var(--radar-size);
   aspect-ratio: 1 / 1;
   box-sizing: border-box;
   pointer-events: none;
