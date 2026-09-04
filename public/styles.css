@@ -47,6 +47,40 @@ html, body {
   --motion-dead-box: calc(10 * var(--motion-unit));
 }
 
+/* Scrollbars follow the theme rather than the platform's grey. `scrollbar-color`
+   and `scrollbar-width` are the standard properties and are inherited, so
+   setting them on the root reaches every panel that scrolls; the WebKit
+   pseudo-elements below cover the Chrome and Safari versions that predate
+   them. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-accent) var(--color-panel-bg);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-panel-bg);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-btn-bg-hover);
+  border: 1px solid var(--color-accent);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 #operatorOverlay, #operatorOverlay *, #audioOverlay, #audioOverlay *, #helpPanel, #helpPanel * {
   pointer-events: auto !important;
 }

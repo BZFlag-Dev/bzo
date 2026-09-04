@@ -22,6 +22,40 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"]):not([disabled])',
 ].join(', ');
 
+// One line and one page of a dialog that scrolls. Arrows step a line the way a
+// scroll wheel does rather than jumping a whole screen.
+const DIALOG_SCROLL_LINE = 48;
+
+// The element that actually scrolls: the dialog root if the overflow is on it,
+// otherwise its content. Measured rather than assumed, because which of the two
+// carries `overflow-y` is a styling decision.
+function getDialogScroller(dialog) {
+  const candidates = [dialog, ...dialog.querySelectorAll('.dialogContent')];
+  return candidates.find((element) => element.scrollHeight - element.clientHeight > 1) || null;
+}
+
+function scrollDialogByKey(scroller, key) {
+  if (key === 'Home') {
+    scroller.scrollTop = 0;
+    return true;
+  }
+  if (key === 'End') {
+    scroller.scrollTop = scroller.scrollHeight;
+    return true;
+  }
+  const page = Math.max(DIALOG_SCROLL_LINE, scroller.clientHeight * 0.9);
+  const deltas = {
+    ArrowUp: -DIALOG_SCROLL_LINE,
+    ArrowDown: DIALOG_SCROLL_LINE,
+    PageUp: -page,
+    PageDown: page,
+  };
+  const delta = deltas[key];
+  if (delta === undefined) return false;
+  scroller.scrollTop += delta;
+  return true;
+}
+
 const dialogReturnFocus = new Map();
 const controllerNavigationState = {
   direction: 0,
@@ -227,6 +261,19 @@ export function handleDialogKeydown(event, { dismissDialog } = {}) {
       return true;
     }
     return false;
+  }
+
+  // A dialog you read rather than one you operate: the arrows scroll it. Cycling
+  // focus through its handful of links leaves most of the text unreachable, and
+  // in XR there is no Page Up or Page Down to reach the rest with instead. Left
+  // and right still move focus, which is how a controller reaches the close
+  // button without a Tab key.
+  if (openDialog.dataset.dialogKind === 'document') {
+    const scroller = getDialogScroller(openDialog);
+    if (scroller && scrollDialogByKey(scroller, event.key)) {
+      event.preventDefault();
+      return true;
+    }
   }
 
   const focusables = getFocusableElements(openDialog);
