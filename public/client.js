@@ -1060,11 +1060,9 @@ async function prepareInitialRender(message, sequenceId) {
   debugLog(`world.teleporters count=${TELEPORTER_GRAPH.teleporters.length} links=${TELEPORTER_GRAPH.links.length}`);
 
   renderManager.createMountains(gameConfig.MAP_SIZE);
-  if (renderManager.dynamicLightingEnabled) {
-    renderManager.setWorldTime(message.worldTime || 0);
-  } else {
-    renderManager.clearCelestialBodies();
-  }
+  // The sun and the moon are the sky and the shadow direction, not dynamic
+  // lighting, so they are here whatever that setting says.
+  renderManager.setWorldTime(message.worldTime || 0);
   if (message.clouds) {
     renderManager.createClouds(message.clouds);
   } else {
@@ -3187,7 +3185,7 @@ function init() {
       const rendererSize = renderer.getSize(new THREE.Vector2());
       const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
       debugLog(
-        `renderer.init.ok viewport=${window.innerWidth}x${window.innerHeight} canvas=${renderer.domElement.width}x${renderer.domElement.height} css=${rendererSize.x}x${rendererSize.y} shown=${renderer.domElement.clientWidth}x${renderer.domElement.clientHeight} drawbuf=${drawingBufferSize.x}x${drawingBufferSize.y} renderScale=${renderManager.renderScale}`,
+        `renderer.init.ok viewport=${window.innerWidth}x${window.innerHeight} canvas=${renderer.domElement.width}x${renderer.domElement.height} css=${rendererSize.x}x${rendererSize.y} shown=${renderer.domElement.clientWidth}x${renderer.domElement.clientHeight} drawbuf=${drawingBufferSize.x}x${drawingBufferSize.y} renderScale=${renderManager.renderScale} shadows=${renderManager.projectedShadowsEnabled} celestial=${renderManager.celestialEnabled}`,
       );
       const capabilities = renderManager.getRenderCapabilities();
       if (capabilities) debugLog(`renderer.capabilities ${describeRenderCapabilities(capabilities)}`);

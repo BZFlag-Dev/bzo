@@ -215,6 +215,21 @@ function readRenderScale() {
 // the machines that read slowest here are the ones it applies to, so the cost of
 // the samples has to be measurable rather than assumed. The context reports what
 // it was given, so `renderer.capabilities` in the log says which run is which.
+// Two more, to answer what turning dynamic lighting off should also turn off.
+// `?shadows=0` drops the projected shadow pass -- the caster stencil draws, the
+// darkening overlay and the per-frame projection -- and `?celestial=0` drops the
+// sun and moon discs, which are only three draws but large ones. Whether either
+// is worth coupling to the lighting setting is a measurement, not a guess.
+function readProjectedShadowsEnabled() {
+  const raw = new URLSearchParams(window.location.search).get('shadows');
+  return raw !== '0' && raw !== 'false';
+}
+
+function readCelestialEnabled() {
+  const raw = new URLSearchParams(window.location.search).get('celestial');
+  return raw !== '0' && raw !== 'false';
+}
+
 function readAntialias() {
   const raw = new URLSearchParams(window.location.search).get('antialias');
   return raw !== '0' && raw !== 'false';
@@ -426,7 +441,14 @@ class RenderManager {
   // Set world time (0-23999, like Minecraft)
   setWorldTime(worldTime) {
     this._worldTime = worldTime;
-    if (!this.dynamicLightingEnabled) return;
+    // Not gated on dynamic lighting. What fragment uniforms constrain is a
+    // scene full of point lights, not one directional sun, and the sun is what
+    // the sky, the day cycle and the direction every projected shadow falls in
+    // are all read off. Gating this froze `sunLight` at the (0, 1, 0) a
+    // DirectionalLight is born with, which reads as a permanent noon: shadows
+    // straight down and never moving. `_dynamicLightingActive` still gates the
+    // lights a shot, an explosion and a jump jet add, which is the cost the
+    // capability is about.
     // A Minecraft clock, not upstream's astronomy: 0 = 6:00, 6000 = noon,
     // 12000 = 18:00, 18000 = midnight, sweeping a fixed arc in the world's X-Y
     // plane with the moon exactly opposite the sun. See AGENTS.md.
@@ -590,6 +612,8 @@ class RenderManager {
     this.renderCapabilities = null;
     this.showGroundGrid = false;
     this.renderScale = 1;
+    this.projectedShadowsEnabled = true;
+    this.celestialEnabled = true;
 
     // Tank geometry loaded from public/obj/simple.obj (keyed by object name)
     this._tankGeoCache = null;
@@ -621,6 +645,8 @@ class RenderManager {
 
     this.container = container;
     this.renderScale = readRenderScale();
+    this.projectedShadowsEnabled = readProjectedShadowsEnabled();
+    this.celestialEnabled = readCelestialEnabled();
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x87ceeb);
@@ -818,6 +844,13 @@ class RenderManager {
     return supportsDynamicLighting(this.renderCapabilities);
   }
 
+  // Capability and switch kept apart, as `_dynamicLightingActive` does: the
+  // stencil bits say what the machine can do, the knob says what this run is
+  // measuring.
+  _projectedShadowsActive() {
+    return this.projectedShadowsEnabled && this.canUseProjectedShadows();
+  }
+
   canUseProjectedShadows() {
     return supportsProjectedShadows(this.renderCapabilities);
   }
@@ -942,7 +975,7 @@ class RenderManager {
   // Called again once the obstacles are in, because the tallest of them is what
   // decides how far a shadow reaches.
   _refreshProjectedShadowOverlay() {
-    if (!this.canUseProjectedShadows() || !Number.isFinite(this.groundExtent)) return;
+    if (!this._projectedShadowsActive() || !Number.isFinite(this.groundExtent)) return;
 
     const extent = this._getProjectedShadowOverlayExtent();
     if (!this.projectedShadowOverlay) {
@@ -1057,7 +1090,7 @@ class RenderManager {
     // Each shadow mesh writes the stencil the ground overlay reads. Without a
     // stencil buffer there is no overlay to read it, so the meshes would draw
     // for nothing.
-    if (!this.canUseProjectedShadows() || !this.worldGroup) return;
+    if (!this._projectedShadowsActive() || !this.worldGroup) return;
     // Use sun or moon depending on which is visible
     const light = (this.sunLight && this.sunLight.intensity > 0.5) ? this.sunLight : this.moonLight;
     const dir = this._getProjectedShadowDirection(light?.position);
@@ -2403,6 +2436,10 @@ class RenderManager {
     sunRadius, moonRadius, sunVisible = true, moonVisible = true,
   }) {
     if (!this.scene || !this.worldGroup) return;
+    if (!this.celestialEnabled) {
+      this.clearCelestialBodies();
+      return;
+    }
 
     if (!this.sunMesh || !this.sunGlowMesh || !this.moonMesh) {
       this.clearCelestialBodies();
