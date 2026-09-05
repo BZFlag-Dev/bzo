@@ -1230,11 +1230,6 @@ body {
   display: none;
 }
 
-/* Short counts as small, not just narrow. A phone held in landscape is wide and
-   short -- a Pixel 10 reports 857x411 -- so a width-only breakpoint hands it the
-   desktop layout and the HUD does not fit the 411 pixels that actually bind.
-   Every compact rule below is paired with a height so the same styling reaches
-   both shapes of small screen. */
 #debugHud h3 {
   font-size: 14px;
   margin-bottom: 10px;
@@ -1669,6 +1664,16 @@ body.observing #roamStatus {
   color: var(--color-state-on);
 }
 
+/* The one compact block keyed to height as well as width. Short counts as small
+   here: a phone held in landscape is wide and short -- a Pixel 10 reports
+   857x411 -- so a width-only rule hands it desktop-sized dialogs against the 411
+   pixels that actually bind.
+
+   Only here. The other compact blocks reflow for a narrow row -- a radar sized
+   off vw alone, buttons at a 60vw minimum, audio rows stacking -- and a wide
+   short screen wants none of it: 48vw there is 411px, the whole height. Being
+   short and being narrow ask for different things, and the size of a dialog is
+   what they have in common. */
 @media (max-width: 600px), (max-height: 500px) {
   #settingsHud,
   #helpPanel,
