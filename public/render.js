@@ -251,6 +251,9 @@ const CELESTIAL_GLOW_RATIO = 1.5;
 // were the divisors on the per-face texture repeats and are now the divisors on
 // the baked UVs, so the tiling is unchanged.
 const BOX_TEXTURE_SCALES = { sideScale: 8, capScale: 2 };
+// The same, for a pyramid's slanted sides and its base.
+const PYRAMID_TEXTURE_SCALE = 8;
+const PYRAMID_ROOF_TEXTURE_SCALE = 2;
 const GROUND_CENTER_SIZE = 128; // upstream centerSize
 const GROUND_TEX_REPEAT = 0.05; // upstream groundHighResTexRepeat (defaultBZDB.cxx:82)
 // Upstream's five triangle strips over the four outer and four centre corners.
@@ -1361,29 +1364,53 @@ class RenderManager {
   //
   // Shared, so never disposed with the mesh -- `clearObstacles` drops the cache
   // once every mesh using it is gone.
-  _getSharedBoxMaterials(key, sideTextureFactory, topTextureFactory) {
-    if (!this._sharedBoxMaterials) this._sharedBoxMaterials = new Map();
-    const existing = this._sharedBoxMaterials.get(key);
+  _getSharedObstacleMaterials(key, sideTextureFactory, topTextureFactory, options = {}) {
+    if (!this._sharedObstacleMaterials) this._sharedObstacleMaterials = new Map();
+    const existing = this._sharedObstacleMaterials.get(key);
     if (existing) return existing;
     const materials = [
-      new THREE.MeshLambertMaterial({ map: sideTextureFactory() }),
-      new THREE.MeshLambertMaterial({ map: topTextureFactory() }),
+      new THREE.MeshLambertMaterial({ map: sideTextureFactory(), ...options }),
+      new THREE.MeshLambertMaterial({ map: topTextureFactory(), ...options }),
     ];
     materials.forEach((material) => { material.userData.shared = true; });
-    this._sharedBoxMaterials.set(key, materials);
+    this._sharedObstacleMaterials.set(key, materials);
     return materials;
   }
 
   // Per key, because the boxes and the boundary walls are torn down separately
   // and each owns only its own entry.
-  _disposeSharedBoxMaterials(key) {
-    const materials = this._sharedBoxMaterials?.get(key);
+  _disposeSharedObstacleMaterials(key) {
+    const materials = this._sharedObstacleMaterials?.get(key);
     if (!materials) return;
     materials.forEach((material) => {
       material.map?.dispose();
       material.dispose();
     });
-    this._sharedBoxMaterials.delete(key);
+    this._sharedObstacleMaterials.delete(key);
+  }
+
+  // Bakes a texture's UV transform into the vertices one geometry group uses, so
+  // the material no longer carries it and can be shared by every obstacle of its
+  // kind. Built with the same `Matrix3.setUvTransform` Three uses for
+  // `map.matrix` (Texture.updateMatrix), so the vertices end up where the shader
+  // would have put them. Groups must not share vertices, which holds for the box
+  // and cone geometries this is used on.
+  _bakeGroupUvTransform(geometry, groupIndex, transform) {
+    const { repeatX = 1, repeatY = 1, rotation = 0, centerX = 0, centerY = 0 } = transform;
+    const group = geometry.groups[groupIndex];
+    const index = geometry.getIndex();
+    const uv = geometry.attributes.uv;
+    const matrix = new THREE.Matrix3().setUvTransform(0, 0, repeatX, repeatY, rotation, centerX, centerY);
+    const scratch = new THREE.Vector2();
+    const seen = new Set();
+    for (let i = group.start; i < group.start + group.count; i += 1) {
+      const vertex = index.getX(i);
+      if (seen.has(vertex)) continue;
+      seen.add(vertex);
+      scratch.set(uv.getX(vertex), uv.getY(vertex)).applyMatrix3(matrix);
+      uv.setXY(vertex, scratch.x, scratch.y);
+    }
+    uv.needsUpdate = true;
   }
 
   // A BoxGeometry whose UVs already carry the tiling and whose faces are grouped
@@ -1776,7 +1803,7 @@ class RenderManager {
       this._clearObjectForRemoval(mesh);
     });
     this.boundaryMeshes = [];
-    this._disposeSharedBoxMaterials('boundary');
+    this._disposeSharedObstacleMaterials('boundary');
     this._clearDebugLabels('boundary');
 
     const wallHeight = 5;
@@ -1796,7 +1823,7 @@ class RenderManager {
 
     const northWall = new THREE.Mesh(
       this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, BOX_TEXTURE_SCALES),
-      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
+      this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
     northWall.castShadow = true;
@@ -1811,7 +1838,7 @@ class RenderManager {
 
     const southWall = new THREE.Mesh(
       this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, BOX_TEXTURE_SCALES),
-      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
+      this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
     southWall.castShadow = true;
@@ -1825,7 +1852,7 @@ class RenderManager {
 
     const eastWall = new THREE.Mesh(
       this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, BOX_TEXTURE_SCALES),
-      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
+      this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
     eastWall.castShadow = true;
@@ -1839,7 +1866,7 @@ class RenderManager {
 
     const westWall = new THREE.Mesh(
       this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, BOX_TEXTURE_SCALES),
-      this._getSharedBoxMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
+      this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
     westWall.castShadow = true;
@@ -1904,7 +1931,8 @@ class RenderManager {
     this.obstacleMeshes = [];
     // After the meshes, so nothing is still pointing at them. The boundary walls
     // keep their own entry and are not cleared here.
-    this._disposeSharedBoxMaterials('box');
+    this._disposeSharedObstacleMaterials('box');
+    this._disposeSharedObstacleMaterials('pyramid');
     this._clearDebugLabels('obstacle');
   }
 
@@ -1969,24 +1997,30 @@ class RenderManager {
           geometry.rotateX(Math.PI);
         }
 
-        const pyramidTexture = createPyramidTexture();
+        // The tiling rides on the vertices rather than on a texture of this
+        // pyramid's own, so every pyramid in the world shares one pair of
+        // materials. Same reasoning as the boxes above.
         const pyramidBaseSpan = Math.max(obs.w, obs.d);
         const pyramidSlantHeight = Math.hypot(h, pyramidBaseSpan / 2);
-        pyramidTexture.repeat.set(pyramidBaseSpan / 8, pyramidSlantHeight / 8);
-
-        const roofTexture = createRoofTexture();
-        roofTexture.repeat.set(obs.w / 2, obs.d / 2);
-        if (obs.inverted) {
-          roofTexture.rotation = Math.PI;
-          roofTexture.center.set(0.5, 0.5);
-        }
+        this._bakeGroupUvTransform(geometry, 0, {
+          repeatX: pyramidBaseSpan / PYRAMID_TEXTURE_SCALE,
+          repeatY: pyramidSlantHeight / PYRAMID_TEXTURE_SCALE,
+        });
+        this._bakeGroupUvTransform(geometry, 1, {
+          repeatX: obs.w / PYRAMID_ROOF_TEXTURE_SCALE,
+          repeatY: obs.d / PYRAMID_ROOF_TEXTURE_SCALE,
+          // An inverted pyramid's base is seen from above, so its roof turns
+          // with it.
+          rotation: obs.inverted ? Math.PI : 0,
+          centerX: 0.5,
+          centerY: 0.5,
+        });
 
         mesh = new THREE.Mesh(
           geometry,
-          [
-            new THREE.MeshLambertMaterial({ map: pyramidTexture, flatShading: true }),
-            new THREE.MeshLambertMaterial({ map: roofTexture, flatShading: true }),
-          ],
+          this._getSharedObstacleMaterials(
+            'pyramid', createPyramidTexture, createRoofTexture, { flatShading: true }
+          ),
         );
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
         mesh.rotation.y = obs.rotation || 0;
@@ -1999,7 +2033,7 @@ class RenderManager {
       } else {
         mesh = new THREE.Mesh(
           this._prepareBoxGeometry(obs.w, h, obs.d, BOX_TEXTURE_SCALES),
-          this._getSharedBoxMaterials('box', createBoxWallTexture, createRoofTexture),
+          this._getSharedObstacleMaterials('box', createBoxWallTexture, createRoofTexture),
         );
         mesh.position.set(obs.x, baseY + h / 2, obs.z);
         mesh.rotation.y = obs.rotation || 0;
