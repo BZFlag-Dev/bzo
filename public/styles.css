@@ -1574,7 +1574,10 @@ body.observing #roamStatus {
      tooltip; the ceiling is the width the others use. A small screen has its own
      rule further down and still fills. */
   width: fit-content;
-  min-width: min(320px, calc(100vw - 32px));
+  /* A floor low enough that the rows decide the width rather than this does; it
+     is here so a menu trimmed down to a couple of entries still reads as a
+     dialog. */
+  min-width: min(260px, calc(100vw - 32px));
   max-width: min(820px, calc(100vw - 32px));
 }
 
@@ -1718,11 +1721,10 @@ body.observing #roamStatus {
    landscape. The labels fit an equal half at every width bzo runs at, and
    overflow-wrap on them covers the rest. */
 @media (max-width: 600px) {
-  /* Filling the screen is worth it when the screen is narrow and the dialog
-     would otherwise be squeezed. On a wide short one it is the opposite: an
-     841px settings panel holding a column of short rows is mostly empty, and it
-     leaves nowhere to tap to dismiss it. Those keep the widths they ask for. */
-  #settingsHud,
+  /* Filling the screen is worth it for a dialog holding prose or a form that
+     would otherwise be squeezed. Settings is not one: it is a column of short
+     rows, and it takes its content's width here as it does everywhere, so it is
+     only as wide as its widest row needs. */
   #helpPanel,
   #audioOverlay,
   #operatorOverlay,
