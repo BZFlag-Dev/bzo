@@ -6,6 +6,11 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.61] - 2026-09-05
+
+### Changed
+- The second team on a map is founded across from the first. Upstream picks evenly among the teams that tie (`autoTeamSelect`, `bzfs.cxx:1902`), and with one team down and three empty, two of the three are neighbours -- so the team across the map came up only a third of the time and two players testing landed beside each other more often than not. That one choice is weighted by the squared distance between the two teams' bases, which on a map with its bases at the compass points makes the far team exactly twice as likely as either neighbour: 50/25/25. Which team is across from which comes from the bases rather than from the team numbering, since that is a property of the map. Only that choice is weighted -- once two teams are populated there is no single team across the map, a player joining teams that already exist is picked as upstream picks, and a map with no bases falls back to the even pick.
+
 ## [1.0.60] - 2026-09-05
 
 ### Fixed
