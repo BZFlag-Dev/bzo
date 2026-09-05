@@ -6,6 +6,19 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.59] - 2026-09-05
+
+### Added
+- Team mates are shaded apart within their team's colour. Upstream gives every tank on a team the one colour (`Team::getTankColor`, `Team.cxx:30`) and has nothing per player; bzo already gave every player a colour of their own outside team mode, and the radar already drew blips in whatever the server assigned, so this narrows that same picker to a band around the team colour with only team mates to stay clear of. Two red tanks are told apart at a range where the labels are unreadable, and a red tank is still unmistakably red: the hue spread is bounded by the closest pair of team colours, red and purple, and `test:team-mode` asserts that against the colour table rather than trusting a comment. Nothing is rebalanced when a player leaves -- the gap they free is the one the next joiner is most likely to take, and a tank that changed colour mid-match would undo the only thing the shade is for.
+
+### Changed
+- A box is two draw calls, a pyramid two, and every one of them in the world is now drawn from a single merged mesh. Upstream collates the faces of one mesh that share a material into a `MeshFragSceneNode` (`MeshSceneNodeGenerator.cxx:206`); bzo collates the same way but across obstacles rather than within one, because a draw call costs far more here than it does there -- 24 to 30 microseconds on the low-power client this is measured against, with the GPU idle. On `hix.bzw` the 58 boxes and 60 pyramids were 236 draws plus 118 more for their shadows; they are now two meshes, four draws and two shadows. Bases and teleporters stay out, which is upstream's rule as much as ours: one carries a team colour and a hidden face, the other animates.
+- A flag's arrival warp is built the first time it warps. A world of 200 flags carried 1600 discs that drew nothing but still had a matrix composed for each of them, twice a frame.
+- Boundary walls no longer build the face that points away from the arena, so backing a tank against the border in third person shows the tank rather than the back of a wall. Nothing is made transparent: the camera meets the inward face from behind and back-face culling removes it. From every position a player can occupy the wall is as solid as it was.
+- The debug HUD stops below the radar rather than scrolling underneath it.
+
+Together the obstacle and flag changes take the low-power reference client from 34 to 57 frames per second at a fixed spawn, with draw calls down from 523 to 283 and the frame from 27.5ms to 16.7ms.
+
 ## [1.0.58] - 2026-09-04
 
 ### Changed
