@@ -1566,6 +1566,16 @@ body.observing #roamStatus {
   z-index: 1000;
   text-align: left;
   display: none;
+  /* The other dialogs hold prose or a form and want the width they are given.
+     This one is a list of short label-and-value rows, and stretched to 820px it
+     was mostly gap. It takes the width of its widest row instead, with the
+     padding as the margin -- still centred, because the transform does that
+     rather than the width. The floor keeps a short list from looking like a
+     tooltip; the ceiling is the width the others use. A small screen has its own
+     rule further down and still fills. */
+  width: fit-content;
+  min-width: min(320px, calc(100vw - 32px));
+  max-width: min(820px, calc(100vw - 32px));
 }
 
 #settingsHud .dialogTitle,
