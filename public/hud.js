@@ -534,31 +534,22 @@ export function updateScoreboard({
 
   playerData.sort(compareScoreboardPlayers);
 
-  // The header doubles as a legend for the player's own tank: the colour it is
-  // drawn in and the flag it is carrying, in the same shape a row uses. Both are
-  // otherwise only readable by finding your own row, and the colour in
-  // particular is worth having to hand now that team mates are shaded apart --
-  // "which red am I" is a question the roster cannot answer at a glance.
-  const header = document.getElementById('scoreboardHeader');
-  if (header) {
-    const headerName = header.querySelector('.scoreboardName');
-    const headerStats = header.querySelector('.scoreboardStats');
-    const current = playerData.find((player) => player.isCurrent);
-    if (headerName) {
-      headerName.style.color = current?.color ? colorToCSS(current.color) : '';
-    }
-    let headerFlag = header.querySelector('.scoreboardFlag');
-    if (current?.flag) {
-      if (!headerFlag) {
-        headerFlag = document.createElement('span');
-        headerFlag.className = 'scoreboardFlag';
-        header.insertBefore(headerFlag, headerStats);
-      }
-      headerFlag.textContent = `/${current.flag.label}`;
-      headerFlag.style.color = colorToCSS(current.flag.color);
-    } else if (headerFlag) {
-      headerFlag.remove();
-    }
+  // The panel's title is the player's own name, and it now carries the colour
+  // their tank is drawn in and the flag they are holding, in the same shape a
+  // row uses. Both were otherwise readable only by finding your own row, and the
+  // colour in particular is worth having to hand now that team mates are shaded
+  // apart -- "which red am I" is a question the roster cannot answer at a
+  // glance. The flag lives in its own element because the title's text is
+  // written from several places and a child span would not survive them.
+  const current = playerData.find((player) => player.isCurrent);
+  const titleEl = document.getElementById('playerName');
+  if (titleEl) {
+    titleEl.style.color = current?.color ? colorToCSS(current.color) : '';
+  }
+  const titleFlagEl = document.getElementById('playerFlag');
+  if (titleFlagEl) {
+    titleFlagEl.textContent = current?.flag ? `/${current.flag.label}` : '';
+    titleFlagEl.style.color = current?.flag ? colorToCSS(current.flag.color) : '';
   }
 
   // Create scoreboard entries

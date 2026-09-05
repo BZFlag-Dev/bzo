@@ -1175,7 +1175,12 @@ body {
   display: none;
 }
 
-@media (max-width: 600px) {
+/* Short counts as small, not just narrow. A phone held in landscape is wide and
+   short -- a Pixel 10 reports 857x411 -- so a width-only breakpoint hands it the
+   desktop layout and the HUD does not fit the 411 pixels that actually bind.
+   Every compact rule below is paired with a height so the same styling reaches
+   both shapes of small screen. */
+@media (max-width: 600px), (max-height: 500px) {
   #debugHud {
     width: 90vw;
     font-size: 11px;
@@ -1480,7 +1485,7 @@ body.observing #roamStatus {
   pointer-events: none;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 600px), (max-height: 500px) {
   #radar {
     width: 48vw;
     height: 48vw;
@@ -1602,7 +1607,7 @@ body.observing #roamStatus {
   color: var(--color-state-on);
 }
 
-@media (max-width: 600px) {
+@media (max-width: 600px), (max-height: 500px) {
   #settingsHud,
   #helpPanel,
   #audioOverlay,
@@ -1804,7 +1809,7 @@ body.observing #roamStatus {
 #settingsHud .settingsMenuRow.active {
   background: transparent;
 }
-@media (max-width: 600px) {
+@media (max-width: 600px), (max-height: 500px) {
   .settingsHudBtn:not(.settingsMenuRow) {
     min-width: 60vw;
     max-width: 98vw;
@@ -1843,7 +1848,7 @@ body.observing #roamStatus {
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 600px), (max-height: 500px) {
   .audioSettings {
     padding: 0.75rem;
   }
