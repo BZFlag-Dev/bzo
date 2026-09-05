@@ -3260,7 +3260,9 @@ function init() {
     // the control itself rather than a list of ids means a button added later is
     // covered without touching this, and it holds in mouse mode too: pressing
     // Settings should never also fire the tank.
-    if (e.target.closest && e.target.closest('button, a, input, select, textarea, #playerName')) {
+    // .playerLabel rather than #playerName: the flag beside the name is part of
+    // the same label, and clicking it should not also fire the tank.
+    if (e.target.closest && e.target.closest('button, a, input, select, textarea, .playerLabel')) {
       return;
     }
 

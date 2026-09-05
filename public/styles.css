@@ -681,8 +681,17 @@ body {
   white-space: nowrap;
 }
 
+/* Name and flag are one item wherever they appear, so a row's spacing pushes
+   the score away from the pair instead of the flag away from the name. Upstream
+   writes them as one string with no space at all -- callsign, "/", abbreviation
+   -- and only the colour changes at the slash. */
+.playerLabel {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
 .scoreboardFlag {
-  margin-left: 6px;
   white-space: nowrap;
   font-weight: bold;
 }

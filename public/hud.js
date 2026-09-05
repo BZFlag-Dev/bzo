@@ -478,6 +478,23 @@ export function compareScoreboardPlayers(a, b) {
   return a.connectDate - b.connectDate;
 }
 
+// One shape for a player's name and the flag they carry, wherever it is written.
+// Upstream builds a single string -- the callsign, then "/", then the flag's
+// abbreviation, with the colour changing at the slash and no space anywhere
+// (ScoreboardRenderer::drawPlayerScore) -- so the two sit tight here too and
+// only the colour changes between them. Both the panel's title and every row go
+// through this, which is what keeps them the same.
+function writePlayerLabel(nameEl, flagEl, { name, nameColor, flag } = {}) {
+  if (nameEl) {
+    if (name !== undefined) nameEl.textContent = name;
+    if (nameColor !== undefined) nameEl.style.color = nameColor ? colorToCSS(nameColor) : '';
+  }
+  if (flagEl) {
+    flagEl.textContent = flag ? `/${flag.label}` : '';
+    flagEl.style.color = flag ? colorToCSS(flag.color) : '';
+  }
+}
+
 export function updateScoreboard({
   myPlayerId,
   myPlayerName,
@@ -542,15 +559,13 @@ export function updateScoreboard({
   // glance. The flag lives in its own element because the title's text is
   // written from several places and a child span would not survive them.
   const current = playerData.find((player) => player.isCurrent);
-  const titleEl = document.getElementById('playerName');
-  if (titleEl) {
-    titleEl.style.color = current?.color ? colorToCSS(current.color) : '';
-  }
-  const titleFlagEl = document.getElementById('playerFlag');
-  if (titleFlagEl) {
-    titleFlagEl.textContent = current?.flag ? `/${current.flag.label}` : '';
-    titleFlagEl.style.color = current?.flag ? colorToCSS(current.flag.color) : '';
-  }
+  writePlayerLabel(
+    document.getElementById('playerName'),
+    document.getElementById('playerFlag'),
+    // The name is written from elsewhere; only the colour and the flag belong
+    // to this.
+    { nameColor: current?.color ?? null, flag: current?.flag },
+  );
 
   // Create scoreboard entries
   playerData.forEach(player => {
@@ -569,23 +584,23 @@ export function updateScoreboard({
     if (player.color) {
       entry.style.color = colorToCSS(player.color);
     }
+    // Name and flag are one item, so the row's spacing pushes the score away
+    // from the pair rather than the flag away from the name.
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'playerLabel';
     const nameSpan = document.createElement('span');
     nameSpan.className = 'scoreboardName';
-    nameSpan.textContent = player.name;
+    const flagSpan = document.createElement('span');
+    flagSpan.className = 'scoreboardFlag';
+    // The row already carries the player's colour; only the flag differs.
+    writePlayerLabel(nameSpan, flagSpan, { name: player.name, flag: player.flag });
+    labelSpan.append(nameSpan, flagSpan);
 
     const statsSpan = document.createElement('span');
     statsSpan.className = 'scoreboardStats';
     statsSpan.textContent = `${player.kills} / ${player.deaths}`;
 
-    entry.appendChild(nameSpan);
-    if (player.flag) {
-      const flagSpan = document.createElement('span');
-      flagSpan.className = 'scoreboardFlag';
-      flagSpan.textContent = `/${player.flag.label}`;
-      flagSpan.style.color = colorToCSS(player.flag.color);
-      entry.appendChild(flagSpan);
-    }
-    entry.appendChild(statsSpan);
+    entry.append(labelSpan, statsSpan);
     scoreboardList.appendChild(entry);
   });
 }

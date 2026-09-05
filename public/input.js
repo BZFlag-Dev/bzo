@@ -643,7 +643,7 @@ const domRefs = {
   closeOperatorBtn: null,
   closeAudioBtn: null,
   wireframeBtn: null,
-  playerNameEl: null,
+  playerLabelEl: null,
   voicePermissionBtn: null,
   voiceMicrophoneBtn: null,
 };
@@ -1264,7 +1264,9 @@ function bindHudElements() {
   domRefs.closeOperatorBtn = document.getElementById('closeOperatorBtn');
   domRefs.closeAudioBtn = document.getElementById('closeAudioBtn');
   domRefs.wireframeBtn = document.getElementById('wireframeBtn');
-  domRefs.playerNameEl = document.getElementById('playerName');
+  // The whole label, not just the name: the flag beside it opens Settings too,
+  // because the two read as one thing.
+  domRefs.playerLabelEl = document.getElementById('playerLabel');
   domRefs.voicePermissionBtn = document.getElementById('voicePermissionBtn') ||
     document.getElementById('voiceRequestPermissionBtn') ||
     document.getElementById('requestVoicePermissionBtn');
@@ -1421,8 +1423,8 @@ function bindHudElements() {
     });
   }
 
-  if (domRefs.playerNameEl) {
-    domRefs.playerNameEl.addEventListener('click', (e) => {
+  if (domRefs.playerLabelEl) {
+    domRefs.playerLabelEl.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       openSettingsDialog();
