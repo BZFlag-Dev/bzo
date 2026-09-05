@@ -5599,12 +5599,25 @@ function predictLocalPlayerTeleport(startState, endState, nowMs) {
   };
 }
 
+// Whether `virtualInput` is worth reading: something is producing it. This was
+// spelled three different ways for driving, firing and dropping a flag, and the
+// two that left out `virtualControlsEnabled` made the on-screen fire and flag
+// buttons dead for anyone who turned the controls on deliberately rather than
+// being handed them by a phone. One predicate so they cannot drift again.
+//
+// `isMobile` is redundant -- a phone turns the controls on at startup, and with
+// them off there is no overlay to press -- but it is kept so no case that
+// worked before can stop working.
+function usesVirtualInput() {
+  return isMobile || isXREnabled() || isGamepadConnected() || virtualControlsEnabled;
+}
+
 // The fire key or button, from whichever surface the player is using. A tank
 // shoots with it; an observer cycles the roaming view with it, which is the
 // whole reason it is shared rather than inlined.
 function isFireHeld() {
   return (!isMobile && keys[FIRE_KEY])
-    || ((isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.fire);
+    || (usesVirtualInput() && virtualInput.fire);
 }
 
 // Every tank that can be roamed to: alive, joined, and not an observer, which is
@@ -5928,7 +5941,7 @@ function gatherDriveInput() {
   let down = false;
 
   // Use virtual input if gamepad connected, XR enabled, or virtual controls enabled
-  if (isGamepadConnected() || virtualControlsEnabled || isXREnabled()) {
+  if (usesVirtualInput()) {
     forward = virtualInput.forward;
     turn = virtualInput.turn;
     up = virtualInput.jump;
@@ -6544,7 +6557,7 @@ function handleMotion(deltaTime) {
   // Drop: the Space key is handled with the other discrete keys, so this is the
   // touch button, the XR A button, and the gamepad's spare face button. Held
   // down it must drop once, not once a frame.
-  const dropHeld = (isMobile || isXREnabled() || isGamepadConnected()) && virtualInput.drop;
+  const dropHeld = usesVirtualInput() && virtualInput.drop;
   if (dropHeld && !dropWasHeld) requestFlagDrop();
   dropWasHeld = dropHeld;
 

@@ -893,6 +893,9 @@ function setWireframeMode(enabled) {
   if (domRefs.wireframeBtn) {
     domRefs.wireframeBtn.classList.toggle('active', enabled);
   }
+  // Same reason as toggleVirtualControls: the button's handler stops the click,
+  // so the settings menu only learns the new state if it is told.
+  refreshHudButtons();
 }
 
 function updateSettingsBtn() {
@@ -1146,6 +1149,10 @@ export function toggleVirtualControls(forceState) {
   domRefs.controlsOverlay.style.display = next ? 'block' : 'none';
   document.body.classList.toggle('virtual-controls-active', next);
   updateVirtualControlsBtn();
+  // The button's own handler stops the click propagating, so the settings menu
+  // never sees it and never re-reads the row. Toggling looked like it did
+  // nothing there. toggleMouseMode has always ended this way.
+  refreshHudButtons();
   hudContext.showMessage(`Virtual Controls: ${next ? 'Enabled' : 'Disabled'}`);
 }
 
