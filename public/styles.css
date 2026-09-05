@@ -50,6 +50,27 @@ html, body {
   --motion-unit: min(calc(100vw / 256), calc(100vh / 192));
   --motion-box: calc(74 * var(--motion-unit));
   --motion-dead-box: calc(10 * var(--motion-unit));
+
+  /* Upstream sizes its whole HUD off that one scale rather than off breakpoints,
+     and bzo used it only for the targeting box. The panels use it too now, so a
+     screen that is small in either direction gets a HUD in proportion instead of
+     one chosen by a width breakpoint it may fall between: a phone in landscape
+     is 857x411, which no width rule reads as small.
+
+     Clamped, because upstream is scaling geometry and this is scaling text. The
+     unit is 5.63px on a 1920x1080 desktop and 2.14px on that phone, so a linear
+     20px becomes 7.6px -- the right proportion and unreadable. The ceilings are
+     what the desktop already had, so nothing there changes; the floors are
+     legibility. Between them the size follows the screen continuously. */
+  --hud-unit: var(--motion-unit);
+  --hud-font-title: clamp(13px, calc(3.6 * var(--hud-unit)), 20px);
+  --hud-font-body: clamp(11px, calc(2.5 * var(--hud-unit)), 14px);
+  --hud-font-small: clamp(10px, calc(2.1 * var(--hud-unit)), 12px);
+  --hud-gap: clamp(4px, calc(2 * var(--hud-unit)), 12px);
+  --hud-pad: clamp(4px, calc(1.8 * var(--hud-unit)), 10px);
+  /* Was 4vmin, which is 43px on a desktop and 16px on a phone. In the box's own
+     unit it keeps its desktop width and stays legible on a small screen. */
+  --altimeter-width: clamp(14px, calc(8 * var(--hud-unit)), 48px);
 }
 
 /* Scrollbars follow the theme rather than the platform's grey. `scrollbar-color`
@@ -133,8 +154,10 @@ canvas {
   max-height: 33vh;
   background: rgba(0,0,0,0.5);
   color: #fff;
-  font: 16px monospace;
-  padding: 8px 10px 6px 10px;
+  /* Six lines of messages are sized off this, so a fixed 16px asked for 120px of
+     a 135px budget on a short screen and squeezed the tab row out entirely. */
+  font: var(--hud-font-body) monospace;
+  padding: var(--hud-pad) var(--hud-pad) calc(var(--hud-pad) * 0.75) var(--hud-pad);
   border-radius: 12px 12px 0 0;
   z-index: 100;
   display: flex;
@@ -203,8 +226,8 @@ canvas {
   background: rgba(24, 24, 24, 0.9);
   color: #ddd;
   border-radius: 5px;
-  font: 12px monospace;
-  padding: 3px 7px;
+  font: var(--hud-font-small) monospace;
+  padding: calc(var(--hud-pad) / 2) var(--hud-pad);
   cursor: pointer;
 }
 
@@ -510,12 +533,12 @@ body {
 }
 
 #stats {
-  margin-bottom: 15px;
-  font-size: 16px;
+  margin-bottom: var(--hud-gap);
+  font-size: var(--hud-font-body);
   line-height: 1.6;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--hud-gap);
   justify-content: space-between;
 }
 
@@ -523,7 +546,7 @@ body {
   cursor: pointer;
   color: #4CAF50;
   font-weight: bold;
-  font-size: 20px;
+  font-size: var(--hud-font-title);
 }
 
 .settingsIcon {
@@ -580,7 +603,7 @@ body {
 #scoreboardHeader {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--hud-font-small);
   color: #888;
   margin-bottom: 5px;
   padding-bottom: 5px;
@@ -588,13 +611,13 @@ body {
 }
 
 #scoreboardList {
-  font-size: 14px;
+  font-size: var(--hud-font-body);
   max-height: none;
 }
 
 #teamScoreboard {
-  font-size: 14px;
-  margin-bottom: 10px;
+  font-size: var(--hud-font-body);
+  margin-bottom: var(--hud-gap);
 }
 
 .teamScoreboardEmpty {
@@ -619,8 +642,8 @@ body {
 .scoreboardEntry {
   display: flex;
   justify-content: space-between;
-  margin: 5px 0;
-  padding: 5px 8px;
+  margin: calc(var(--hud-gap) / 2) 0;
+  padding: calc(var(--hud-pad) / 2) var(--hud-pad);
   border-radius: 3px;
 }
 
@@ -1512,7 +1535,7 @@ body.observing #roamStatus {
   box-sizing: border-box;
   overflow-y: auto;
   overflow-x: hidden;
-  font-size: 20px;
+  font-size: var(--hud-font-title);
   line-height: 1.45;
 }
 
@@ -1615,8 +1638,10 @@ body.observing #roamStatus {
   #entryDialog {
     width: calc(100vw - 16px);
     height: min(88vh, 900px);
-    padding: 16px;
-    font-size: 20px;
+    padding: var(--hud-gap);
+    /* Not a fixed 20px: this block now also catches a screen that is small
+       because it is short, where 20px is what made a dialog outsized. */
+    font-size: var(--hud-font-title);
   }
 
   .settingsMenuRow {
@@ -1818,12 +1843,18 @@ body.observing #roamStatus {
   }
 }
 
+/* Attached to the targeting box's right edge, whatever the screen. The offset
+   used to be a fixed 40px against a width in vmin, so the two only agreed at one
+   size: 4vmin is 43px on a 1920x1080 desktop and the tape sat against the box,
+   but 16px on a 857x411 phone, leaving a 24px gap. Both terms are the box's own
+   unit now, so `right` puts the tape's left edge exactly on the box's right edge
+   and it cannot drift again. */
 #altimeter {
   position: fixed;
   top: 50%;
-  right: calc(50% - var(--motion-box) / 2 - 40px); /* right of controlBox */
+  right: calc(50% - var(--motion-box) / 2 - var(--altimeter-width));
   transform: translateY(-50%);
-  width: 4vmin;
+  width: var(--altimeter-width);
   height: var(--motion-box);
   z-index: 50;
   pointer-events: none;
