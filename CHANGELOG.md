@@ -26,6 +26,9 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [1.0.59] - 2026-09-05
 
+### Fixed
+- Shadows point straight down and never move when Dynamic Lighting is off. `setWorldTime` returned early on that setting, so the sun kept the `(0, 1, 0)` a `DirectionalLight` is born with -- a permanent noon -- and the sun and moon were removed from the sky as well. Neither belongs to that setting: what fragment uniforms constrain is a scene full of point lights, not one directional sun, and the sun is what the sky, the day cycle and the direction of every projected shadow are read off. The lights a shot, an explosion and a jump jet add are still gated by it, which is the cost the capability is about. (Shipped in this release but missing from its notes.)
+
 ### Added
 - Team mates are shaded apart within their team's colour. Upstream gives every tank on a team the one colour (`Team::getTankColor`, `Team.cxx:30`) and has nothing per player; bzo already gave every player a colour of their own outside team mode, and the radar already drew blips in whatever the server assigned, so this narrows that same picker to a band around the team colour with only team mates to stay clear of. Two red tanks are told apart at a range where the labels are unreadable, and a red tank is still unmistakably red: the hue spread is bounded by the closest pair of team colours, red and purple, and `test:team-mode` asserts that against the colour table rather than trusting a comment. Nothing is rebalanced when a player leaves -- the gap they free is the one the next joiner is most likely to take, and a tank that changed colour mid-match would undo the only thing the shade is for.
 
