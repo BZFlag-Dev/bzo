@@ -71,6 +71,17 @@ html, body {
   /* Was 4vmin, which is 43px on a desktop and 16px on a phone. In the box's own
      unit it keeps its desktop width and stays legible on a small screen. */
   --altimeter-width: clamp(14px, calc(8 * var(--hud-unit)), 48px);
+
+  /* The gap from a HUD panel to the edge of the screen. One value so the radar,
+     the scoreboard, the debug HUD and the chat cannot drift apart.
+
+     Deliberately not env(safe-area-inset-*), which every one of these used to
+     read. On a phone in landscape the cutout inset costs an edge of a 411px-tall
+     screen, and that is real estate bzo cannot spare: the camera hole covering a
+     corner of the scoreboard is a better trade than the whole panel moving in to
+     avoid it, and the covered part is still touchable. `viewport-fit=cover`
+     stays, because drawing under the cutout is now the point. */
+  --hud-edge: 10px;
 }
 
 /* Scrollbars follow the theme rather than the platform's grey. `scrollbar-color`
@@ -148,7 +159,7 @@ canvas {
 #chatWindow {
   position: fixed;
   left: 50%;
-  bottom: max(10px, env(safe-area-inset-bottom));
+  bottom: var(--hud-edge);
   transform: translateX(-50%);
   width: 95vw;
   max-height: 33vh;
@@ -324,7 +335,7 @@ body.chat-active #chatInput {
 @media (orientation: landscape) and (min-width: 801px) {
   body.virtual-controls-active #chatWindow {
     left: calc(2vw + 120px + 10px);
-    right: calc(max(2vw, env(safe-area-inset-right)) + 120px + 10px);
+    right: calc(2vw + 120px + 10px);
     width: auto;
     transform: none;
   }
@@ -337,7 +348,7 @@ body.chat-active #chatInput {
 @media (orientation: landscape) and (min-width: 901px) {
   body.chat-avoid-debug #chatWindow {
     left: 2.5vw;
-    right: calc(max(10px, env(safe-area-inset-right)) + 340px);
+    right: calc(10px + 340px);
     width: auto;
     max-width: none;
     transform: none;
@@ -408,12 +419,12 @@ body.chat-active #chatInput {
   --mobile-btn-size: min(80px, 15svh);
   --mobile-btn-gap: min(10px, 2svh);
   --mobile-btn-pitch: calc(var(--mobile-btn-size) + var(--mobile-btn-gap));
-  --mobile-btn-base: max(2vw, env(safe-area-inset-bottom));
+  --mobile-btn-base: 2vw;
 }
 
 .mobile-joystick {
   position: absolute;
-  left: max(2vw, env(safe-area-inset-left));
+  left: 2vw;
   bottom: 5vh;
   width: 120px;
   height: 120px;
@@ -443,7 +454,7 @@ body.chat-active #chatInput {
 
 .mobile-btn {
   position: absolute;
-  right: max(2vw, env(safe-area-inset-right));
+  right: 2vw;
   width: var(--mobile-btn-size);
   height: var(--mobile-btn-size);
   background: rgba(76,175,80,0.85);
@@ -519,8 +530,8 @@ body {
 
 #mainhud {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  left: max(10px, env(safe-area-inset-left));
+  top: var(--hud-edge);
+  left: var(--hud-edge);
   padding: 1vw;
   border-radius: 10px;
   box-sizing: border-box;
@@ -1185,8 +1196,8 @@ body {
 
 #debugHud {
   position: fixed;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  right: max(10px, env(safe-area-inset-right));
+  bottom: var(--hud-edge);
+  right: var(--hud-edge);
   z-index: 100;
   background: var(--color-panel-bg);
   padding: var(--hud-pad);
@@ -1204,10 +1215,10 @@ body {
      below it instead of scrolling away underneath. It scrolls already, so the
      rows this costs are still reachable. */
   max-height: max(120px, calc(100vh
-    - max(10px, env(safe-area-inset-top))
+    - var(--hud-edge)
     - var(--radar-size)
     - var(--hud-edge-gap)
-    - max(10px, env(safe-area-inset-bottom))));
+    - var(--hud-edge)));
   overflow-y: auto;
   display: none;
 }
@@ -1499,8 +1510,8 @@ body.observing #roamStatus {
 
 #radar {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
+  top: var(--hud-edge);
+  right: var(--hud-edge);
   z-index: 120;
   border: none;
   border-radius: 6px;
@@ -1520,7 +1531,7 @@ body.observing #roamStatus {
     height: 48vw;
     max-width: calc(100vw - 8vw);
     max-height: calc(100vw - 8vw);
-    right: max(2vw, env(safe-area-inset-right));
+    right: 2vw;
     min-width: 60px;
     min-height: 60px;
   }
@@ -1880,7 +1891,7 @@ body.observing #roamStatus {
 @media (max-width: 900px) {
   .voiceChannelHud {
     left: auto;
-    right: max(10px, env(safe-area-inset-right));
+    right: 10px;
     max-width: 9rem;
   }
 }
@@ -1914,7 +1925,7 @@ body.observing #roamStatus {
 
   .voiceChannelHud {
     top: calc(50% + 2.25rem);
-    right: max(8px, env(safe-area-inset-right));
+    right: 8px;
     min-width: 5.75rem;
     max-width: 8rem;
     padding: 0.4rem 0.55rem;

@@ -875,6 +875,20 @@ and with `renderScale`; `programsWindow` is the low-high program count over the
 window, and a count that moves during play is Three recompiling rather than a
 bigger scene, since its program cache key includes the light count.
 
+### The HUD ignores the safe-area insets
+
+Every panel positioned itself with `max(10px, env(safe-area-inset-*))`. They use
+a plain `--hud-edge` now. On a phone in landscape -- 857x411 on the Pixel that
+this was measured against -- honouring the cutout inset spends an edge of a
+screen that has none to spare. A camera hole over a corner of the scoreboard is
+the better trade: the panel keeps its size, and the covered part is still
+touchable. `viewport-fit=cover` stays in the meta tag, because drawing under the
+cutout is the point rather than an oversight.
+
+One value for the same reason the sizes share one unit: the radar, the
+scoreboard, the debug HUD and the chat cannot drift apart if they read the same
+variable.
+
 ### Measurement knobs
 
 Two URL parameters exist to tell costs apart on hardware nobody here owns, since
