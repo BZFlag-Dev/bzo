@@ -1690,11 +1690,10 @@ body.observing #roamStatus {
   #audioOverlay,
   #operatorOverlay,
   #entryDialog {
-    width: calc(100vw - 16px);
     height: min(88vh, 900px);
     padding: var(--hud-gap);
-    /* Not a fixed 20px: this block now also catches a screen that is small
-       because it is short, where 20px is what made a dialog outsized. */
+    /* Not a fixed 20px: this block also catches a screen that is small because
+       it is short, where 20px is what made a dialog outsized. */
     font-size: var(--hud-font-title);
   }
 
@@ -1721,6 +1720,18 @@ body.observing #roamStatus {
 @media (max-width: 600px) {
   .settingsMenuRow {
     grid-template-columns: minmax(0, 1fr) minmax(7rem, auto);
+  }
+
+  /* Filling the screen is worth it when the screen is narrow and the dialog
+     would otherwise be squeezed. On a wide short one it is the opposite: an
+     841px settings panel holding a column of short rows is mostly empty, and it
+     leaves nowhere to tap to dismiss it. Those keep the widths they ask for. */
+  #settingsHud,
+  #helpPanel,
+  #audioOverlay,
+  #operatorOverlay,
+  #entryDialog {
+    width: calc(100vw - 16px);
   }
 }
 
