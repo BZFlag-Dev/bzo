@@ -637,6 +637,7 @@ const domRefs = {
   audioOverlay: null,
   helpPanel: null,
   closeSettingsBtn: null,
+  closeSettingsTitleBtn: null,
   closeHelpBtn: null,
   operatorBtn: null,
   closeOperatorBtn: null,
@@ -1257,6 +1258,7 @@ function bindHudElements() {
   domRefs.audioOverlay = document.getElementById('audioOverlay');
   domRefs.helpPanel = document.getElementById('helpPanel');
   domRefs.closeSettingsBtn = document.getElementById('closeSettingsHud');
+  domRefs.closeSettingsTitleBtn = document.getElementById('closeSettingsTitleBtn');
   domRefs.closeHelpBtn = document.getElementById('closeHelpBtn');
   domRefs.operatorBtn = document.getElementById('operatorBtn');
   domRefs.closeOperatorBtn = document.getElementById('closeOperatorBtn');
@@ -1368,6 +1370,18 @@ function bindHudElements() {
 
   if (domRefs.closeSettingsBtn) {
     domRefs.closeSettingsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleSettingsHud();
+    });
+  }
+
+  // The [X] in the heading and the Close row at the foot of the menu do the same
+  // thing. Both are kept: in XR the menu is rendered from SETTINGS_MENU_ITEMS as
+  // rows and the heading's button is not one of them, so the row is the only one
+  // reachable there -- and it is the easier target on a controller.
+  if (domRefs.closeSettingsTitleBtn) {
+    domRefs.closeSettingsTitleBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       toggleSettingsHud();

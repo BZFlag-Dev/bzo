@@ -715,9 +715,6 @@ body {
 }
 
 #helpPanel .dialogTitle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin: 0 0 20px 0;
   color: #4CAF50;
   font-size: 2rem;
@@ -800,12 +797,6 @@ body {
   display: none;
 }
 
-#audioOverlay .dialogTitle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
 #audioOverlay .dialogContent {
   display: flex;
   flex-direction: column;
@@ -850,7 +841,6 @@ body {
 #operatorOverlay .dialogTitle {
   margin: 0 0 20px 0;
   color: #4CAF50;
-  text-align: center;
   font-size: 2rem;
 }
 
@@ -1576,6 +1566,21 @@ body.observing #roamStatus {
   font-size: 2rem;
   font-weight: bold;
   text-align: center;
+}
+
+/* Every dialog closes the same way, so every heading lays out the same way:
+   the label, then the [X] against the right edge. Settings offered only a Close
+   row at the bottom of its menu, and the operator panel centred its [X] beside
+   the heading text. The entry dialog is not here on purpose -- it is a form to
+   fill in, not a panel to dismiss. */
+#settingsHud .dialogTitle,
+#helpPanel .dialogTitle,
+#audioOverlay .dialogTitle,
+#operatorOverlay .dialogTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hud-gap);
 }
 
 .settingsHudContent {
