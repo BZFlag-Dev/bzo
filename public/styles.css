@@ -1179,11 +1179,15 @@ body {
   right: max(10px, env(safe-area-inset-right));
   z-index: 100;
   background: var(--color-panel-bg);
-  padding: 15px;
+  padding: var(--hud-pad);
   border-radius: 10px;
-  width: 320px;
+  /* A phone override set this to 90vw, which on an 857px landscape screen is
+     771px and stretched the panel across from its right anchor. As a ceiling on
+     the one width it wants, it does that override's job on a narrow phone and
+     nothing anywhere else. */
+  width: min(320px, 90vw);
   font-family: 'Courier New', monospace;
-  font-size: 12px;
+  font-size: var(--hud-font-small);
   box-sizing: border-box;
   overflow-x: auto;
   /* Both are pinned to the right edge and the radar is on top, so the HUD stops
@@ -1203,14 +1207,6 @@ body {
    desktop layout and the HUD does not fit the 411 pixels that actually bind.
    Every compact rule below is paired with a height so the same styling reaches
    both shapes of small screen. */
-@media (max-width: 600px), (max-height: 500px) {
-  #debugHud {
-    width: 90vw;
-    font-size: 11px;
-    padding: 8px;
-  }
-}
-
 #debugHud h3 {
   font-size: 14px;
   margin-bottom: 10px;
