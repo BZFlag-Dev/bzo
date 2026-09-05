@@ -563,8 +563,16 @@ body {
   justify-content: space-between;
 }
 
-#playerName {
+/* The whole label opens Settings, so the whole label says so: the tooltip and
+   the pointer belong to it rather than to the name alone. The flag takes the
+   name's size, because upstream draws the pair as one run of text and a smaller
+   flag beside a larger name reads as two things. */
+#playerLabel {
   cursor: pointer;
+}
+
+#playerName,
+#playerFlag {
   color: #4CAF50;
   font-weight: bold;
   font-size: var(--hud-font-title);
