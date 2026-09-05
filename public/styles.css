@@ -1709,19 +1709,15 @@ body.observing #roamStatus {
   }
 }
 
-/* How the two columns divide is a question about the row's width, not about the
-   screen being small, so this one stays on a width and does not come along to a
-   short landscape screen. The base rule gives the label and the value an equal
-   half each, and since the label is right aligned and the value left aligned the
-   pair straddles the middle. Letting the value shrink to its content instead
-   hands the label all the slack, and a right aligned label in a wide row ends up
-   against the far edge -- right for a 330px portrait phone, wrong for an 857px
-   landscape one. */
+/* No column override anywhere. The base rule gives the label and the value an
+   equal half each, and since the label is right aligned and the value left
+   aligned the pair straddles the middle -- which is what reads as centred. There
+   used to be a narrow-screen variant that let the value shrink to its content
+   and handed the label all the slack; a right aligned label then hugs the value
+   and the empty space piles up on the far side, in portrait as much as in
+   landscape. The labels fit an equal half at every width bzo runs at, and
+   overflow-wrap on them covers the rest. */
 @media (max-width: 600px) {
-  .settingsMenuRow {
-    grid-template-columns: minmax(0, 1fr) minmax(7rem, auto);
-  }
-
   /* Filling the screen is worth it when the screen is narrow and the dialog
      would otherwise be squeezed. On a wide short one it is the opposite: an
      841px settings panel holding a column of short rows is mostly empty, and it

@@ -652,9 +652,6 @@ let wireframeEnabled = false;
 let orientationMode = null;
 let orientationListenersAttached = false;
 let keyboardListenerAttached = false;
-// Setup can run more than once, and a second copy of this listener would toggle
-// the dialog twice per click and look like it did nothing.
-let outsideClickListenerAttached = false;
 let orientationDebugInitialized = false;
 let settingsMenu = null;
 const XR_SETTINGS_EXCLUDED_IDS = new Set([
@@ -1452,27 +1449,6 @@ function bindHudElements() {
       e.stopPropagation();
       callOptionalHudCallback(['toggleVoiceMicrophone', 'toggleMicrophone']);
     });
-  }
-
-  // A click that lands on nothing dismisses the dialog on top, which is what a
-  // player reaches for on a touch screen and the only thing outside a dialog
-  // that is worth doing while one is open. Without it the click fell through to
-  // the canvas and fired the tank instead.
-  //
-  // The entry dialog is excluded: it is a form to fill in, for the same reason
-  // it carries no close button. Dialogs stop their own clicks propagating, so
-  // anything arriving here started outside them.
-  if (!outsideClickListenerAttached) {
-    document.addEventListener('click', (e) => {
-      const dialog = getVisibleDialogRoot();
-      if (!dialog || dialog.id === 'entryDialog') return;
-      if (e.target.closest?.(`#${dialog.id}`)) return;
-      if (dismissVisibleDialog(dialog.id)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    }, true);
-    outsideClickListenerAttached = true;
   }
 
   if (!keyboardListenerAttached) {
