@@ -1936,6 +1936,86 @@ class RenderManager {
     });
   }
 
+  // Upstream collates the faces of one mesh that share a material into a single
+  // MeshFragSceneNode (MeshSceneNodeGenerator.cxx:206, "a collection of faces
+  // with the same material properties"), and keeps translucent faces out of it
+  // so they can still be depth sorted. bzo collates the same way but across
+  // obstacles rather than within one, because a draw call costs far more here
+  // than it does there: every box in the world becomes two draws and every
+  // pyramid two more, instead of two each.
+  //
+  // The price is per-obstacle frustum culling, which is worth little on a map of
+  // a few hundred obstacles and ten thousand triangles, against a client that
+  // runs out of one core with the GPU idle. Bases and teleporters stay out: one
+  // carries team colour and a hidden face, the other animates.
+  _addObstacleFragment(fragments, key, materials, geometry, matrix) {
+    geometry.applyMatrix4(matrix);
+    let fragment = fragments.get(key);
+    if (!fragment) {
+      fragment = { materials, groups: materials.map(() => ({ positions: [], normals: [], uvs: [], indices: [] })) };
+      fragments.set(key, fragment);
+    }
+    const position = geometry.attributes.position;
+    const normal = geometry.attributes.normal;
+    const uv = geometry.attributes.uv;
+    const index = geometry.getIndex();
+    for (const group of geometry.groups) {
+      const bucket = fragment.groups[group.materialIndex];
+      if (!bucket) continue;
+      // A vertex is copied once however many of this group's triangles use it.
+      const remapped = new Map();
+      for (let i = group.start; i < group.start + group.count; i += 1) {
+        const vertex = index.getX(i);
+        let mapped = remapped.get(vertex);
+        if (mapped === undefined) {
+          mapped = bucket.positions.length / 3;
+          remapped.set(vertex, mapped);
+          bucket.positions.push(position.getX(vertex), position.getY(vertex), position.getZ(vertex));
+          bucket.normals.push(normal.getX(vertex), normal.getY(vertex), normal.getZ(vertex));
+          bucket.uvs.push(uv.getX(vertex), uv.getY(vertex));
+        }
+        bucket.indices.push(mapped);
+      }
+    }
+  }
+
+  // One mesh per fragment, its materials in the same order as its groups.
+  _buildObstacleFragments(fragments) {
+    fragments.forEach(({ materials, groups }, key) => {
+      const positions = [];
+      const normals = [];
+      const uvs = [];
+      const indices = [];
+      const geometry = new THREE.BufferGeometry();
+      groups.forEach((bucket, materialIndex) => {
+        if (!bucket.indices.length) return;
+        const vertexOffset = positions.length / 3;
+        const indexOffset = indices.length;
+        positions.push(...bucket.positions);
+        normals.push(...bucket.normals);
+        uvs.push(...bucket.uvs);
+        for (const value of bucket.indices) indices.push(value + vertexOffset);
+        geometry.addGroup(indexOffset, bucket.indices.length, materialIndex);
+      });
+      if (!indices.length) return;
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setIndex(indices);
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+
+      const mesh = new THREE.Mesh(geometry, materials);
+      mesh.name = `${key} fragment`;
+      // It is built in world space and never moves.
+      mesh.matrixAutoUpdate = false;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      this.worldGroup.add(mesh);
+      this.obstacleMeshes.push(mesh);
+    });
+  }
+
   clearObstacles() {
     if (!this.scene) return;
     this.obstacleMeshes.forEach((mesh) => {
@@ -1964,10 +2044,26 @@ class RenderManager {
       }
     });
 
+    // Boxes and pyramids collect here and become two meshes at the end.
+    const fragments = new Map();
+    const fragmentMatrix = new THREE.Matrix4();
+    const fragmentPosition = new THREE.Vector3();
+    const fragmentRotation = new THREE.Quaternion();
+    const fragmentScale = new THREE.Vector3(1, 1, 1);
+    const fragmentEuler = new THREE.Euler();
+
     obstacles.forEach((obs, i) => {
       const h = obs.h || 4;
       const baseY = obs.baseY || 0;
       let mesh = null;
+
+      // What the obstacle's own mesh transform would have been, baked into the
+      // vertices instead because the merged mesh cannot carry one per obstacle.
+      const obstacleMatrix = () => {
+        fragmentPosition.set(obs.x, baseY + h / 2, obs.z);
+        fragmentRotation.setFromEuler(fragmentEuler.set(0, obs.rotation || 0, 0));
+        return fragmentMatrix.compose(fragmentPosition, fragmentRotation, fragmentScale);
+      };
 
       if (obs.kind === 'teleporter') {
         mesh = this._createTeleporterMesh(obs, i + 1);
@@ -2029,39 +2125,41 @@ class RenderManager {
           centerY: 0.5,
         });
 
-        mesh = new THREE.Mesh(
-          geometry,
+        this._addObstacleFragment(
+          fragments,
+          'pyramid',
           this._getSharedObstacleMaterials(
             'pyramid', createPyramidTexture, createRoofTexture, { flatShading: true }
           ),
+          geometry,
+          obstacleMatrix(),
         );
-        mesh.position.set(obs.x, baseY + h / 2, obs.z);
-        mesh.rotation.y = obs.rotation || 0;
-        mesh.castShadow = false;
-        mesh.receiveShadow = false;
-        mesh.name = obs.name || `Pyramid ${i + 1}`;
-        if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-        this.worldGroup.add(mesh);
-        this._addDebugLabel(mesh, 'obstacle');
+        this._addDebugLabelAt(
+          obs.name || `Pyramid ${i + 1}`,
+          new THREE.Vector3(obs.x, baseY + h + 2, obs.z),
+          'obstacle',
+        );
       } else {
-        mesh = new THREE.Mesh(
-          this._prepareBoxGeometry(obs.w, h, obs.d, BOX_TEXTURE_SCALES),
+        this._addObstacleFragment(
+          fragments,
+          'box',
           this._getSharedObstacleMaterials('box', createBoxWallTexture, createRoofTexture),
+          this._prepareBoxGeometry(obs.w, h, obs.d, BOX_TEXTURE_SCALES),
+          obstacleMatrix(),
         );
-        mesh.position.set(obs.x, baseY + h / 2, obs.z);
-        mesh.rotation.y = obs.rotation || 0;
-        mesh.castShadow = false;
-        mesh.receiveShadow = false;
-        mesh.name = obs.name || `Box ${i + 1}`;
-        if (mesh.geometry && !mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-        this.worldGroup.add(mesh);
-        this._addDebugLabel(mesh, 'obstacle');
+        this._addDebugLabelAt(
+          obs.name || `Box ${i + 1}`,
+          new THREE.Vector3(obs.x, baseY + h + 2, obs.z),
+          'obstacle',
+        );
       }
 
       if (mesh) {
         this.obstacleMeshes.push(mesh);
       }
     });
+
+    this._buildObstacleFragments(fragments);
 
     // Update compass marker heights now that we know maxObstacleHeight
     this._updateCompassMarkerHeights();
@@ -2073,8 +2171,7 @@ class RenderManager {
     this._updateDebugLabelsVisibility();
   }
 
-  _addDebugLabel(object3D, type) {
-    if (!object3D) return;
+  _createDebugLabelSprite(name) {
     const labelMaterial = new THREE.SpriteMaterial({
       depthTest: true,
       depthWrite: false,
@@ -2083,7 +2180,24 @@ class RenderManager {
     });
     const label = new THREE.Sprite(labelMaterial);
     label.scale.set(4, 1, 1);
-    this.updateSpriteLabel(label, object3D.name || '', '#ffffff');
+    this.updateSpriteLabel(label, name || '', '#ffffff');
+    return label;
+  }
+
+  // For an obstacle with no mesh of its own, because it was merged into a
+  // fragment with every other obstacle of its kind. The position is in world
+  // space and the label hangs off the world group rather than off the obstacle.
+  _addDebugLabelAt(name, position, type) {
+    const label = this._createDebugLabelSprite(name);
+    label.position.copy(position);
+    this.worldGroup.add(label);
+    label.visible = this.debugLabelsEnabled;
+    this.debugLabels.push({ label, object3D: this.worldGroup, type });
+  }
+
+  _addDebugLabel(object3D, type) {
+    if (!object3D) return;
+    const label = this._createDebugLabelSprite(object3D.name);
     // Ensure boundingBox is computed for label placement
     if (object3D.geometry && !object3D.geometry.boundingBox) object3D.geometry.computeBoundingBox();
     const y = (object3D.geometry && object3D.geometry.boundingBox ? object3D.geometry.boundingBox.max.y : object3D.position.y) + 2;
