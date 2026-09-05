@@ -534,6 +534,33 @@ export function updateScoreboard({
 
   playerData.sort(compareScoreboardPlayers);
 
+  // The header doubles as a legend for the player's own tank: the colour it is
+  // drawn in and the flag it is carrying, in the same shape a row uses. Both are
+  // otherwise only readable by finding your own row, and the colour in
+  // particular is worth having to hand now that team mates are shaded apart --
+  // "which red am I" is a question the roster cannot answer at a glance.
+  const header = document.getElementById('scoreboardHeader');
+  if (header) {
+    const headerName = header.querySelector('.scoreboardName');
+    const headerStats = header.querySelector('.scoreboardStats');
+    const current = playerData.find((player) => player.isCurrent);
+    if (headerName) {
+      headerName.style.color = current?.color ? colorToCSS(current.color) : '';
+    }
+    let headerFlag = header.querySelector('.scoreboardFlag');
+    if (current?.flag) {
+      if (!headerFlag) {
+        headerFlag = document.createElement('span');
+        headerFlag.className = 'scoreboardFlag';
+        header.insertBefore(headerFlag, headerStats);
+      }
+      headerFlag.textContent = `/${current.flag.label}`;
+      headerFlag.style.color = colorToCSS(current.flag.color);
+    } else if (headerFlag) {
+      headerFlag.remove();
+    }
+  }
+
   // Create scoreboard entries
   playerData.forEach(player => {
     const entry = document.createElement('div');
