@@ -185,7 +185,51 @@ function resolveTeamMode(serverValue, mapOverride = null, defaultLimit = Number.
   };
 }
 
-function selectPlayerTeam(requestedTeam, teamMode, teamCounts = {}, teamScores = {}, random = Math.random) {
+// Upstream picks evenly among the teams that tie (autoTeamSelect, bzfs.cxx:1902),
+// which leaves the second player on an empty map more likely to be founded
+// beside the first than across from them: two of the three remaining teams are
+// neighbours, so the far one comes up a third of the time.
+//
+// bzo weighs that one case by how far apart the two bases are, squared. On a map
+// with its bases at the compass points the far team is exactly twice as likely
+// as either neighbour -- 50/25/25 rather than 33/33/33 -- and the exponent is
+// the only thing to turn if that is not enough.
+//
+// Only that case. Once two teams are populated there is no single team across
+// the map, and a player joining teams that already exist is picked as before.
+// Distance never overrides the balancing above it either: this only reorders
+// candidates that already tie on size and on score. Whichever team has no base
+// on the map, or a map with no bases at all, falls back to the even pick.
+function pickByBaseDistance(candidates, teamCounts, basePositions, random) {
+  if (!basePositions) return null;
+  const populated = BZFLAG_TEAM_ORDER.slice(1, 5).filter((team) => (teamCounts[team] || 0) > 0);
+  if (populated.length !== 1) return null;
+  if (candidates.some((team) => (teamCounts[team] || 0) > 0)) return null;
+
+  const from = basePositions[populated[0]];
+  if (!from) return null;
+  const weights = candidates.map((team) => {
+    const to = basePositions[team];
+    if (!to) return 0;
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    return (dx * dx) + (dz * dz);
+  });
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!(total > 0)) return null;
+
+  let roll = random() * total;
+  for (let index = 0; index < candidates.length; index += 1) {
+    roll -= weights[index];
+    if (roll < 0) return candidates[index];
+  }
+  return candidates[candidates.length - 1];
+}
+
+// `basePositions` is one point per colour team, `{ red: { x, z }, ... }`, and is
+// only consulted for the second team on the map. `random` follows it so the
+// tests can drive both.
+function selectPlayerTeam(requestedTeam, teamMode, teamCounts = {}, teamScores = {}, basePositions = null, random = Math.random) {
   const requested = normalizePlayerTeamSelection(requestedTeam);
   const automatic = requested === PLAYER_TEAM.AUTOMATIC;
   if (!automatic && !teamMode.teams.includes(requested)) return null;
@@ -223,7 +267,8 @@ function selectPlayerTeam(requestedTeam, teamMode, teamCounts = {}, teamScores =
   if (candidates.includes(requested)) return requested;
   const lowestScore = Math.min(...candidates.map((team) => teamScores[team] || 0));
   candidates = candidates.filter((team) => (teamScores[team] || 0) === lowestScore);
-  return candidates[Math.floor(random() * candidates.length)];
+  return pickByBaseDistance(candidates, teamCounts, basePositions, random)
+    || candidates[Math.floor(random() * candidates.length)];
 }
 
 function isObserverTeam(team) {

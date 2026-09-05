@@ -38,6 +38,16 @@ These are deliberate. Do not "fix" them without being asked.
 - **Clients rejoin without waiting for a click.** BZFlag makes the player
   confirm before respawning; bzo respawns automatically after the same 5 second
   delay.
+- **The second team on a map is placed across from the first.** Upstream picks
+  evenly among the teams that tie (`autoTeamSelect`, `bzfs.cxx:1902`), which
+  leaves two of the three remaining teams as neighbours of the first: the team
+  across the map comes up only a third of the time. bzo weights that one choice
+  by the squared distance between the two teams' bases, which on a map with its
+  bases at the compass points makes the far team exactly twice as likely as
+  either neighbour -- 50/25/25. Only that choice: once two teams are populated
+  there is no single team across the map, and a player joining teams that
+  already exist is picked as upstream picks. Distance never overrides the
+  balancing, only the even pick among candidates that already tie.
 - **Clients reconnect directly when the server restarts**, rather than dropping
   to a menu -- unless the client code itself changed, in which case they reload.
   The server hashes `public/` and Three's build directory by content at boot and

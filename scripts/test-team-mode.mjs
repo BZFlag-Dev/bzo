@@ -153,6 +153,51 @@ assert.equal(selectPlayerTeam('red', manualTeams, { ...teamCounts, red: 10 }), n
 assert.equal(getPlayerTeamColor('rogue'), 0xffff00);
 assert.equal(getPlayerTeamColor('observer'), 0xffffff);
 assert.equal(getPlayerTeamColor('blue'), 0x1a33ff);
+// The second team on a map is weighed by how far its base is from the first, so
+// two players are more often across the map than beside each other. Bases at the
+// compass points: red north, green east, blue south, purple west, so blue is the
+// far team from red and green and purple are the neighbours.
+const compassBases = {
+  red: { x: 0, z: -100 },
+  green: { x: 100, z: 0 },
+  blue: { x: 0, z: 100 },
+  purple: { x: -100, z: 0 },
+};
+const autoTeams = {
+  enabled: true,
+  autoTeam: true,
+  teams: ['rogue', 'observer', 'red', 'green', 'blue', 'purple'],
+  limits: { rogue: 10, observer: 10, red: 10, green: 10, blue: 10, purple: 10 },
+};
+const oneOnRed = { red: 1, green: 0, blue: 0, purple: 0 };
+// Squared distance from red: blue 200^2 = 40000, green and purple 100^2+100^2 =
+// 20000 each. So blue takes half the range and the neighbours a quarter apiece.
+const secondTeamFor = (roll) => selectPlayerTeam(
+  'automatic', autoTeams, oneOnRed, {}, compassBases, () => roll);
+assert.equal(secondTeamFor(0.10), 'green');
+assert.equal(secondTeamFor(0.30), 'blue');
+assert.equal(secondTeamFor(0.60), 'blue');
+assert.equal(secondTeamFor(0.90), 'purple');
+// Half the rolls land on the far team, a quarter on each neighbour.
+const spread = { green: 0, blue: 0, purple: 0 };
+for (let i = 0; i < 1000; i += 1) spread[secondTeamFor((i + 0.5) / 1000)] += 1;
+assert.equal(spread.blue, 500, `far team got ${spread.blue} of 1000, want 500`);
+assert.equal(spread.green, 250, `near team got ${spread.green} of 1000, want 250`);
+assert.equal(spread.purple, 250, `near team got ${spread.purple} of 1000, want 250`);
+
+// Only for the second team. With two already populated there is no single team
+// across the map and the pick is even again. The candidates are blue then
+// purple, so an even pick takes purple at 0.6 while the weighting would take
+// blue -- it is heavier and holds the range up to 0.667.
+const twoPopulated = { red: 2, green: 2, blue: 0, purple: 0 };
+assert.equal(
+  selectPlayerTeam('automatic', autoTeams, twoPopulated, {}, compassBases, () => 0.6),
+  'purple');
+// And with no bases to weigh, an even pick as before.
+assert.equal(
+  selectPlayerTeam('automatic', autoTeams, oneOnRed, {}, null, () => 0.9),
+  'purple');
+
 // Both modes go through the picker; what differs is the argument. In team mode
 // it is the team, so the picker can shade inside that team's band. Outside it is
 // null, so the picker has the whole wheel to work with.

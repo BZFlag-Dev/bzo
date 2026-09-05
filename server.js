@@ -2297,6 +2297,26 @@ function getTeamBases(colorIndex) {
   return BASES_BY_TEAM.get(colorIndex) || [];
 }
 
+// One point per colour team, the mean of its bases, for weighing where the
+// second team on a map is founded. A team with several bases is represented by
+// their middle; a team with none is absent, which selectPlayerTeam reads as
+// having nothing to weigh and falls back to an even pick.
+function getTeamBaseCenters() {
+  const centers = {};
+  BASES_BY_TEAM.forEach((bases, colorIndex) => {
+    const team = getTeamFromColorIndex(colorIndex);
+    if (!team || bases.length === 0) return;
+    let sumX = 0;
+    let sumZ = 0;
+    bases.forEach((base) => {
+      sumX += base.x;
+      sumZ += base.z;
+    });
+    centers[team] = { x: sumX / bases.length, z: sumZ / bases.length };
+  });
+  return centers;
+}
+
 function getRandomTeamBase(colorIndex) {
   const bases = getTeamBases(colorIndex);
   return bases.length === 0 ? null : bases[Math.floor(Math.random() * bases.length)];
@@ -4713,7 +4733,8 @@ wss.on('connection', (ws, req) => {
             teamCounts[candidate.team] = (teamCounts[candidate.team] || 0) + 1;
             teamPlayerScores[candidate.team] = (teamPlayerScores[candidate.team] || 0) + candidate.kills - candidate.deaths;
           });
-          const assignedTeam = selectPlayerTeam(requestedTeam, TEAM_MODE, teamCounts, teamPlayerScores);
+          const assignedTeam = selectPlayerTeam(
+            requestedTeam, TEAM_MODE, teamCounts, teamPlayerScores, getTeamBaseCenters());
           if (!assignedTeam) {
             ws.send(JSON.stringify({ error: `Team is full: ${requestedTeam}` }));
             break;
