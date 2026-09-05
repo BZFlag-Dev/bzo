@@ -251,6 +251,9 @@ const CELESTIAL_GLOW_RATIO = 1.5;
 // were the divisors on the per-face texture repeats and are now the divisors on
 // the baked UVs, so the tiling is unchanged.
 const BOX_TEXTURE_SCALES = { sideScale: 8, capScale: 2 };
+// BoxGeometry emits its faces in this order, four vertices and six indices each,
+// which is what _prepareBoxGeometry's loops count on.
+const BOX_FACE = Object.freeze({ PX: 0, NX: 1, PY: 2, NY: 3, PZ: 4, NZ: 5 });
 // The same, for a pyramid's slanted sides and its base.
 const PYRAMID_TEXTURE_SCALE = 8;
 const PYRAMID_ROOF_TEXTURE_SCALE = 2;
@@ -1417,7 +1420,7 @@ class RenderManager {
   // as walls then caps. Vertices come out of BoxGeometry four to a face in the
   // order +X, -X, +Y, -Y, +Z, -Z, and the index buffer six to a face in the same
   // order, which is what both loops below count on.
-  _prepareBoxGeometry(width, height, depth, { sideScale = 1, capScale = 1 } = {}) {
+  _prepareBoxGeometry(width, height, depth, { sideScale = 1, capScale = 1, omitFaces = [] } = {}) {
     const geometry = new THREE.BoxGeometry(width, height, depth);
     const faceRepeats = [
       [depth / sideScale, height / sideScale],  // +X
@@ -1440,12 +1443,14 @@ class RenderManager {
     // rewritten to put them together and the whole box becomes two groups.
     const index = geometry.getIndex().array;
     const face = (n) => Array.from(index.slice(n * 6, (n * 6) + 6));
-    const walls = [...face(0), ...face(1), ...face(4), ...face(5)];
-    const caps = [...face(2), ...face(3)];
+    const omitted = new Set(omitFaces);
+    const kept = (faces) => faces.filter((n) => !omitted.has(n)).flatMap(face);
+    const walls = kept([BOX_FACE.PX, BOX_FACE.NX, BOX_FACE.PZ, BOX_FACE.NZ]);
+    const caps = kept([BOX_FACE.PY, BOX_FACE.NY]);
     geometry.setIndex([...walls, ...caps]);
     geometry.clearGroups();
-    geometry.addGroup(0, walls.length, 0);
-    geometry.addGroup(walls.length, caps.length, 1);
+    if (walls.length) geometry.addGroup(0, walls.length, 0);
+    if (caps.length) geometry.addGroup(walls.length, caps.length, 1);
     return geometry;
   }
 
@@ -1821,8 +1826,16 @@ class RenderManager {
     });
     this.compassMarkers = [];
 
+    // Each wall drops the face that points away from the arena. Nothing is made
+    // transparent: with the outward face gone, a camera outside the border meets
+    // the inward face from behind, which back-face culling removes, and sees
+    // straight into the arena. So backing a tank against the border in third
+    // person shows the tank rather than the back of a wall, while from every
+    // position a player can occupy the wall is as solid as it was.
+    //
+    // Upstream has no third person view and no equivalent of this.
     const northWall = new THREE.Mesh(
-      this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, BOX_TEXTURE_SCALES),
+      this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, { ...BOX_TEXTURE_SCALES, omitFaces: [BOX_FACE.NZ] }),
       this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     northWall.position.set(0, wallHeight / 2, -mapSize / 2 - wallThickness / 2);
@@ -1837,7 +1850,7 @@ class RenderManager {
 
 
     const southWall = new THREE.Mesh(
-      this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, BOX_TEXTURE_SCALES),
+      this._prepareBoxGeometry(mapSize + wallThickness * 2, wallHeight, wallThickness, { ...BOX_TEXTURE_SCALES, omitFaces: [BOX_FACE.PZ] }),
       this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     southWall.position.set(0, wallHeight / 2, mapSize / 2 + wallThickness / 2);
@@ -1851,7 +1864,7 @@ class RenderManager {
 
 
     const eastWall = new THREE.Mesh(
-      this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, BOX_TEXTURE_SCALES),
+      this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, { ...BOX_TEXTURE_SCALES, omitFaces: [BOX_FACE.PX] }),
       this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     eastWall.position.set(mapSize / 2 + wallThickness / 2, wallHeight / 2, 0);
@@ -1865,7 +1878,7 @@ class RenderManager {
 
 
     const westWall = new THREE.Mesh(
-      this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, BOX_TEXTURE_SCALES),
+      this._prepareBoxGeometry(wallThickness, wallHeight, mapSize, { ...BOX_TEXTURE_SCALES, omitFaces: [BOX_FACE.NX] }),
       this._getSharedObstacleMaterials('boundary', createBoundaryTexture, createBoundaryTexture),
     );
     westWall.position.set(-mapSize / 2 - wallThickness / 2, wallHeight / 2, 0);
