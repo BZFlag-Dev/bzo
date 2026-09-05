@@ -6,6 +6,24 @@ The format is based on Keep a Changelog, and versions use SemVer tags like v1.0.
 
 ## [Unreleased]
 
+## [1.0.60] - 2026-09-05
+
+### Fixed
+- The on-screen fire and flag buttons do nothing on anything but a phone. The condition deciding whether to read the virtual input was written three different ways and only the driving one accounted for the controls being turned on deliberately, so turning them on gave a jump button that worked beside two that did not. All three share one predicate now.
+- Toggling Virtual Controls, and Wireframe, leaves the settings row reading its old value. Those buttons stop their own click propagating, so the menu never sees it and never re-reads the row; both now tell it, as Mouse Control always has.
+- The altitude tape is not attached to the targeting box. Its offset was a fixed 40px against a width in `4vmin`, so the two only agreed at one screen size: on a 1920x1080 desktop the tape sat against the box, and on a 857x411 phone a 24px gap opened. Both terms are the box's own unit now.
+- The chat tabs fall off the top of the chat window on a short screen. The window packs to its bottom edge and hides its overflow, and the message area's six-line minimum meant it would not shrink, so the tabs were pushed out. Six lines is a ceiling now rather than a floor: a tall screen still fills to six, a short one shows fewer and keeps its tabs.
+
+### Added
+- The scoreboard's title carries the colour your tank is drawn in and the flag you are holding, in the shape upstream writes them -- the name, then "/", then the flag's abbreviation, with the colour changing at the slash and no space between (`ScoreboardRenderer::drawPlayerScore`). Both were otherwise readable only by finding your own row, and the colour is worth having to hand now that team mates are shaded apart rather than sharing one team colour. Clicking the flag opens Settings as clicking the name does.
+- Settings closes from its heading like every other dialog. It had only a Close row at the foot of its menu, and the operator panel centred its close button beside the heading while help and audio put theirs against the right edge; the four share one layout now. Settings keeps its Close row as well, because in XR the menu is rendered as rows and the heading's button is not one of them.
+
+### Changed
+- The HUD takes its sizes from the scale upstream uses for its own -- `min(width/256, height/192)`, which bzo already had for the targeting box -- rather than from width breakpoints. A phone held in landscape is 857x411: wide enough to miss every rule meant for a small screen and short enough that none of them would have been wrong. Sizes are clamped, because upstream is scaling geometry and this is scaling text; the ceilings are what a desktop already had, so nothing changes there, and between the bounds the HUD follows the screen continuously.
+- The HUD ignores `env(safe-area-inset-*)`. Honouring the camera cutout spends an edge of a screen that has none to spare, and a hole over the corner of a panel is the better trade -- the panel keeps its size and the covered part is still touchable. The margins that remain share one value, so the radar, the scoreboard, the debug HUD and the chat cannot drift apart.
+- Settings is only as wide as its widest row. It shared one width with the dialogs that hold prose or a form, and a column of short label-and-value rows stretched to 820px was mostly gap.
+- The settings rows centre at every width. A narrow-screen rule let the value column shrink to its content and handed the label all the slack, which with a right-aligned label pushes the pair to one side and piles the empty space on the other.
+
 ## [1.0.59] - 2026-09-05
 
 ### Added
